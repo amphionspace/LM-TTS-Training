@@ -25,6 +25,7 @@ ECAPA 从 Qwen 公开 TTS checkpoint 加载，使用同说话人的另一条训�
 - [模型组装、官方差异、ECAPA 来源与 ICL](docs/design/model-assembly.md)
 - [从头训练的 reference：Nar、VALL-E、Fish、F5 对比](docs/design/reference-training.md)
 - [组装模型、ECAPA 与精确恢复验证](docs/validation/assembly-validation.md)
+- [LJSpeech 500 步训练与生成评估](docs/validation/ljspeech-medium-500.md)
 - [框架正确性与真实数据验证记录](docs/validation/framework-validation.md)
 
 ## 检查
