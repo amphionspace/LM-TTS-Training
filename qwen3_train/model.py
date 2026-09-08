@@ -1,26 +1,53 @@
 """Offline text-prefix TTS using official Qwen3-TTS Talker and depth predictor.
 
-This defines a new input protocol, not an official Qwen3-TTS checkpoint format.
+The offline training protocol differs from the official generation protocol.
 """
+import json
+from pathlib import Path
+
 import torch
 from torch import nn
 from torch.nn import functional as F
-from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSTalkerConfig
-from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSTalkerForConditionalGeneration
+from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig, Qwen3TTSTalkerConfig
+from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSTalkerForConditionalGeneration, Qwen3TTSSpeakerEncoder
 from transformers import AutoModel
 
 
 class TTSModel(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, speaker_config=None):
         super().__init__()
         self.config = config
         self.talker = Qwen3TTSTalkerForConditionalGeneration(config)
-        # Text embeddings already have the backbone width; preserve pretrained features.
-        self.talker.text_projection = nn.Identity()
+        self.speaker_encoder = Qwen3TTSSpeakerEncoder(speaker_config) if speaker_config else None
+        if self.speaker_encoder is not None:
+            from .speaker import deterministic_speaker_padding
+            deterministic_speaker_padding(self.speaker_encoder)
+        if speaker_config is None:
+            self.talker.text_projection = nn.Identity()
         self.groups = config.num_code_groups
         self.code_size = config.code_predictor_config.vocab_size
         self.bos = config.codec_bos_id
         self.eos = config.codec_eos_token_id
+
+    @classmethod
+    def from_assembled(cls, directory, load_weights=True):
+        from .assembly import load_prefix, sha256
+        directory = Path(directory)
+        if not (directory / "ASSEMBLY_COMPLETE").exists():
+            raise ValueError("Require a completed output of scripts/assemble_qwen3_tts.py")
+        report = json.loads((directory / "assembly_report.json").read_text())
+        for name, expected in report["artifact_sha256"].items():
+            if name == "config.json" or (load_weights and name.startswith("model") and name.endswith(".safetensors")):
+                if sha256(directory / name) != expected:
+                    raise ValueError(f"Assembled artifact changed: {name}")
+        config = Qwen3TTSConfig.from_dict(json.loads((directory / "config.json").read_text()))
+        config.talker_config._attn_implementation = "sdpa"
+        config.talker_config.code_predictor_config._attn_implementation = "sdpa"
+        model = cls(config.talker_config, config.speaker_encoder_config)
+        if load_weights:
+            model.talker.load_state_dict(load_prefix(directory, "talker."), strict=True)
+            model.speaker_encoder.load_state_dict(load_prefix(directory, "speaker_encoder."), strict=True)
+        return model
 
     def initialize_backbone(self, path):
         base = AutoModel.from_pretrained(path, torch_dtype=torch.float32, attn_implementation="sdpa")
@@ -39,12 +66,15 @@ class TTSModel(nn.Module):
         return value
 
     def hidden(self, batch):
-        text = self.talker.model.text_embedding(batch["text_ids"])
+        text = self.talker.text_projection(self.talker.model.text_embedding(batch["text_ids"]))
+        if self.speaker_encoder is not None:
+            speaker = self.speaker_encoder(batch["speaker_mels"]).unsqueeze(1)
+            text = torch.cat([text, speaker.to(text.dtype)], dim=1)
         frames = self.frame_embeddings(batch["codes"])
         bos = self.talker.model.codec_embedding.weight[self.bos].expand(text.shape[0], 1, -1)
-        # [text, audio BOS, frame_0, ..., frame_T-1]; BOS predicts frame_0.
+        # [text, optional speaker, audio BOS, historical frames]; BOS predicts frame_0.
         embeds = torch.cat([text, bos, frames], dim=1)
-        mask = torch.cat([batch["text_mask"], torch.ones(text.shape[0], 1, dtype=torch.bool, device=text.device), batch["frame_mask"]], dim=1)
+        mask = torch.cat([batch["text_mask"], torch.ones(text.shape[0], 2 if self.speaker_encoder is not None else 1, dtype=torch.bool, device=text.device), batch["frame_mask"]], dim=1)
         positions = (mask.long().cumsum(-1) - 1).clamp_min(0)
         outputs = self.talker.model(inputs_embeds=embeds, attention_mask=mask,
                                     position_ids=positions, use_cache=False)

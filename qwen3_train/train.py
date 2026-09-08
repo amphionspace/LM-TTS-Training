@@ -1,8 +1,10 @@
 import argparse
+import hashlib
 import json
 import math
 import os
 import random
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -85,6 +87,8 @@ def generate_sample(model, dataset, device, settings, output, step, writer, inde
     result = {"id": row["id"], "text": row["text"], "frames": len(generated),
               "eos_reached": stopped, "truncated": not stopped,
               "generation_seconds": time.perf_counter() - start}
+    if "reference_audio" in row:
+        result["speaker_reference_audio"] = row["reference_audio"]
     if dist.get_rank() == 0:
         folder = output / "evaluation" / f"step-{step:08d}"
         if multi:
@@ -174,6 +178,9 @@ def main():
     device = torch.device("cuda", local_rank)
     torch.cuda.set_device(device)
     torch.set_num_threads(4)
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
     dist.init_process_group("nccl", timeout=timedelta(minutes=30), device_id=device)
     writer = None
     try:
@@ -188,12 +195,28 @@ def main():
         if train_ids.intersection(r["id"] for r in val_data.rows):
             raise ValueError("Train/validation ID leakage")
         model_cfg = config["model"]
-        base_cfg = None if model_cfg["tiny"] else AutoConfig.from_pretrained(model_cfg["backbone"])
-        model_config = make_config(base_cfg, tiny=model_cfg["tiny"])
-        model = TTSModel(model_config)
-        initialization = {"source": "random tiny integration model"}
-        if not model_cfg["tiny"] and not args.resume:
-            initialization = model.initialize_backbone(model_cfg["backbone"])
+        assembly_fingerprint = None
+        if model_cfg.get("assembled_model"):
+            assembled = Path(model_cfg["assembled_model"])
+            assembly_fingerprint = hashlib.sha256((assembled / "assembly_report.json").read_bytes()).hexdigest()
+            model = TTSModel.from_assembled(assembled, load_weights=not args.resume)
+            model_config = model.config
+            initialization = {"source": str(assembled), "assembly_report_sha256": assembly_fingerprint,
+                              "speaker_encoder": "pretrained Qwen ECAPA-TDNN, jointly trained"}
+            full_config = json.loads((assembled / "config.json").read_text())
+            for dataset in [train_data, val_data]:
+                for row in dataset.rows:
+                    row["text_ids"] = [full_config["tts_bos_token_id"], *row["text_ids"], full_config["tts_eos_token_id"]]
+            seconds = config["data"]["speaker_reference_seconds"]
+            train_data.set_speaker_references(train_data, seconds)
+            val_data.set_speaker_references(train_data, seconds)
+        else:
+            base_cfg = None if model_cfg["tiny"] else AutoConfig.from_pretrained(model_cfg["backbone"])
+            model_config = make_config(base_cfg, tiny=model_cfg["tiny"])
+            model = TTSModel(model_config)
+            initialization = {"source": "random tiny integration model"}
+            if not model_cfg["tiny"] and not args.resume:
+                initialization = model.initialize_backbone(model_cfg["backbone"])
         if model_cfg.get("activation_checkpointing", True):
             model.talker.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
             model.talker.code_predictor.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
@@ -206,7 +229,7 @@ def main():
         configure_fsdp(model, device)
         pretrained, fresh = [], []
         for name, param in model.named_parameters():
-            if name.startswith(("talker.model.layers.", "talker.model.norm.", "talker.model.text_embedding.")):
+            if name.startswith(("talker.model.layers.", "talker.model.norm.", "talker.model.text_embedding.", "speaker_encoder.")):
                 pretrained.append(param)
             else:
                 fresh.append(param)
@@ -221,10 +244,15 @@ def main():
             ratio = min(1.0, (step - warmup) / max(1, settings["schedule_steps"] - warmup))
             return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * ratio))
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_factor)
-        signature = {"protocol": 1, "seed": seed, "model": model_cfg,
+        signature = {"protocol": 2, "deterministic": True,
+                     "cublas_workspace": os.environ["CUBLAS_WORKSPACE_CONFIG"], "seed": seed, "model": model_cfg,
                      "train_manifest": train_data.fingerprint, "val_manifest": val_data.fingerprint,
                      "settings": {k: v for k, v in settings.items() if k not in ["output", "max_steps", "save_every", "eval_every", "log_every"]},
                      "eval": config["eval"], "torch": torch.__version__}
+        if assembly_fingerprint:
+            signature.update(assembly_report_sha256=assembly_fingerprint,
+                             speaker_references={"seconds": seconds, "train": train_data.reference_fingerprint,
+                                                 "val": val_data.reference_fingerprint})
         progress = {"step": 0, "epoch": 0, "next_batch": 0}
         if args.resume:
             resume = args.resume
@@ -273,6 +301,15 @@ def main():
                     raise FloatingPointError("Non-finite loss")
                 loss.backward()
                 sums += torch.stack([out["first_sum"].detach(), out["residual_sum"].detach()])
+            speaker_grad_norm = None
+            if model.speaker_encoder is not None:
+                squared = torch.zeros((), device=device)
+                for parameter in model.speaker_encoder.parameters():
+                    if parameter.grad is None:
+                        raise RuntimeError("Speaker encoder did not receive a gradient")
+                    squared += parameter.grad.to_local().float().square().sum()
+                dist.all_reduce(squared)
+                speaker_grad_norm = squared.sqrt().item()
             norm = torch.nn.utils.clip_grad_norm_(model.parameters(), settings["grad_clip"])
             if not torch.isfinite(norm).item():
                 raise FloatingPointError("Non-finite gradient norm")
@@ -285,6 +322,8 @@ def main():
             metrics = {"first_ce": (sums[0] / counts[0]).item(), "residual_ce": (sums[1] / counts[1]).item(),
                        "grad_norm": norm.item(), "audio_seconds_per_second": counts[1].item() / 15 / 12.5 / elapsed,
                        "step_seconds": elapsed, "lr_backbone": optimizer.param_groups[0]["lr"], "lr_new": optimizer.param_groups[1]["lr"]}
+            if speaker_grad_norm is not None:
+                metrics["speaker_grad_norm"] = speaker_grad_norm
             if rank == 0 and step % settings["log_every"] == 0:
                 for key, value in metrics.items():
                     writer.add_scalar(f"train/{key}", value, step)

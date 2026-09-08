@@ -1,0 +1,30 @@
+seed: 42
+model:
+  assembled_model: pretrained/assembled-qwen3-tts-0.6b
+  activation_checkpointing: true
+data:
+  train: data/ljspeech-test/train.jsonl
+  val: data/ljspeech-test/val.jsonl
+  speaker_reference_seconds: 3
+train:
+  output: runs/ljspeech-assembled
+  batch_size: 1
+  accumulation: 4
+  max_steps: 1000
+  schedule_steps: 1000
+  warmup_steps: 50
+  lr: 0.0001
+  backbone_lr: 2.0e-05
+  weight_decay: 0.01
+  residual_weight: 0.3
+  grad_clip: 1.0
+  save_every: 100
+  eval_every: 100
+  log_every: 1
+eval:
+  num_samples: 4
+  audio_every: 100
+  max_frames: 256
+  codec: pretrained/assembled-qwen3-tts-0.6b/speech_tokenizer
+  asr: true
+  asr_model: small.en

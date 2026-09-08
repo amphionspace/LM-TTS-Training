@@ -10,11 +10,35 @@ import torch
 
 class CodeDataset:
     def __init__(self, manifest):
+        self.references = None
         self.path = Path(manifest).resolve()
         self.fingerprint = hashlib.sha256(self.path.read_bytes()).hexdigest()
         self.rows = [json.loads(line) for line in self.path.read_text().splitlines() if line.strip()]
         if not self.rows:
             raise ValueError(f"Empty manifest: {manifest}")
+
+    def set_speaker_references(self, pool, seconds):
+        if not 0.1 <= seconds <= 30:
+            raise ValueError("speaker_reference_seconds must be between 0.1 and 30")
+        by_speaker = {}
+        for row in pool.rows:
+            if row.get("speaker"):
+                by_speaker.setdefault(row["speaker"], []).append(row)
+        self.references = []
+        for row in self.rows:
+            candidates = [r for r in by_speaker.get(row.get("speaker"), [])
+                          if r["id"] != row["id"] and r["audio"] != row["audio"]]
+            if not candidates:
+                raise ValueError(f"Need another training utterance with the same speaker for {row['id']}")
+            index = int(hashlib.sha256(row["id"].encode()).hexdigest(), 16) % len(candidates)
+            self.references.append(str(Path(candidates[index]["audio"]).resolve()))
+        self.reference_seconds = seconds
+        # Reference audio is part of the model input and therefore part of the
+        # exact-resume identity, even though codec features were cached earlier.
+        hashes = {path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
+                  for path in sorted(set(self.references))}
+        self.reference_fingerprint = hashlib.sha256(json.dumps(
+            {"assignments": self.references, "audio_sha256": hashes}, sort_keys=True).encode()).hexdigest()
 
     def __len__(self):
         return len(self.rows)
@@ -30,7 +54,12 @@ class CodeDataset:
             raise ValueError(f"Invalid codec shape for {row['id']}: {codes.shape}")
         if codes.min() < 0 or codes.max() >= 2048:
             raise ValueError(f"Invalid codec token for {row['id']}")
-        return {**row, "codes": codes}
+        item = {**row, "codes": codes}
+        if self.references is not None:
+            from .speaker import reference_mel
+            item["reference_audio"] = self.references[index]
+            item["speaker_mels"] = reference_mel(self.references[index], self.reference_seconds)
+        return item
 
 
 def collate(rows):
@@ -49,7 +78,10 @@ def collate(rows):
         text_mask[i, :n] = True
         codes[i, :t] = row["codes"]
         frame_mask[i, :t] = True
-    return dict(text_ids=ids, text_mask=text_mask, codes=codes, frame_mask=frame_mask)
+    batch = dict(text_ids=ids, text_mask=text_mask, codes=codes, frame_mask=frame_mask)
+    if "speaker_mels" in rows[0]:
+        batch["speaker_mels"] = torch.stack([r["speaker_mels"] for r in rows])
+    return batch
 
 
 def train_batches(dataset, batch_size, world_size, rank, seed, epoch):

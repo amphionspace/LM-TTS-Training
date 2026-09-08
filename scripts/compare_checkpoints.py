@@ -1,4 +1,4 @@
-"""Compare tiny integration checkpoints after uninterrupted/resumed training."""
+"""Compare integration checkpoints after uninterrupted/resumed training."""
 import argparse
 import json
 import tempfile
@@ -10,6 +10,7 @@ from torch.distributed.checkpoint.format_utils import dcp_to_torch_save
 
 
 def main():
+    torch.set_num_threads(4)
     p = argparse.ArgumentParser()
     p.add_argument("left")
     p.add_argument("right")

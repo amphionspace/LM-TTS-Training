@@ -64,4 +64,4 @@
 ## 当前范围
 
 支持单机 FSDP2、同 world size 的精确恢复、TensorBoard、固定多样本生成及 corpus WER/CER。
-尚未实现大规模分片数据流、跨卡数的精确数据恢复、流式生成、speaker/reference 条件和生产推理优化。
+本记录描述首版无 speaker 基线。新增组装模型已接入可训练 ECAPA；仍未实现大规模分片数据流、跨卡数精确恢复、流式生成和生产推理优化。
