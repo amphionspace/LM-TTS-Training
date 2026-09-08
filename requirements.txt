@@ -1,0 +1,12 @@
+# Install CUDA wheels first; see scripts/setup_env.sh.
+torch==2.8.0+cu126
+torchaudio==2.8.0+cu126
+qwen-tts==0.1.1
+transformers==4.57.3
+accelerate==1.12.0
+numpy==1.26.4
+soundfile==0.13.1
+PyYAML==6.0.2
+safetensors==0.6.2
+tensorboard==2.20.0
+faster-whisper==1.2.1

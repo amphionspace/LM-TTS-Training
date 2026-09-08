@@ -1,0 +1,29 @@
+seed: 42
+model:
+  backbone: pretrained/Qwen3-0.6B
+  tiny: false
+  activation_checkpointing: true
+data:
+  train: data/ljspeech-test/train.jsonl
+  val: data/ljspeech-test/val.jsonl
+train:
+  output: runs/ljspeech-integration
+  batch_size: 1
+  accumulation: 1
+  max_steps: 2
+  schedule_steps: 10
+  warmup_steps: 1
+  lr: 0.0001
+  backbone_lr: 2.0e-05
+  weight_decay: 0.01
+  residual_weight: 0.3
+  grad_clip: 1.0
+  save_every: 1
+  eval_every: 1
+  log_every: 1
+eval:
+  audio_every: 2
+  max_frames: 4
+  codec: pretrained/Qwen3-TTS-Tokenizer-12Hz
+  asr: true
+  asr_model: small.en
