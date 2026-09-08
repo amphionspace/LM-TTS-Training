@@ -18,6 +18,8 @@ from qwen3_train.model import TTSModel, make_config
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--speaker", action="store_true")
+    parser.add_argument("--qwen-protocol", action="store_true")
+    parser.add_argument("--frozen-frontend", action="store_true")
     args = parser.parse_args()
     rank = int(os.environ["LOCAL_RANK"])
     torch.use_deterministic_algorithms(True)
@@ -35,7 +37,20 @@ def main():
         if args.speaker:
             from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
             speaker_config = Qwen3TTSSpeakerEncoderConfig(enc_dim=64, mel_dim=8, enc_channels=[16, 16, 16, 16, 48])
-        model = TTSModel(make_config(tiny=True), speaker_config).cuda()
+        config = make_config(tiny=True)
+        if args.qwen_protocol:
+            config.lm_tts_input_protocol = "qwen3_non_streaming"
+            config.lm_tts_text_projection = "identity"
+            config.lm_tts_pad_token_id = 20
+            config.lm_tts_role_ids = [21, 22, 23]
+            config.codec_nothink_id = 2151
+            config.codec_think_bos_id = 2152
+            config.codec_think_eos_id = 2153
+        if args.frozen_frontend:
+            config.text_hidden_size = 128
+            config.lm_tts_text_projection = "mlp"
+            config.lm_tts_freeze_text_frontend = True
+        model = TTSModel(config, speaker_config).cuda()
         reference = copy.deepcopy(model)
         mesh = init_device_mesh("cuda", (world,))
         policy = MixedPrecisionPolicy(param_dtype=torch.float32, reduce_dtype=torch.float32)
@@ -61,13 +76,17 @@ def main():
         largest = 0.0
         expected = dict(reference.named_parameters())
         for name, param in model.named_parameters():
+            if not param.requires_grad:
+                assert param.grad is None and expected[name].grad is None
+                torch.testing.assert_close(param.full_tensor(), expected[name], atol=0, rtol=0)
+                continue
             actual = param.grad.full_tensor()
             target = expected[name].grad
             torch.testing.assert_close(actual, target, atol=2e-6, rtol=2e-4)
             largest = max(largest, (actual - target).abs().max().item())
         if rank == 0:
             print(json.dumps({"status": "passed", "world_size": world, "accumulation": 2,
-                              "variable_lengths": True, "speaker": args.speaker, "max_gradient_absolute_error": largest}), flush=True)
+                              "variable_lengths": True, "speaker": args.speaker, "qwen_protocol": args.qwen_protocol, "frozen_frontend": args.frozen_frontend, "max_gradient_absolute_error": largest}), flush=True)
     finally:
         dist.destroy_process_group()
 

@@ -1,7 +1,4 @@
-"""Offline text-prefix TTS using official Qwen3-TTS Talker and depth predictor.
-
-The offline training protocol differs from the official generation protocol.
-"""
+"""Qwen3-TTS non-streaming training with a text Base initialization."""
 import json
 from pathlib import Path
 
@@ -22,8 +19,13 @@ class TTSModel(nn.Module):
         if self.speaker_encoder is not None:
             from .speaker import deterministic_speaker_padding
             deterministic_speaker_padding(self.speaker_encoder)
-        if speaker_config is None:
+        if (speaker_config is None and not hasattr(config, "lm_tts_text_projection")) or getattr(config, "lm_tts_text_projection", "mlp") == "identity":
+            if config.text_hidden_size != config.hidden_size:
+                raise ValueError("Direct text embeddings require matching backbone width")
             self.talker.text_projection = nn.Identity()
+        if getattr(config, "lm_tts_freeze_text_frontend", False):
+            self.talker.model.text_embedding.requires_grad_(False)
+            self.talker.text_projection.requires_grad_(False)
         self.groups = config.num_code_groups
         self.code_size = config.code_predictor_config.vocab_size
         self.bos = config.codec_bos_id
@@ -65,20 +67,51 @@ class TTSModel(nn.Module):
             value = value + self.talker.code_predictor.get_input_embeddings()[g - 1](codes[..., g])
         return value
 
-    def hidden(self, batch):
+    def input_embeddings(self, batch):
         text = self.talker.text_projection(self.talker.model.text_embedding(batch["text_ids"]))
-        if self.speaker_encoder is not None:
-            speaker = self.speaker_encoder(batch["speaker_mels"]).unsqueeze(1)
-            text = torch.cat([text, speaker.to(text.dtype)], dim=1)
         frames = self.frame_embeddings(batch["codes"])
         bos = self.talker.model.codec_embedding.weight[self.bos].expand(text.shape[0], 1, -1)
-        # [text, optional speaker, audio BOS, historical frames]; BOS predicts frame_0.
-        embeds = torch.cat([text, bos, frames], dim=1)
-        mask = torch.cat([batch["text_mask"], torch.ones(text.shape[0], 2 if self.speaker_encoder is not None else 1, dtype=torch.bool, device=text.device), batch["frame_mask"]], dim=1)
+        speaker = None
+        if self.speaker_encoder is not None:
+            speaker = self.speaker_encoder(batch["speaker_mels"]).unsqueeze(1).to(text.dtype)
+        protocol = getattr(self.config, "lm_tts_input_protocol", "legacy_prefix")
+        if protocol == "qwen3_non_streaming":
+            # Auto-language path of the official non-streaming generate().
+            # text_ids already contain tts_text_bos and tts_text_eod.
+            embedding = self.talker.model.codec_embedding
+            pad_id = batch["text_ids"].new_tensor([self.config.lm_tts_pad_token_id])
+            text_pad = self.talker.text_projection(self.talker.model.text_embedding(pad_id))[None]
+            role_ids = batch["text_ids"].new_tensor(self.config.lm_tts_role_ids)
+            role = self.talker.text_projection(self.talker.model.text_embedding(role_ids))[None].expand(text.shape[0], -1, -1)
+            control_ids = batch["text_ids"].new_tensor([
+                self.config.codec_nothink_id, self.config.codec_think_bos_id,
+                self.config.codec_think_eos_id])
+            controls = embedding(control_ids)[None].expand(text.shape[0], -1, -1) + text_pad
+            if speaker is not None:
+                controls = torch.cat([controls, speaker + text_pad], dim=1)
+            text = text + embedding.weight[self.config.codec_pad_id]
+            prefix = torch.cat([role, controls, text], dim=1)
+            prefix_mask = torch.cat([torch.ones(prefix.shape[0], role.shape[1] + controls.shape[1],
+                                               dtype=torch.bool, device=text.device), batch["text_mask"]], dim=1)
+            bos = bos + text_pad
+            frames = frames + text_pad
+        elif protocol == "legacy_prefix":
+            prefix = torch.cat([text, speaker], dim=1) if speaker is not None else text
+            prefix_mask = batch["text_mask"]
+            if speaker is not None:
+                prefix_mask = torch.cat([prefix_mask, torch.ones(text.shape[0], 1, dtype=torch.bool, device=text.device)], dim=1)
+        else:
+            raise ValueError(f"Unknown input protocol: {protocol}")
+        embeds = torch.cat([prefix, bos, frames], dim=1)
+        mask = torch.cat([prefix_mask, torch.ones(text.shape[0], 1, dtype=torch.bool, device=text.device), batch["frame_mask"]], dim=1)
+        return embeds, mask, prefix.shape[1]
+
+    def hidden(self, batch):
+        embeds, mask, prefix_length = self.input_embeddings(batch)
         positions = (mask.long().cumsum(-1) - 1).clamp_min(0)
         outputs = self.talker.model(inputs_embeds=embeds, attention_mask=mask,
                                     position_ids=positions, use_cache=False)
-        return outputs.last_hidden_state[:, text.shape[1]:]
+        return outputs.last_hidden_state[:, prefix_length:]
 
     def forward(self, batch, mode="loss"):
         hidden = self.hidden(batch)

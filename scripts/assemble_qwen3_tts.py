@@ -43,8 +43,16 @@ def main():
     p.add_argument("--output", required=True)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--dtype", choices=["bfloat16", "float32"], default="bfloat16")
+    p.add_argument("--text-projection-init", choices=["pretrained", "identity", "random", "near-identity"], default=None)
+    p.add_argument("--text-initialization", choices=["qwen-tts", "text-base"], default="qwen-tts")
+    p.add_argument("--train-text-frontend", action="store_true", help="Unfreeze text embedding and projection; default freezes both")
+    p.add_argument("--input-protocol", choices=["qwen3_non_streaming", "legacy_prefix"], default="qwen3_non_streaming")
     p.add_argument("--audit-only", action="store_true", help="Write a JSON report; do not download weights or build a model")
     args = p.parse_args()
+    if args.text_projection_init is None:
+        args.text_projection_init = "pretrained" if args.text_initialization == "qwen-tts" else "identity"
+    if (args.text_initialization == "qwen-tts") != (args.text_projection_init == "pretrained"):
+        p.error("qwen-tts initialization requires pretrained projection; other modes require --text-initialization text-base")
     torch.set_num_threads(4)
     destination = Path(args.output).resolve()
     if destination.exists():
@@ -53,8 +61,9 @@ def main():
     # Audit dimensions and tokenizer identities before fetching large weights.
     for name in ["backbone", "tts_template"]:
         paths[name] = resolve(getattr(args, name), getattr(args, name + "_revision"), weights=False)
-    config, tokenizer, report = audit_sources(paths["backbone"], paths["tts_template"])
-    report.update(format_version=1, seed=args.seed, dtype=args.dtype)
+    config, tokenizer, report = audit_sources(paths["backbone"], paths["tts_template"], args.text_projection_init, args.input_protocol,
+                                               args.text_initialization, not args.train_text_frontend)
+    report.update(format_version=2, seed=args.seed, dtype=args.dtype, text_projection_init=args.text_projection_init)
     report["sources"] = {name: {"requested": getattr(args, name), "revision": getattr(args, name + "_revision")}
                          for name in DEFAULTS}
     if args.audit_only:
@@ -70,8 +79,9 @@ def main():
             report["sources"][name]["local_revision_marker"] = marker.read_text().strip()
         report["sources"][name]["config_sha256"] = sha256(paths[name] / "config.json")
     model = initialize_model(config, paths["backbone"], paths["tts_template"],
-                             report["text_vocabulary"]["added_tokens"], getattr(torch, args.dtype), args.seed)
+                             report["text_vocabulary"]["added_tokens"], getattr(torch, args.dtype), args.seed, args.text_projection_init, args.text_initialization)
     report["parameters"] = {"total": sum(p.numel() for p in model.parameters()),
+                            "trainable": sum(p.numel() for p in model.parameters() if p.requires_grad),
                             "talker": sum(p.numel() for p in model.talker.parameters()),
                             "speaker_encoder": sum(p.numel() for p in model.speaker_encoder.parameters())}
     temporary = destination.with_name(destination.name + ".incomplete-" + uuid.uuid4().hex[:8])

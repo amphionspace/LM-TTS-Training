@@ -10,3 +10,5 @@ PyYAML==6.0.2
 safetensors==0.6.2
 tensorboard==2.20.0
 faster-whisper==1.2.1
+av==17.1.0
+scipy==1.15.3

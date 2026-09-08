@@ -21,7 +21,7 @@ from transformers import AutoConfig
 
 from .checkpoint import load_checkpoint, save_checkpoint
 from .data import CodeDataset, collate, train_batches, val_batches
-from .metrics import ASRScorer, aggregate_content
+from .metrics import ASRScorer, aggregate_content, english_metrics
 from .model import TTSModel, make_config
 
 
@@ -60,11 +60,12 @@ def validate(model, dataset, batch_size, device):
 
 
 @torch.no_grad()
-def generate_sample(model, dataset, device, settings, output, step, writer, index=0, multi=False):
+def generate_sample(model, dataset, device, settings, output, step, writer, index=0, multi=False,
+                    codec=None, scorer=None, tag_prefix="eval"):
     from qwen_tts import Qwen3TTSTokenizer
     model.eval()
     row = dataset[index]
-    tag = f"eval/sample_{index:02d}" if multi else "eval"
+    tag = f"{tag_prefix}/sample_{index:02d}" if multi else tag_prefix
     batch = move(collate([row]), device)
     batch["codes"] = batch["codes"][:, :0]
     batch["frame_mask"] = batch["frame_mask"][:, :0]
@@ -95,27 +96,37 @@ def generate_sample(model, dataset, device, settings, output, step, writer, inde
             folder = folder / f"sample-{index:02d}"
         folder.mkdir(parents=True, exist_ok=True)
         if generated:
-            # CPU codec avoids keeping frozen codec parameters on training GPUs.
-            codec = Qwen3TTSTokenizer.from_pretrained(settings["codec"], device_map="cpu")
-            codec.model.eval().requires_grad_(False)
+            if codec is None:
+                codec = Qwen3TTSTokenizer.from_pretrained(settings["codec"], device_map=settings.get("codec_device", "cpu"))
+                codec.model.eval().requires_grad_(False)
             audio, sr = codec.decode({"audio_codes": [torch.stack(generated)]})
             audio_path = folder / "generated.wav"
             sf.write(audio_path, audio[0], sr)
             result["duration_seconds"] = len(audio[0]) / sr
             result["duration_ratio"] = result["duration_seconds"] / row["duration"]
             writer.add_audio(f"{tag}/generated", np.asarray(audio[0])[None], step, sample_rate=sr)
-            ref_audio, ref_sr = sf.read(row["audio"], dtype="float32")
+            from .sources import evaluation_audio
+            target_audio = evaluation_audio(row)
+            ref_audio, ref_sr = sf.read(target_audio, dtype="float32")
             writer.add_audio(f"{tag}/reference", ref_audio[None], step, sample_rate=ref_sr)
             if settings.get("asr", True):
-                scorer = ASRScorer(settings.get("asr_model", "small.en"))
+                if scorer is None:
+                    scorer = ASRScorer(settings.get("asr_model", "small.en"))
                 result["content"] = scorer.score(audio_path, row["text"])
-                result["reference_asr"] = scorer.score(row["audio"], row["text"])
+                result["reference_asr"] = scorer.score(target_audio, row["text"])
+                if settings.get("english_normalization", False):
+                    for key in ["content", "reference_asr"]:
+                        result["english_" + key] = english_metrics(row["text"], result[key]["transcript"])
+                    for key in ["wer", "cer"]:
+                        writer.add_scalar(f"{tag}/english_{key}", result["english_content"][key], step)
                 for name in ["wer", "cer", "deletions", "insertions", "substitutions"]:
                     writer.add_scalar(f"{tag}/{name}", result["content"][name], step)
                 writer.add_scalar(f"{tag}/reference_asr_wer", result["reference_asr"]["wer"], step)
         else:
             from .metrics import content_metrics
             result["content"] = content_metrics(row["text"], "")
+            if settings.get("english_normalization", False):
+                result["english_content"] = english_metrics(row["text"], "")
             writer.add_scalar(f"{tag}/wer", 1.0, step)
             writer.add_scalar(f"{tag}/cer", 1.0, step)
         writer.add_scalar(f"{tag}/truncated", int(result["truncated"]), step)
@@ -128,22 +139,38 @@ def generate_sample(model, dataset, device, settings, output, step, writer, inde
     return result
 
 
-def evaluate_audio(model, val_data, device, eval_settings, output, step, writer):
+def evaluate_audio(model, val_data, device, eval_settings, output, step, writer, train_data=None):
     # Evaluation may create models and consume RNG; isolate it from training.
     python_state, numpy_state = random.getstate(), np.random.get_state()
     with torch.random.fork_rng(devices=[device.index]):
-        sample_count = min(len(val_data), eval_settings.get("num_samples", 1))
-        if sample_count < 1:
-            raise ValueError("eval.num_samples must be positive")
-        samples = [generate_sample(model, val_data, device, eval_settings, output, step, writer,
-                                   index=i, multi=sample_count > 1) for i in range(sample_count)]
-        if dist.get_rank() == 0 and all("content" in sample for sample in samples):
-            summary = aggregate_content([sample["content"] for sample in samples])
-            summary["truncation_rate"] = sum(s["truncated"] for s in samples) / len(samples)
-            for key in ["wer", "cer", "truncation_rate"]:
-                writer.add_scalar(f"eval/{key}", summary[key], step)
-            (output / "evaluation" / f"step-{step:08d}" / "summary.json").write_text(json.dumps(summary, indent=2))
-            writer.flush()
+        from qwen_tts import Qwen3TTSTokenizer
+        codec, scorer = None, None
+        if dist.get_rank() == 0:
+            codec = Qwen3TTSTokenizer.from_pretrained(eval_settings["codec"], device_map=eval_settings.get("codec_device", "cpu"))
+            codec.model.eval().requires_grad_(False)
+            if eval_settings.get("asr", True):
+                scorer = ASRScorer(eval_settings.get("asr_model", "small.en"))
+        selections = [("eval", val_data, output, eval_settings.get("num_samples", 1))]
+        if train_data is not None and eval_settings.get("train_num_samples", 0):
+            selections.append(("train_eval", train_data, output / "train-evaluation", eval_settings["train_num_samples"]))
+        for tag, dataset, folder, count in selections:
+            sample_count = min(len(dataset), count)
+            if sample_count < 1:
+                raise ValueError("Evaluation sample count must be positive")
+            samples = [generate_sample(model, dataset, device, eval_settings, folder, step, writer,
+                                       index=i, multi=sample_count > 1, codec=codec, scorer=scorer, tag_prefix=tag)
+                       for i in range(sample_count)]
+            if dist.get_rank() == 0 and all("content" in sample for sample in samples):
+                summary = aggregate_content([sample["content"] for sample in samples])
+                if all("english_content" in sample for sample in samples):
+                    summary["english"] = aggregate_content([sample["english_content"] for sample in samples])
+                    for key in ["wer", "cer"]:
+                        writer.add_scalar(f"{tag}/english_{key}", summary["english"][key], step)
+                summary["truncation_rate"] = sum(s["truncated"] for s in samples) / len(samples)
+                for key in ["wer", "cer", "truncation_rate"]:
+                    writer.add_scalar(f"{tag}/{key}", summary[key], step)
+                (folder / "evaluation" / f"step-{step:08d}" / "summary.json").write_text(json.dumps(summary, indent=2))
+                writer.flush()
     random.setstate(python_state)
     np.random.set_state(numpy_state)
 
@@ -229,6 +256,8 @@ def main():
         configure_fsdp(model, device)
         pretrained, fresh = [], []
         for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
             if name.startswith(("talker.model.layers.", "talker.model.norm.", "talker.model.text_embedding.", "speaker_encoder.")):
                 pretrained.append(param)
             else:
@@ -274,17 +303,23 @@ def main():
                 eval_settings["num_samples"] = args.eval_samples
             if rank == 0:
                 print(json.dumps({"step": progress["step"], "val": val}), flush=True)
-            evaluate_audio(model, val_data, device, eval_settings, output, progress["step"], writer)
+            evaluate_audio(model, val_data, device, eval_settings, output, progress["step"], writer, train_data)
             return
+        cached_plan, cached_epoch = None, None
         while progress["step"] < settings["max_steps"]:
+            torch.cuda.reset_peak_memory_stats(device)
             start = time.perf_counter()
             batches = []
             for _ in range(settings["accumulation"]):
-                plan = train_batches(train_data, settings["batch_size"], world, rank, seed, progress["epoch"])
+                if cached_epoch != progress["epoch"]:
+                    cached_plan = train_batches(train_data, settings["batch_size"], world, rank, seed, progress["epoch"])
+                    cached_epoch = progress["epoch"]
+                plan = cached_plan
                 if progress["next_batch"] == len(plan):
                     progress["epoch"] += 1
                     progress["next_batch"] = 0
                     plan = train_batches(train_data, settings["batch_size"], world, rank, seed, progress["epoch"])
+                    cached_plan, cached_epoch = plan, progress["epoch"]
                 indices = plan[progress["next_batch"]]
                 batches.append(collate([train_data[i] for i in indices]))
                 progress["next_batch"] += 1
@@ -320,7 +355,8 @@ def main():
             dist.all_reduce(sums)
             elapsed = time.perf_counter() - start
             metrics = {"first_ce": (sums[0] / counts[0]).item(), "residual_ce": (sums[1] / counts[1]).item(),
-                       "grad_norm": norm.item(), "audio_seconds_per_second": counts[1].item() / 15 / 12.5 / elapsed,
+                       "grad_norm": norm.item(), "peak_memory_gib": torch.cuda.max_memory_allocated(device) / 2**30,
+                       "audio_seconds_per_second": counts[1].item() / 15 / 12.5 / elapsed,
                        "step_seconds": elapsed, "lr_backbone": optimizer.param_groups[0]["lr"], "lr_new": optimizer.param_groups[1]["lr"]}
             if speaker_grad_norm is not None:
                 metrics["speaker_grad_norm"] = speaker_grad_norm
@@ -341,7 +377,7 @@ def main():
                     print(json.dumps({"step": step, "val": val}), flush=True)
             audio_every = config["eval"].get("audio_every", 0)
             if audio_every and step % audio_every == 0:
-                evaluate_audio(model, val_data, device, config["eval"], output, step, writer)
+                evaluate_audio(model, val_data, device, config["eval"], output, step, writer, train_data)
     finally:
         if writer:
             writer.close()

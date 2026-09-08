@@ -1,0 +1,143 @@
+"""Materialize a pilot raw manifest and cache frozen codec features for training."""
+import argparse
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import json
+from pathlib import Path
+import random
+import numpy as np
+import soundfile as sf
+import torch
+from qwen_tts import Qwen3TTSTokenizer
+from transformers import AutoTokenizer
+from qwen3_train.sources import materialize_audio
+from qwen3_train.assembly import sha256
+from qwen3_train.metrics import normalize
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('--manifest', required=True)
+    p.add_argument('--output', required=True)
+    p.add_argument('--codec', default='pretrained/Qwen3-TTS-Tokenizer-12Hz')
+    p.add_argument('--tokenizer', default='pretrained/assembled-qwen3-tts-official-frozen')
+    p.add_argument('--device', default='cpu')
+    p.add_argument('--val-count', type=int, default=8)
+    p.add_argument('--seed', type=int, default=42)
+    p.add_argument('--batch-size', type=int, default=16)
+    p.add_argument('--workers', type=int, default=8)
+    p.add_argument('--keep-audio', action='store_true')
+    p.add_argument('--max-text-tokens', type=int, default=256)
+    args = p.parse_args()
+    torch.set_num_threads(4)
+    root = Path(args.output).resolve()
+    if args.val_count < 1 or args.batch_size < 1 or args.workers < 1:
+        p.error('Counts must be positive')
+    recipe = {**vars(args), 'format_version': 2, 'validation_text_disjoint': True,
+              'raw_manifest_sha256': sha256(Path(args.manifest)),
+              'codec_sha256': {path.name: sha256(path) for path in sorted(Path(args.codec).glob('*'))
+                                if path.suffix == '.safetensors' or path.name == 'config.json'},
+              'tokenizer_sha256': sha256(Path(args.tokenizer) / 'tokenizer.json')}
+    if root.exists():
+        if not (root / 'recipe.json').exists() or json.loads((root / 'recipe.json').read_text()) != recipe:
+            p.error('Output recipe differs; use a new directory')
+    records = [json.loads(line) for line in Path(args.manifest).read_text().splitlines() if line.strip()]
+    if any(row['schema_version'] != 1 for row in records):
+        raise ValueError('Unsupported raw manifest schema')
+    if len({r['id'] for r in records}) != len(records):
+        raise ValueError('Duplicate IDs in raw manifest')
+    for row in records:
+        if row['source']['dataset'] == 'emilia2' and row['source']['type'] != 'short':
+            raise ValueError('Only top-level Emilia short records are allowed')
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+    for record in records:
+        record['text_ids'] = tokenizer.encode(record['text'], add_special_tokens=False)
+    rejected_text = sum(not 0 < len(r['text_ids']) <= args.max_text_tokens for r in records)
+    records = [r for r in records if 0 < len(r['text_ids']) <= args.max_text_tokens]
+    counts = Counter(r['speaker'] for r in records)
+    eligible = [r for r in records if counts[r['speaker']] >= 2]
+    discarded = len(records) - len(eligible)
+    random.Random(args.seed).shuffle(eligible)
+    text_counts = Counter(normalize(r['text']) for r in eligible)
+    val_ids = set()
+    for row in eligible:
+        if len(val_ids) < args.val_count and counts[row['speaker']] > 2 and text_counts[normalize(row['text'])] == 1:
+            val_ids.add(row['id'])
+            counts[row['speaker']] -= 1
+    if len(val_ids) != args.val_count:
+        raise ValueError('Not enough utterances to hold out validation and retain two training recordings per speaker')
+    anchors = {}
+    for row in eligible:
+        if row['id'] not in val_ids and len(anchors.get(row['speaker'], [])) < 2:
+            anchors.setdefault(row['speaker'], []).append(row['id'])
+    retained = {uid for values in anchors.values() for uid in values}
+    root.mkdir(parents=True, exist_ok=True)
+    (root / 'codes').mkdir(exist_ok=True)
+    (root / 'recipe.json').write_text(json.dumps(recipe, indent=2))
+    codec = Qwen3TTSTokenizer.from_pretrained(args.codec, device_map=args.device)
+    codec.model.eval().requires_grad_(False)
+    rows = []
+    total_seconds = 0.
+    def prepare_audio(record):
+        stem = hashlib.sha256(record['id'].encode()).hexdigest()
+        destination = root / 'audio' / f'{stem}.wav'
+        code_file = root / 'codes' / f'{stem}.npz'
+        if code_file.exists() and not args.keep_audio and record['id'] not in retained and record['audio']['kind'] == 'tar_member':
+            return destination, code_file
+        audio = destination if destination.exists() else materialize_audio(record, destination)
+        return audio, code_file
+    with ThreadPoolExecutor(max_workers=args.workers) as workers:
+        for start in range(0, len(eligible), args.batch_size):
+            batch = eligible[start:start + args.batch_size]
+            paths = list(workers.map(prepare_audio, batch))
+            pending = [i for i, (_, code_file) in enumerate(paths) if not code_file.exists()]
+            if pending:
+                with torch.inference_mode():
+                    encoded = codec.encode([str(paths[i][0]) for i in pending]).audio_codes
+                if len(encoded) != len(pending):
+                    raise ValueError('Codec batch length mismatch')
+                for index, tensor in zip(pending, encoded):
+                    codes = tensor.cpu().numpy().astype(np.uint16)
+                    code_file = paths[index][1]
+                    if codes.ndim != 2 or codes.shape[1] != 16 or not len(codes) or codes.max() >= 2048:
+                        raise ValueError(f"Invalid codec output: {batch[index]['id']}")
+                    with code_file.with_suffix('.incomplete').open('wb') as stream:
+                        np.savez(stream, codes=codes)
+                    code_file.with_suffix('.incomplete').replace(code_file)
+            for record, (audio, code_file) in zip(batch, paths):
+                with np.load(code_file, allow_pickle=False) as saved:
+                    codes = saved['codes']
+                    if codes.ndim != 2 or codes.shape[1] != 16 or not len(codes) or codes.max() >= 2048:
+                        raise ValueError(f'Invalid cached codes: {code_file}')
+                    frames = len(codes)
+                reference_id = next(uid for uid in anchors[record['speaker']] if uid != record['id'])
+                locator = record['audio']
+                audio_duration = ((locator['frames'] * 24000 + locator['sample_rate'] - 1) // locator['sample_rate']) / 24000 if locator['kind'] == 'tar_member' else sf.info(audio).duration
+                rows.append({**record, 'audio': str(audio), 'audio_source': record['audio'],
+                    'speaker_reference_id': reference_id,
+                    'duration': audio_duration, 'text_ids': record['text_ids'],
+                    'codes': str(code_file.relative_to(root)), 'num_frames': frames,
+                    'codes_sha256': hashlib.sha256(code_file.read_bytes()).hexdigest()})
+                total_seconds += rows[-1]['duration']
+                if audio.exists() and not args.keep_audio and record['id'] not in retained and record['audio']['kind'] == 'tar_member':
+                    audio.unlink()
+            print(json.dumps({'prepared': len(rows), 'total': len(eligible),
+                              'hours': total_seconds / 3600}), flush=True)
+    for split in ['train', 'val']:
+        subset = [r for r in rows if (r['id'] in val_ids) == (split == 'val')]
+        temporary = root / f'{split}.incomplete'
+        temporary.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in subset))
+        temporary.replace(root / f'{split}.jsonl')
+    report = {**vars(args), 'raw_manifest_sha256': hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest(),
+              'train': len(rows) - len(val_ids), 'val': len(val_ids),
+              'rejected_text_records': rejected_text, 'validation_text_disjoint': True,
+              'train_hours': sum(r['duration'] for r in rows if r['id'] not in val_ids) / 3600, 'discarded_singleton_speakers_records': discarded,
+              'hours': sum(r['duration'] for r in rows) / 3600}
+    (root / 'preparation.json').write_text(json.dumps(report, indent=2))
+    (root / 'PREPARATION_COMPLETE').write_text('ok\n')
+    print(json.dumps(report))
+
+
+if __name__ == '__main__':
+    main()

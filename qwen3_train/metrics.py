@@ -42,6 +42,12 @@ def content_metrics(reference, hypothesis):
             "normalized_reference": ref, "normalized_hypothesis": hyp}
 
 
+def english_metrics(reference, hypothesis):
+    from transformers.models.whisper.english_normalizer import EnglishTextNormalizer
+    normalizer = EnglishTextNormalizer({})
+    return content_metrics(normalizer(reference), normalizer(hypothesis))
+
+
 class ASRScorer:
     def __init__(self, model="small.en"):
         from faster_whisper import WhisperModel

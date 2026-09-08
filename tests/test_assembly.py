@@ -1,4 +1,5 @@
 import tempfile
+import copy
 import json
 import unittest
 from pathlib import Path
@@ -37,7 +38,8 @@ class AssemblyTests(unittest.TestCase):
         source = Qwen3Model(Qwen3Config(hidden_size=64, intermediate_size=128, num_hidden_layers=2,
             num_attention_heads=4, num_key_value_heads=2, head_dim=16, vocab_size=256,
             rope_theta=talker.rope_theta, rms_norm_eps=talker.rms_norm_eps))
-        speaker = Qwen3TTSForConditionalGeneration(config).speaker_encoder
+        donor_model = Qwen3TTSForConditionalGeneration(config)
+        speaker = donor_model.speaker_encoder
         with torch.no_grad():
             source.embed_tokens.weight[7].fill_(123)
         with tempfile.TemporaryDirectory() as folder:
@@ -45,8 +47,41 @@ class AssemblyTests(unittest.TestCase):
             donor = Path(folder) / "speaker"
             donor.mkdir()
             source.save_pretrained(base)
-            save_file({"speaker_encoder." + k: v.contiguous() for k, v in speaker.state_dict().items()}, donor / "model.safetensors")
+            save_file({k: v.contiguous() for k, v in donor_model.state_dict().items()}, donor / "model.safetensors")
             assembled = initialize_model(config, base, donor, {"<new_tts>": 7}, dtype=torch.float32)
+            near = initialize_model(config, base, donor, {"<new_tts>": 7}, dtype=torch.float32,
+                                    text_projection_init="near-identity")
+            for key, tensor in assembled.state_dict().items():
+                if key not in ("talker.text_projection.linear_fc1.weight", "talker.text_projection.linear_fc2.weight"):
+                    torch.testing.assert_close(near.state_dict()[key], tensor, atol=0, rtol=0)
+            text = near.talker.model.text_embedding.weight[10:40]
+            projected = near.talker.text_projection(text)
+            self.assertGreater(torch.nn.functional.cosine_similarity(text, projected).mean().item(), 0.999)
+            self.assertLess(((projected - text).square().mean() / text.square().mean()).sqrt().item(), 0.04)
+            direct = initialize_model(copy.deepcopy(config), base, donor, {"<new_tts>": 7}, dtype=torch.float32,
+                                      text_projection_init="identity")
+            self.assertIsInstance(direct.talker.text_projection, torch.nn.Identity)
+            for key, tensor in direct.state_dict().items():
+                torch.testing.assert_close(tensor, assembled.state_dict()[key], atol=0, rtol=0)
+            direct_saved = Path(folder) / "direct"
+            save_model(direct, direct_saved)
+            (direct_saved / "ASSEMBLY_COMPLETE").write_text("ok")
+            (direct_saved / "assembly_report.json").write_text(json.dumps({"artifact_sha256": {
+                path.name: sha256(path) for path in direct_saved.iterdir() if path.suffix in [".json", ".safetensors"]}}))
+            restored = TTSModel.from_assembled(direct_saved)
+            self.assertIsInstance(restored.talker.text_projection, torch.nn.Identity)
+            for key, tensor in direct.talker.state_dict().items():
+                torch.testing.assert_close(restored.talker.state_dict()[key], tensor, atol=0, rtol=0)
+            frozen_config = copy.deepcopy(config)
+            frozen_config.talker_config.lm_tts_freeze_text_frontend = True
+            frozen = initialize_model(frozen_config, base, donor, {"<new_tts>": 7}, dtype=torch.float32,
+                                      text_projection_init="pretrained", text_initialization="qwen-tts")
+            for module in ['text_projection', 'model.text_embedding']:
+                expected = donor_model.talker.get_submodule(module)
+                actual = frozen.talker.get_submodule(module)
+                for key, tensor in expected.state_dict().items():
+                    torch.testing.assert_close(actual.state_dict()[key], tensor, atol=0, rtol=0)
+                self.assertTrue(all(not p.requires_grad for p in actual.parameters()))
             saved = Path(folder) / "assembled"
             save_model(assembled, saved)
             (saved / "ASSEMBLY_COMPLETE").write_text("ok")

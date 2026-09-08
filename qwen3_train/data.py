@@ -24,8 +24,15 @@ class CodeDataset:
         for row in pool.rows:
             if row.get("speaker"):
                 by_speaker.setdefault(row["speaker"], []).append(row)
+        by_id = {row['id']: row for row in pool.rows}
         self.references = []
         for row in self.rows:
+            if row.get('speaker_reference_id'):
+                reference = by_id.get(row['speaker_reference_id'])
+                if reference is None or reference.get('speaker') != row.get('speaker') or reference['id'] == row['id'] or reference['audio'] == row['audio']:
+                    raise ValueError(f"Invalid training-pool reference for {row['id']}")
+                self.references.append(str(Path(reference['audio']).resolve()))
+                continue
             candidates = [r for r in by_speaker.get(row.get("speaker"), [])
                           if r["id"] != row["id"] and r["audio"] != row["audio"]]
             if not candidates:
