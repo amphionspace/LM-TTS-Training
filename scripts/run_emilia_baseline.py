@@ -65,7 +65,7 @@ def main():
         checked('prepare', [python, 'scripts/prepare_manifest.py', '--manifest', str(manifest),
             '--output', str(preparation), '--tokenizer', config['model']['assembled_model'],
             '--codec', config['eval']['codec'], '--device', 'cuda:0', '--secondary-device', 'cuda:1', '--batch-size', '16',
-            '--workers', '8', '--val-count', '512'])
+            '--workers', '8', '--decode-processes', '8', '--val-count', '512'])
         report = json.loads((preparation / 'preparation.json').read_text())
         if not (preparation / 'PREPARATION_COMPLETE').exists():
             raise RuntimeError('Preparation completion marker missing')

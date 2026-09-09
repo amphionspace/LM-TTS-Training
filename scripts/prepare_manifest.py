@@ -1,11 +1,12 @@
 """Materialize a pilot raw manifest and cache frozen codec features for training."""
 import argparse
 from collections import Counter, deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from contextlib import ExitStack
 import hashlib
 import io
 import json
+import multiprocessing
 from pathlib import Path
 import random
 import numpy as np
@@ -30,14 +31,15 @@ def main():
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--batch-size', type=int, default=16)
     p.add_argument('--workers', type=int, default=8)
+    p.add_argument('--decode-processes', type=int, default=0, help='CPU decode processes; zero uses the I/O threads')
     p.add_argument('--keep-audio', action='store_true')
     p.add_argument('--max-text-tokens', type=int, default=256)
     args = p.parse_args()
     torch.set_num_threads(4)
     root = Path(args.output).resolve()
-    if args.val_count < 1 or args.batch_size < 1 or args.workers < 1:
+    if args.val_count < 1 or args.batch_size < 1 or args.workers < 1 or args.decode_processes < 0:
         p.error('Counts must be positive')
-    recipe = {**{k: v for k, v in vars(args).items() if k != 'secondary_device'}, 'format_version': 3, 'validation_text_disjoint': True,
+    recipe = {**{k: v for k, v in vars(args).items() if k not in ['secondary_device', 'decode_processes']}, 'format_version': 3, 'validation_text_disjoint': True,
               'audio_length_policy': 'trim_aac_padding_1023_or_pad_tail_up_to_1ms',
               'raw_manifest_sha256': sha256(Path(args.manifest)),
               'codec_sha256': {path.name: sha256(path) for path in sorted(Path(args.codec).glob('*'))
@@ -109,7 +111,7 @@ def main():
                 if rate != 24000:
                     raise ValueError(f'Prepared audio sample rate changed: {destination}')
             else:
-                waveform = decode_emilia_audio(record)
+                waveform = decoder_executor.submit(decode_emilia_audio, record).result() if decoder_executor else decode_emilia_audio(record)
                 if keep:
                     write_prepared_audio(waveform, destination)
             return destination, code_file, None if cached else waveform
@@ -117,6 +119,8 @@ def main():
         waveform = None if cached else codecs[0].load_audio(str(audio), target_sr=24000)
         return audio, code_file, waveform
     with ExitStack() as stack:
+        decoder_executor = stack.enter_context(ProcessPoolExecutor(max_workers=args.decode_processes,
+            mp_context=multiprocessing.get_context('spawn'))) if args.decode_processes else None
         workers = stack.enter_context(ThreadPoolExecutor(max_workers=args.workers))
         encoders = [stack.enter_context(ThreadPoolExecutor(max_workers=1)) for _ in codecs]
         def process_batch(batch, codec):

@@ -37,7 +37,7 @@ Emilia 使用 `.tar.idx` 的 member/offset/size 随机读取；不解包整个 t
 
 raw `audio` 是 locator；prepared `audio_source` 保留它，`audio` 是按需落盘位置。m4a 通过 PyAV 使用 FFmpeg 的 MP4 demuxer，处理 edit list；先按原始 44.1 kHz 解码，按 `frames` 裁掉 AAC 尾部 padding，再重采样为 24 kHz。允许最多 1,023 点的 AAC 尾部 padding；对于不超过 1 毫秒的解码尾部缺口，补零到标注长度并在日志记录样本 ID 和采样点数。更大偏差仍失败，不拉伸音频。不使用忽略编码延迟的解码方式。
 
-每 speaker 训练池至少保留两条录音；选两个 anchor，并记录 `speaker_reference_id`。同一条录音不能引用自己，验证不能引用验证池。普通目标音频解码后以 float32 波形直接批量送入 codec，不写临时 WAV；参考 WAV 保留；评估原音频按需重建。codec 批量编码，CPU 解码线程与 GPU 编码配合。两个 GPU 各有独立 codec 实例，处理互不重叠的 batch，按原始顺序收集结果；每设备最多一个在途 batch，避免无限预取占内存。GPU 数量不改变清单划分或缓存 recipe；batch size 仍是 recipe 的一部分。
+每 speaker 训练池至少保留两条录音；选两个 anchor，并记录 `speaker_reference_id`。同一条录音不能引用自己，验证不能引用验证池。普通目标音频解码后以 float32 波形直接批量送入 codec，不写临时 WAV；参考 WAV 保留；评估原音频按需重建。codec 批量编码，CPU 解码线程与 GPU 编码配合。CPU 解码使用 8 个 spawn 进程，避免 PyAV/Python 解码被同一进程的 GIL 限制；不从已经初始化 CUDA 的进程 fork。解码进程数与 GPU 数量属于执行参数，不改变缓存 recipe。两个 GPU 各有独立 codec 实例，处理互不重叠的 batch，按原始顺序收集结果；每设备最多一个在途 batch，避免无限预取占内存。GPU 数量不改变清单划分或缓存 recipe；batch size 仍是 recipe 的一部分。
 
 验证文本经规范化后与训练文本不重合；这是同说话人未见文本评估，不是未见说话人的 zero-shot 评估。
 
@@ -68,7 +68,7 @@ PYTHONPATH=. python scripts/prepare_manifest.py \
   --output /ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-en-1000h \
   --tokenizer pretrained/assembled-qwen3-tts-frozen-conditioning \
   --codec pretrained/Qwen3-TTS-Tokenizer-12Hz \
-  --device cuda:0 --secondary-device cuda:1 --batch-size 16 --workers 8 --val-count 512
+  --device cuda:0 --secondary-device cuda:1 --batch-size 16 --workers 8 --decode-processes 8 --val-count 512
 ```
 
 raw manifest 导出后，推荐用控制脚本接管预处理、显存测试及训练：

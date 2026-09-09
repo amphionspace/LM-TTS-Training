@@ -52,3 +52,7 @@ LJSpeech 合成长文本／长音频压力测试：batch 64 OOM；batch 48 完�
 ## 2026-09-09：checkpoint 空间管理
 
 清理了 38 个已完成的旧验证／恢复对照与中间 checkpoint，释放约 264.68 GiB。保留六个主要实验的最终 checkpoint，日志、评估和音频保留；被清理 checkpoint 的 metadata 归档到各 run 的 `checkpoint-metadata/`。明细为 `runs/checkpoint-cleanup-20260909.json`。后续训练默认保留最新两个完整 checkpoint，原子发布新的 `latest` 后才清理，未完成写入不受影响；对应删除边界已单元测试。
+
+## CPU 解码吞吐验证
+
+16 条真实音频分段计时，热身后 8 线程解码约 0.33–0.34 秒、codec 编码约 0.08–0.09 秒、顺序写缓存约 0.007–0.009 秒。8 个 spawn 解码进程热身后约 0.05 秒，16 条 PCM 与线程版本逐点一致。完整 13 条 pilot 的 codec 哈希与所有清单字段一致，改变解码进程数恢复缓存后清单字节一致。这是单批解码计时，不是完整训练吞吐的加速倍数。
