@@ -1,6 +1,15 @@
 # 环境、数据准备、训练与评估
 
-> 当前主线和完整自动运行入口见 [Emilia 1,000 小时基线](emilia-baseline.md)。本页保留早期 LJSpeech 调试入口，结构与初始化以当前基线文档为准。
+> 当前主线和完整自动运行入口见 [Emilia 1,000 小时基线](emilia-baseline.md)。本页保留早期 LJSpeech 调试记录。2026-09-09 已将旧配置归档至本机 `runs/cleanup-20260909/configs/`；旧实验初始化权重已清理，重新从初始化训练前需重建对应模型。历史 checkpoint 读取所需的配置、tokenizer 和 codec 保留。
+
+## 旧配置归档
+
+本机 `runs/` 归档不提交到 Git。其他环境执行下列命令，可从清理前的提交恢复本页历史命令使用的配置：
+
+```bash
+mkdir -p runs/cleanup-20260909
+git archive dd2922bb0b41d0541365d42143d835b14d1dd252 configs | tar -x -C runs/cleanup-20260909
+```
 
 独立工程：使用官方音频 codec 和模型组件，新写训练、数据、恢复和评估代码。
 原生 PyTorch FSDP2，当前支持单机多卡。首版针对 LJSpeech 做非流式文本到语音验证。
@@ -48,12 +57,12 @@ bash scripts/prepare_ljspeech.sh --limit 0 --val-count 128 --output data/ljspeec
 
 ## 组装模型训练与恢复
 
-推荐配置为 `configs/ljspeech-assembled.yaml`。先运行独立组装脚本：
+推荐配置为 `runs/cleanup-20260909/configs/ljspeech-assembled.yaml`。先运行独立组装脚本：
 
 ```bash
 python scripts/assemble_qwen3_tts.py --output pretrained/assembled-qwen3-tts-0.6b
-bash scripts/run_train.sh --config configs/ljspeech-assembled.yaml
-bash scripts/run_train.sh --config configs/ljspeech-assembled.yaml --resume latest
+bash scripts/run_train.sh --config runs/cleanup-20260909/configs/ljspeech-assembled.yaml
+bash scripts/run_train.sh --config runs/cleanup-20260909/configs/ljspeech-assembled.yaml --resume latest
 ```
 
 新路径使用 Qwen3-0.6B-Base、完整 TTS tokenizer、ResizeMLP 和可训练的预训练 Qwen ECAPA。
@@ -65,8 +74,8 @@ bash scripts/run_train.sh --config configs/ljspeech-assembled.yaml --resume late
 ## 基线训练与恢复
 
 ```bash
-NPROC_PER_NODE=2 bash scripts/run_train.sh --config configs/ljspeech.yaml
-NPROC_PER_NODE=2 bash scripts/run_train.sh --config configs/ljspeech.yaml --resume latest
+NPROC_PER_NODE=2 bash scripts/run_train.sh --config runs/cleanup-20260909/configs/ljspeech.yaml
+NPROC_PER_NODE=2 bash scripts/run_train.sh --config runs/cleanup-20260909/configs/ljspeech.yaml --resume latest
 # --max-steps 可以提前停止，保持配置中的 schedule_steps 学习率曲线不变。
 ```
 
@@ -103,10 +112,10 @@ ASR 有自身误差，WER/CER 不能替代自然度、音色相似度和人工�
 ## 独立评估已有 checkpoint
 
 ```bash
-bash scripts/run_train.sh --config configs/ljspeech-integration.yaml --resume latest --eval-only --eval-samples 2
+bash scripts/run_train.sh --config runs/cleanup-20260909/configs/ljspeech-integration.yaml --resume latest --eval-only --eval-samples 2
 ```
 
-此命令不执行 optimizer update。`configs/ljspeech-integration.yaml` 是已运行的两步真实数据测试配置，
+此命令不执行 optimizer update。`runs/cleanup-20260909/configs/ljspeech-integration.yaml` 是已运行的两步真实数据测试配置，
 生成上限刻意设为 4 帧，验证的是链路；正常训练配置 `ljspeech.yaml` 使用 256 帧上限。
 
 ## 准确性检查

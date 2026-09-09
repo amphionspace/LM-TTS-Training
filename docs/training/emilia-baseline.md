@@ -37,7 +37,7 @@ Emilia 使用 `.tar.idx` 的 member/offset/size 随机读取；不解包整个 t
 
 raw `audio` 是 locator；prepared `audio_source` 保留它，`audio` 是按需落盘位置。m4a 通过 PyAV 使用 FFmpeg 的 MP4 demuxer，处理 edit list；先按原始 44.1 kHz 解码，按 `frames` 裁掉 AAC 尾部 padding，再重采样为 24 kHz。允许最多 1,023 点的 AAC 尾部 padding；对于不超过 1 毫秒的解码尾部缺口，补零到标注长度并在日志记录样本 ID 和采样点数。更大偏差仍失败，不拉伸音频。不使用忽略编码延迟的解码方式。
 
-每 speaker 训练池至少保留两条录音；选两个 anchor，并记录 `speaker_reference_id`。同一条录音不能引用自己，验证不能引用验证池。普通目标音频解码后以 float32 波形直接批量送入 codec，不写临时 WAV；参考 WAV 保留；评估原音频按需重建。codec 批量编码，CPU 解码线程与 GPU 编码配合。CPU 解码使用 8 个 spawn 进程，避免 PyAV/Python 解码被同一进程的 GIL 限制；不从已经初始化 CUDA 的进程 fork。解码进程数与 GPU 数量属于执行参数，不改变缓存 recipe。两个 GPU 各有独立 codec 实例，处理互不重叠的 batch，按原始顺序收集结果；每设备最多一个在途 batch，避免无限预取占内存。GPU 数量不改变清单划分或缓存 recipe；batch size 仍是 recipe 的一部分。
+每 speaker 训练池至少保留两条录音；选两个 anchor，并记录 `speaker_reference_id`。同一条录音不能引用自己，验证不能引用验证池。普通目标音频解码后以 float32 波形直接批量送入 codec，不写临时 WAV；参考 WAV 保留；评估原音频按需重建。codec 批量编码，每个 GPU 对应 8 个 I/O 线程的容量，CPU 解码进程与 GPU 编码配合。CPU 解码使用 16 个 spawn 进程，避免 PyAV/Python 解码被同一进程的 GIL 限制；不从已经初始化 CUDA 的进程 fork。解码进程数与 GPU 数量属于执行参数，不改变缓存 recipe。四个 GPU 各有独立 codec 实例，处理互不重叠的 batch，按原始顺序收集结果；每设备最多一个在途 batch，避免无限预取占内存。GPU 数量不改变清单划分或缓存 recipe；batch size 仍是 recipe 的一部分。
 
 验证文本经规范化后与训练文本不重合；这是同说话人未见文本评估，不是未见说话人的 zero-shot 评估。
 
@@ -68,20 +68,20 @@ PYTHONPATH=. python scripts/prepare_manifest.py \
   --output /ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-en-1000h \
   --tokenizer pretrained/assembled-qwen3-tts-frozen-conditioning \
   --codec pretrained/Qwen3-TTS-Tokenizer-12Hz \
-  --device cuda:0 --secondary-device cuda:1 --batch-size 16 --workers 8 --decode-processes 8 --val-count 512
+  --device cuda:0 --secondary-devices cuda:1 cuda:2 cuda:3 --batch-size 16 --workers 8 --decode-processes 16 --val-count 512
 ```
 
 raw manifest 导出后，推荐用控制脚本接管预处理、显存测试及训练：
 
 ```bash
-PYTHONPATH=. python scripts/run_emilia_baseline.py
+PYTHONPATH=. python scripts/run_emilia_baseline.py --nproc-per-node 4
 # 如果 exporter 尚在运行，可指定真实 Python 进程 PID；控制脚本等待它原子发布 manifest。
 PYTHONPATH=. python scripts/run_emilia_baseline.py --export-pid <PID>
 ```
 
-控制脚本有进程锁，避免同一个 run 被重复启动；状态保存在 `runs/emilia-official-frozen-1000h/pipeline-status.json`，每阶段有独立日志。中断后重跑同一个入口会复用匹配 recipe 的 codec 缓存；已有 checkpoint 时沿用落盘的实际配置并 `--resume latest`。失败会记录原因并停止，不能把启动成功视为阶段完成。
+控制脚本有进程锁，避免同一个 run 被重复启动；状态保存在 `runs/emilia-official-frozen-1000h/pipeline-status.json`，每阶段有独立日志。中断后重跑同一个入口会复用匹配 recipe 的 codec 缓存；已有 checkpoint 时沿用落盘的实际配置并 `--resume latest`。失败会记录原因并停止，不能把启动成功视为阶段完成。`--nproc-per-node` 同时控制 codec 设备数、显存测试和训练卡数；已有 checkpoint 时必须使用保存时的卡数。
 
-当前计划使用双卡 FSDP2、BF16、关闭 activation checkpointing，先测每卡 batch 48，CUDA OOM 时再测 32。两次完整优化更新覆盖 AdamW 状态分配；只有压力测试通过才开始训练。最终配置写入 run 下 `baseline-config.yaml`，全局 batch 为每卡 batch × 2。训练 5,000 updates，warmup 200，主干学习率 2e-5、新模块 1e-4；每 100 steps 验证 loss，默认 `keep_checkpoints: 2`，只在新 checkpoint 完整落盘后清理旧的完整 checkpoint；设为 null 可关闭自动清理。保留数量不影响恢复签名。每 500 steps 保存 checkpoint 并生成 8 条验证／2 条训练音频。所有验证 loss 使用 512 条验证集；生成内容分数只覆盖固定样本，不能代表完整验证集。
+2026-09-09 恢复任务改用四张 A100 80GB，使用四卡 FSDP2、BF16、关闭 activation checkpointing。允许扩大全局 batch；按每卡 batch 96、80、64、48、32 依次进行压力测试，仅在 CUDA OOM 时降档。两次完整优化更新覆盖 AdamW 状态分配；只有压力测试通过才开始训练。最终配置写入 run 下 `baseline-config.yaml`，全局 batch 为每卡 batch × 4。这会改变每步数据量，不能与此前双卡计划视为相同训练预算；更新次数与学习率计划仍保持原定值。训练 5,000 updates，warmup 200，主干学习率 2e-5、新模块 1e-4；每 100 steps 验证 loss，默认 `keep_checkpoints: 2`，只在新 checkpoint 完整落盘后清理旧的完整 checkpoint；设为 null 可关闭自动清理。保留数量不影响恢复签名。每 500 steps 保存 checkpoint 并生成 8 条验证／2 条训练音频。所有验证 loss 使用 512 条验证集；生成内容分数只覆盖固定样本，不能代表完整验证集。
 
 ```bash
 .venv/bin/tensorboard --logdir runs/emilia-official-frozen-1000h --port 6006

@@ -56,3 +56,13 @@ LJSpeech 合成长文本／长音频压力测试：batch 64 OOM；batch 48 完�
 ## CPU 解码吞吐验证
 
 16 条真实音频分段计时，热身后 8 线程解码约 0.33–0.34 秒、codec 编码约 0.08–0.09 秒、顺序写缓存约 0.007–0.009 秒。8 个 spawn 解码进程热身后约 0.05 秒，16 条 PCM 与线程版本逐点一致。完整 13 条 pilot 的 codec 哈希与所有清单字段一致，改变解码进程数恢复缓存后清单字节一致。这是单批解码计时，不是完整训练吞吐的加速倍数。
+
+## 2026-09-09：四卡恢复与旧产物清理
+
+恢复前实盘确认有 569,152 个 codec NPZ，与最后日志一致，占待编码 765,637 条的 74.34%；尚无正式 train/val manifest 或 checkpoint。当前初始化产物的全部 artifact 哈希，以及缓存 recipe 中的 raw manifest、tokenizer 和 codec 哈希均核对通过。
+
+当前环境为四张 NVLink 互联的 A100 80GB。四卡 NCCL / FSDP2 合成检查通过；13 条真实 pilot 按 batch 4 分成四个 batch，单卡与四卡处理后的 codec 文件和除输出根目录外的全部清单字段严格一致；四卡缓存改为单卡、关闭解码进程后重跑，train/val 清单 SHA256 保持一致。冻结 conditioning 模型完成四卡 3 步训练、保存、验证和短音频生成；训练后 81 个冻结张量、326,313,792 个参数与初始化严格相等。小样本验证不代表正式语音质量。记录位于 `runs/cleanup-20260909/` 和 `runs/emilia-four-gpu-integration/`；本次临时测试 checkpoint 已清理，metadata 与日志保留。
+
+正式控制流程于 04:42 UTC 使用 `--nproc-per-node 4` 重启，四个 codec 实例、16 个 CPU 解码进程复用原缓存。完成预处理后，按每卡 batch 96、80、64、48、32 进行实际最长样本压力测试，选定后训练 5,000 步。启动成功不表示预处理、显存测试或正式训练已完成，最新阶段仍以运行状态和日志为准。
+
+旧实验初始化大权重、未完成组装目录和 near-identity 产物共清理约 11.43 GiB。保留当前 Emilia 组装模型和三份源模型，以及历史 checkpoint 读取依赖的配置、tokenizer、codec。11 份旧配置移至本机 `runs/cleanup-20260909/configs/`，`configs/` 只保留当前 Emilia 基线、小样本集成和 smoke；旧实验从初始化重跑前需要重建权重。清理明细见 `runs/cleanup-20260909/cleanup.json`。

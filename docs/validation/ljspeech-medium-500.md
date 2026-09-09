@@ -2,7 +2,7 @@
 
 ## 实验范围
 
-训练代码：`8fb7087`。配置：[ljspeech-medium.yaml](../../configs/ljspeech-medium.yaml)。
+训练代码：`8fb7087`。配置：[ljspeech-medium.yaml](https://github.com/amphionspace/LM-TTS-Training/blob/dd2922bb0b41d0541365d42143d835b14d1dd252/configs/ljspeech-medium.yaml)。本机归档的恢复方法见 [旧配置归档](../training/setup-and-training.md#旧配置归档)。
 使用 2 × A800 80GB、FSDP2、BF16 和 activation checkpointing。
 模型从 Qwen3-0.6B-Base 文本参数和 Qwen 公开 ECAPA 初始化，音频预测相关新参数重新初始化；冻结官方 codec。
 这不是对官方已训练 TTS Talker 的微调。
@@ -48,9 +48,9 @@ ASR 转写与目标文本仍明显不符；噪声也可能使 ASR 产生重复�
 ```bash
 source .venv/bin/activate
 bash scripts/prepare_ljspeech.sh --limit 2176 --val-count 128 --max-seconds 10 --output data/ljspeech-medium
-bash scripts/run_train.sh --config configs/ljspeech-medium.yaml
+bash scripts/run_train.sh --config runs/cleanup-20260909/configs/ljspeech-medium.yaml
 # 中途退出后，沿用相同配置和学习率计划：
-bash scripts/run_train.sh --config configs/ljspeech-medium.yaml --resume latest
+bash scripts/run_train.sh --config runs/cleanup-20260909/configs/ljspeech-medium.yaml --resume latest
 tensorboard --logdir runs/ljspeech-medium-500/tensorboard --port 6006
 ```
 

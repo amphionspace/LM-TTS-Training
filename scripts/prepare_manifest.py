@@ -26,7 +26,7 @@ def main():
     p.add_argument('--codec', default='pretrained/Qwen3-TTS-Tokenizer-12Hz')
     p.add_argument('--tokenizer', default='pretrained/assembled-qwen3-tts-frozen-conditioning')
     p.add_argument('--device', default='cpu')
-    p.add_argument('--secondary-device', help='Optional second codec device; each device processes disjoint batches')
+    p.add_argument('--secondary-devices', nargs='+', default=[], help='Additional codec devices, each processing disjoint batches')
     p.add_argument('--val-count', type=int, default=8)
     p.add_argument('--seed', type=int, default=42)
     p.add_argument('--batch-size', type=int, default=16)
@@ -39,7 +39,7 @@ def main():
     root = Path(args.output).resolve()
     if args.val_count < 1 or args.batch_size < 1 or args.workers < 1 or args.decode_processes < 0:
         p.error('Counts must be positive')
-    recipe = {**{k: v for k, v in vars(args).items() if k not in ['secondary_device', 'decode_processes']}, 'format_version': 3, 'validation_text_disjoint': True,
+    recipe = {**{k: v for k, v in vars(args).items() if k not in ['secondary_devices', 'decode_processes']}, 'format_version': 3, 'validation_text_disjoint': True,
               'audio_length_policy': 'trim_aac_padding_1023_or_pad_tail_up_to_1ms',
               'raw_manifest_sha256': sha256(Path(args.manifest)),
               'codec_sha256': {path.name: sha256(path) for path in sorted(Path(args.codec).glob('*'))
@@ -89,7 +89,7 @@ def main():
     root.mkdir(parents=True, exist_ok=True)
     (root / 'codes').mkdir(exist_ok=True)
     (root / 'recipe.json').write_text(json.dumps(recipe, indent=2))
-    devices = [args.device] + ([args.secondary_device] if args.secondary_device else [])
+    devices = [args.device, *args.secondary_devices]
     if len(set(devices)) != len(devices):
         p.error('Codec devices must be distinct')
     codecs = [Qwen3TTSTokenizer.from_pretrained(args.codec, device_map=device) for device in devices]
@@ -121,7 +121,7 @@ def main():
     with ExitStack() as stack:
         decoder_executor = stack.enter_context(ProcessPoolExecutor(max_workers=args.decode_processes,
             mp_context=multiprocessing.get_context('spawn'))) if args.decode_processes else None
-        workers = stack.enter_context(ThreadPoolExecutor(max_workers=args.workers))
+        workers = stack.enter_context(ThreadPoolExecutor(max_workers=args.workers * len(codecs)))
         encoders = [stack.enter_context(ThreadPoolExecutor(max_workers=1)) for _ in codecs]
         def process_batch(batch, codec):
             if codec.device.type == 'cuda':

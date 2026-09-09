@@ -25,9 +25,10 @@
 ```bash
 python -m unittest discover -s tests -p 'test_*.py' -v
 PYTHONPATH=. .venv/bin/torchrun --standalone --nproc_per_node=2 tests/check_distributed_equivalence.py --speaker
-bash scripts/run_train.sh --config configs/ljspeech-assembled-integration.yaml --output runs/check-split --max-steps 1
-bash scripts/run_train.sh --config configs/ljspeech-assembled-integration.yaml --output runs/check-split --resume latest
-bash scripts/run_train.sh --config configs/ljspeech-assembled-integration.yaml --output runs/check-continuous
+# 旧配置恢复方法见 docs/training/setup-and-training.md 的“旧配置归档”。
+bash scripts/run_train.sh --config runs/cleanup-20260909/configs/ljspeech-assembled-integration.yaml --output runs/check-split --max-steps 1
+bash scripts/run_train.sh --config runs/cleanup-20260909/configs/ljspeech-assembled-integration.yaml --output runs/check-split --resume latest
+bash scripts/run_train.sh --config runs/cleanup-20260909/configs/ljspeech-assembled-integration.yaml --output runs/check-continuous
 python scripts/compare_checkpoints.py runs/check-continuous/checkpoints/step-00000002 runs/check-split/checkpoints/step-00000002
 ```
 

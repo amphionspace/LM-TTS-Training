@@ -8,7 +8,7 @@ data:
   speaker_reference_seconds: 3
 train:
   output: runs/emilia-official-frozen-1000h
-  batch_size: 48
+  batch_size: 96
   accumulation: 1
   max_steps: 5000
   schedule_steps: 5000

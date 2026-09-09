@@ -15,9 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--config', default='configs/emilia-baseline.yaml')
+    p.add_argument('--nproc-per-node', type=int, default=4)
     p.add_argument('--manifest', default='/ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-en-1000h.raw.jsonl')
     p.add_argument('--export-pid', type=int, help='An already running exporter to wait for; never launches a duplicate')
     args = p.parse_args()
+    if args.nproc_per_node < 1:
+        p.error('--nproc-per-node must be positive')
     os.chdir(ROOT)
     config = yaml.safe_load(Path(args.config).read_text())
     output = Path(config['train']['output'])
@@ -28,8 +31,13 @@ def main():
     resuming = (output / 'checkpoints/latest').exists()
     if resuming:
         config = yaml.safe_load((output / 'baseline-config.yaml').read_text())
+        checkpoint = output / 'checkpoints' / (output / 'checkpoints/latest').read_text().strip()
+        metadata = json.loads((checkpoint / 'metadata.json').read_text())
+        if metadata['world_size'] != args.nproc_per_node:
+            p.error(f"Resume requires --nproc-per-node {metadata['world_size']}")
     python = str(ROOT / '.venv/bin/python')
-    env = {**os.environ, 'PYTHONPATH': str(ROOT), 'OMP_NUM_THREADS': '4', 'TOKENIZERS_PARALLELISM': 'false'}
+    env = {**os.environ, 'PYTHONPATH': str(ROOT), 'OMP_NUM_THREADS': '4', 'TOKENIZERS_PARALLELISM': 'false',
+           'NPROC_PER_NODE': str(args.nproc_per_node)}
     status_path = output / 'pipeline-status.json'
     def status(stage, **extra):
         record = {'stage': stage, 'updated_at': datetime.now(timezone.utc).isoformat(), **extra}
@@ -62,19 +70,21 @@ def main():
                     raise RuntimeError('Exporter exited without publishing its manifest')
                 time.sleep(15)
         preparation = Path(config['data']['train']).parent
+        devices = [f'cuda:{i}' for i in range(args.nproc_per_node)]
         checked('prepare', [python, 'scripts/prepare_manifest.py', '--manifest', str(manifest),
             '--output', str(preparation), '--tokenizer', config['model']['assembled_model'],
-            '--codec', config['eval']['codec'], '--device', 'cuda:0', '--secondary-device', 'cuda:1', '--batch-size', '16',
-            '--workers', '8', '--decode-processes', '8', '--val-count', '512'])
+            '--codec', config['eval']['codec'], '--device', devices[0], '--batch-size', '16',
+            '--workers', '8', '--decode-processes', str(4 * args.nproc_per_node), '--val-count', '512',
+            *(['--secondary-devices', *devices[1:]] if len(devices) > 1 else [])])
         report = json.loads((preparation / 'preparation.json').read_text())
         if not (preparation / 'PREPARATION_COMPLETE').exists():
             raise RuntimeError('Preparation completion marker missing')
         if config['model'].get('activation_checkpointing'):
             raise ValueError('This memory probe measures activation_checkpointing=false')
-        candidates = [config['train']['batch_size']] if resuming else [48, 32]
+        candidates = [config['train']['batch_size']] if resuming else [96, 80, 64, 48, 32]
         for batch_size in candidates:
             stage = f'memory-batch{batch_size}'
-            command = [str(ROOT / '.venv/bin/torchrun'), '--standalone', '--nproc_per_node=2',
+            command = [str(ROOT / '.venv/bin/torchrun'), '--standalone', f'--nproc_per_node={args.nproc_per_node}',
                 'scripts/probe_batch_memory.py', '--assembled', config['model']['assembled_model'],
                 '--manifest', config['data']['train'], '--batch-size', str(batch_size)]
             code = run(stage, command)
@@ -84,11 +94,12 @@ def main():
             if 'out of memory' not in (output / f'{stage}.log').read_text().lower():
                 raise RuntimeError('Memory probe failed for a reason other than CUDA OOM')
         else:
-            raise RuntimeError('Both memory probes failed; no training was started')
+            raise RuntimeError('All memory probes failed; no training was started')
         effective = output / 'baseline-config.yaml'
         effective.write_text(yaml.safe_dump(config, sort_keys=False))
-        status('ready-to-train', preparation=report, per_gpu_batch=config['train']['batch_size'],
-               global_batch=2 * config['train']['batch_size'] * config['train']['accumulation'])
+        status('ready-to-train', preparation=report, world_size=args.nproc_per_node,
+               per_gpu_batch=config['train']['batch_size'],
+               global_batch=args.nproc_per_node * config['train']['batch_size'] * config['train']['accumulation'])
         command = ['bash', 'scripts/run_train.sh', '--config', str(effective)]
         if (output / 'checkpoints/latest').exists():
             command += ['--resume', 'latest']

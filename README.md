@@ -11,7 +11,7 @@ source .venv/bin/activate
 python scripts/assemble_qwen3_tts.py --output pretrained/assembled-qwen3-tts-frozen-conditioning
 # 按 docs/training/emilia-baseline.md 完成数据准备和显存测试后：
 PYTHONPATH=. python scripts/run_emilia_baseline.py
-bash scripts/run_train.sh --config runs/emilia-official-frozen-1000h/baseline-config.yaml --resume latest
+NPROC_PER_NODE=4 bash scripts/run_train.sh --config runs/emilia-official-frozen-1000h/baseline-config.yaml --resume latest
 tensorboard --logdir runs --port 6006
 ```
 

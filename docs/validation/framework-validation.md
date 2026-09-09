@@ -30,7 +30,7 @@
 - 固定 seed 42，抽取不超过 6 秒的 32 条录音：28 train、4 val，合计约 0.03852 小时。
 - 冻结官方 codec，完成编码、解码重建与 codes 范围/shape 检查。
 - Qwen3-0.6B backbone + 新音频模块，共 743,911,680 个可训练参数。
-- `configs/ljspeech-integration.yaml`：双卡训练第 1 步，保存退出，然后从 latest 恢复到第 2 步。
+- `runs/cleanup-20260909/configs/ljspeech-integration.yaml`：双卡训练第 1 步，保存退出，然后从 latest 恢复到第 2 步。
 - 完成完整模型/优化器的分片保存与加载、validation loss、WAV 输出和 ASR 评分。
 - 独立 eval-only 在该 checkpoint 上完成两条样本生成及 corpus WER/CER；验证汇总计数与逐条结果相等，checkpoint 仍停留在第 2 步。
 - 已读取 TensorBoard event 文件，确认训练标量、各码本 validation loss、WER/CER、原始/生成音频存在，训练 step 到 2。
