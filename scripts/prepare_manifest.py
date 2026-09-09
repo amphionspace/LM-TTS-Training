@@ -7,11 +7,13 @@ import hashlib
 import io
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import random
 import numpy as np
 import soundfile as sf
 import torch
+import torch.distributed as dist
 from qwen_tts import Qwen3TTSTokenizer
 from transformers import AutoTokenizer
 from qwen3_train.sources import materialize_audio, decode_emilia_audio, write_prepared_audio
@@ -34,29 +36,40 @@ def main():
     p.add_argument('--decode-processes', type=int, default=0, help='CPU decode processes; zero uses the I/O threads')
     p.add_argument('--keep-audio', action='store_true')
     p.add_argument('--max-text-tokens', type=int, default=256)
+    p.add_argument('--reuse-codes-from', help='Prepared directory with matching codec and audio recipe')
     args = p.parse_args()
+    rank = int(os.environ.get('RANK', '0'))
+    world = int(os.environ.get('WORLD_SIZE', '1'))
+    if world > 1:
+        dist.init_process_group('gloo')
     torch.set_num_threads(4)
     root = Path(args.output).resolve()
     if args.val_count < 1 or args.batch_size < 1 or args.workers < 1 or args.decode_processes < 0:
         p.error('Counts must be positive')
-    recipe = {**{k: v for k, v in vars(args).items() if k not in ['secondary_devices', 'decode_processes']}, 'format_version': 3, 'validation_text_disjoint': True,
+    recipe = {**{k: v for k, v in vars(args).items() if k not in ['secondary_devices', 'decode_processes', 'workers']}, 'format_version': 4, 'validation_text_disjoint': True,
+              'speaker_conditioning': 'full_target_audio',
               'audio_length_policy': 'trim_aac_padding_1023_or_pad_tail_up_to_1ms',
               'raw_manifest_sha256': sha256(Path(args.manifest)),
               'codec_sha256': {path.name: sha256(path) for path in sorted(Path(args.codec).glob('*'))
                                 if path.suffix == '.safetensors' or path.name == 'config.json'},
               'tokenizer_sha256': sha256(Path(args.tokenizer) / 'tokenizer.json')}
-    if root.exists():
+    if rank == 0 and root.exists():
         existing = json.loads((root / 'recipe.json').read_text()) if (root / 'recipe.json').exists() else None
-        previous = {key: value for key, value in recipe.items() if key != 'audio_length_policy'}
-        previous['format_version'] = 2
-        if existing != recipe and existing != previous:
+        if existing is not None:
+            existing.pop('workers', None)
+        if existing != recipe:
             p.error('Output recipe differs; use a new directory')
-        if existing == previous:
-            # Every sample accepted by v2 has identical PCM under v3; newly accepted
-            # sub-ms-short files could not have produced v2 codec caches.
-            (root / 'recipe-v2.json').write_text(json.dumps(existing, indent=2))
-            print('Upgrading audio length policy; existing accepted codec caches are unchanged', flush=True)
+    reuse = Path(args.reuse_codes_from) if args.reuse_codes_from else None
+    if reuse:
+        cached_recipe = json.loads((reuse / 'recipe.json').read_text())
+        for key in ['codec_sha256', 'audio_length_policy', 'batch_size']:
+            if cached_recipe[key] != recipe[key]:
+                p.error(f'Cannot reuse codec cache with different {key}')
+    if world > 1:
+        dist.barrier()
     records = [json.loads(line) for line in Path(args.manifest).read_text().splitlines() if line.strip()]
+    if any(row['language'] not in ('en', 'zh') for row in records):
+        raise ValueError('Pretraining only accepts English and Chinese')
     if any(row['schema_version'] != 1 for row in records):
         raise ValueError('Unsupported raw manifest schema')
     if len({r['id'] for r in records}) != len(records):
@@ -70,8 +83,8 @@ def main():
     rejected_text = sum(not 0 < len(r['text_ids']) <= args.max_text_tokens for r in records)
     records = [r for r in records if 0 < len(r['text_ids']) <= args.max_text_tokens]
     counts = Counter(r['speaker'] for r in records)
-    eligible = [r for r in records if counts[r['speaker']] >= 2]
-    discarded = len(records) - len(eligible)
+    eligible = records
+    discarded = 0
     random.Random(args.seed).shuffle(eligible)
     text_counts = Counter(normalize(r['text']) for r in eligible)
     val_ids = set()
@@ -81,15 +94,11 @@ def main():
             counts[row['speaker']] -= 1
     if len(val_ids) != args.val_count:
         raise ValueError('Not enough utterances to hold out validation and retain two training recordings per speaker')
-    anchors = {}
-    for row in eligible:
-        if row['id'] not in val_ids and len(anchors.get(row['speaker'], [])) < 2:
-            anchors.setdefault(row['speaker'], []).append(row['id'])
-    retained = {uid for values in anchors.values() for uid in values}
     root.mkdir(parents=True, exist_ok=True)
     (root / 'codes').mkdir(exist_ok=True)
-    (root / 'recipe.json').write_text(json.dumps(recipe, indent=2))
-    devices = [args.device, *args.secondary_devices]
+    if rank == 0:
+        (root / 'recipe.json').write_text(json.dumps(recipe, indent=2))
+    devices = [f'cuda:{int(os.environ["LOCAL_RANK"])}'] if world > 1 else [args.device, *args.secondary_devices]
     if len(set(devices)) != len(devices):
         p.error('Codec devices must be distinct')
     codecs = [Qwen3TTSTokenizer.from_pretrained(args.codec, device_map=device) for device in devices]
@@ -101,9 +110,11 @@ def main():
         stem = hashlib.sha256(record['id'].encode()).hexdigest()
         destination = root / 'audio' / f'{stem}.wav'
         code_file = root / 'codes' / f'{stem}.npz'
+        if reuse and not code_file.exists() and (reuse / 'codes' / code_file.name).exists():
+            os.link(reuse / 'codes' / code_file.name, code_file)
         cached = code_file.exists()
         if record['audio']['kind'] == 'tar_member':
-            keep = args.keep_audio or record['id'] in retained
+            keep = args.keep_audio
             if cached and (not keep or destination.exists()):
                 return destination, code_file, None
             if destination.exists():
@@ -157,18 +168,16 @@ def main():
                             raise ValueError(f'Invalid cached codes: {code_file}')
                         frames = len(codes)
                     checksum = hashlib.sha256(payload).hexdigest()
-                reference_id = next(uid for uid in anchors[record['speaker']] if uid != record['id'])
                 locator = record['audio']
                 audio_duration = ((locator['frames'] * 24000 + locator['sample_rate'] - 1) // locator['sample_rate']) / 24000 if locator['kind'] == 'tar_member' else sf.info(audio).duration
                 batch_rows.append({**record, 'audio': str(audio), 'audio_source': record['audio'],
-                    'speaker_reference_id': reference_id,
                     'duration': audio_duration, 'text_ids': record['text_ids'],
                     'codes': str(code_file.relative_to(root)), 'num_frames': frames,
                     'codes_sha256': checksum})
-                if audio.exists() and not args.keep_audio and record['id'] not in retained and record['audio']['kind'] == 'tar_member':
+                if audio.exists() and not args.keep_audio and record['audio']['kind'] == 'tar_member':
                     audio.unlink()
             return batch_rows
-        starts = iter(range(0, len(eligible), args.batch_size))
+        starts = iter(range(rank * args.batch_size, len(eligible), world * args.batch_size))
         pending_batches = deque()
         def submit(slot):
             start = next(starts, None)
@@ -182,9 +191,22 @@ def main():
             batch_rows = future.result()
             rows.extend(batch_rows)
             total_seconds += sum(row['duration'] for row in batch_rows)
-            print(json.dumps({'prepared': len(rows), 'total': len(eligible),
+            print(json.dumps({'rank': rank, 'prepared': len(rows), 'total': len(eligible),
                               'hours': total_seconds / 3600}), flush=True)
             submit(slot)
+    if world > 1:
+        shard = root / f'rows-rank-{rank}.jsonl'
+        shard.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in rows))
+        dist.barrier()
+        if rank != 0:
+            dist.destroy_process_group()
+            return
+        by_id = {}
+        for slot in range(world):
+            for line in (root / f'rows-rank-{slot}.jsonl').read_text().splitlines():
+                row = json.loads(line)
+                by_id[row['id']] = row
+        rows = [by_id[row['id']] for row in eligible]
     for split in ['train', 'val']:
         subset = [r for r in rows if (r['id'] in val_ids) == (split == 'val')]
         temporary = root / f'{split}.incomplete'
@@ -197,6 +219,10 @@ def main():
               'hours': sum(r['duration'] for r in rows) / 3600}
     (root / 'preparation.json').write_text(json.dumps(report, indent=2))
     (root / 'PREPARATION_COMPLETE').write_text('ok\n')
+    if world > 1:
+        for slot in range(world):
+            (root / f'rows-rank-{slot}.jsonl').unlink()
+        dist.destroy_process_group()
     print(json.dumps(report))
 
 

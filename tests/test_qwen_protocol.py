@@ -1,4 +1,5 @@
 import unittest
+import copy
 from unittest.mock import patch
 import torch
 from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
@@ -42,7 +43,7 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
             for history_length in (0, 1, 3):
                 row = {**self.row, 'text_ids': [18, *text, 19], 'codes': self.row['codes'][:history_length]}
                 batch = collate([row])
-                speaker = self.model.speaker_encoder(batch['speaker_mels'])[0]
+                speaker = self.model.speaker_encoder(batch['speaker_mels'].unsqueeze(0))[0]
                 prompt = {'ref_spk_embedding': [speaker], 'x_vector_only_mode': [history_length == 0],
                           'icl_mode': [history_length > 0], 'ref_code': [row['codes']] if history_length else None}
                 if history_length:
@@ -55,9 +56,9 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
                     with self.assertRaises(Captured):
                         official.generate(input_ids=ids, ref_ids=refs, voice_clone_prompt=prompt,
                                           languages=['Auto'], non_streaming_mode=True)
-                actual, mask, _ = self.model.input_embeddings(batch)
-                torch.testing.assert_close(actual, captured['inputs_embeds'], atol=2e-7, rtol=2e-6)
-                torch.testing.assert_close(mask.long(), captured['attention_mask'])
+                inputs, _ = self.model.input_embeddings(batch)
+                torch.testing.assert_close(inputs['inputs_embeds'], captured['inputs_embeds'], atol=2e-7, rtol=2e-6)
+                torch.testing.assert_close(inputs['position_ids'], captured['attention_mask'].cumsum(-1) - 1)
 
 
 class FrozenFrontendProtocolTests(QwenProtocolTests):
@@ -87,6 +88,34 @@ class FrozenFrontendProtocolTests(QwenProtocolTests):
             self.assertFalse(parameter.requires_grad)
             self.assertIsNone(parameter.grad)
             torch.testing.assert_close(parameter, expected, atol=0, rtol=0)
+
+    @unittest.skipUnless(torch.cuda.is_available(), 'Flash Attention requires CUDA')
+    def test_flash_attention_preserves_variable_length_loss_and_gradients(self):
+        from transformers.utils import is_flash_attn_2_available
+        if not is_flash_attn_2_available():
+            self.skipTest('Flash Attention 2 is not installed')
+        flash = copy.deepcopy(self.model)
+        flash.config._attn_implementation = 'flash_attention_2'
+        flash.config.code_predictor_config._attn_implementation = 'flash_attention_2'
+        second = {**self.row, 'text_ids': [18, 5, 19], 'codes': self.row['codes'][:1],
+                  'speaker_mels': self.row['speaker_mels'][:19] + 1}
+        batch = {k: v.cuda() for k, v in collate([self.row, second]).items()}
+        batch['speaker_mels'] = batch['speaker_mels'].bfloat16()
+        results, gradients = [], []
+        with patch.dict('os.environ', {'FLASH_ATTENTION_DETERMINISTIC': '1'}):
+            for model in [self.model, flash, flash]:
+                model.cuda().bfloat16().train()
+                model.zero_grad(set_to_none=True)
+                out = model(batch)
+                loss = out['first_sum'] / out['first_count'] + .3 * out['residual_sum'] / (15 * out['frame_count'])
+                loss.backward()
+                results.append(torch.stack([out['first_sum'], out['residual_sum']]).detach())
+                gradients.append(torch.cat([p.grad.float().flatten() for p in model.parameters() if p.requires_grad]))
+        torch.testing.assert_close(results[1], results[0], rtol=2e-3, atol=1e-3)
+        relative_gradient_error = (gradients[1] - gradients[0]).norm() / gradients[0].norm()
+        self.assertLess(relative_gradient_error.item(), .03)
+        torch.testing.assert_close(results[2], results[1], rtol=0, atol=0)
+        torch.testing.assert_close(gradients[2], gradients[1], rtol=0, atol=0)
 
 
 if __name__ == '__main__':

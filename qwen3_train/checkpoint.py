@@ -71,8 +71,13 @@ def load_checkpoint(path, model, optimizer, scheduler, signature):
     if not (path / "COMPLETE").is_file():
         raise ValueError(f"Not a completed checkpoint: {path}")
     metadata = json.loads((path / "metadata.json").read_text())
-    if metadata["signature"] != signature or metadata["world_size"] != dist.get_world_size():
-        raise ValueError("Exact resume requires the same model, data, world size, batch, optimizer and schedule settings")
+    saved_signature = metadata['signature'].copy()
+    layout_migration = (saved_signature.get('batch_layout', 'padded') == 'padded' and
+                        signature.get('batch_layout') == 'packed')
+    if layout_migration:
+        saved_signature['batch_layout'] = 'packed'
+    if saved_signature != signature or metadata["world_size"] != dist.get_world_size():
+        raise ValueError("Checkpoint resume requires the same model, data, world size, batch, optimizer and schedule settings")
     model_state, optim_state = get_state_dict(model, optimizer)
     state = {"model": model_state, "optimizer": optim_state}
     dcp.load(state, checkpoint_id=path / "distributed")
@@ -84,4 +89,8 @@ def load_checkpoint(path, model, optimizer, scheduler, signature):
     np.random.set_state(rng["numpy"])
     torch.set_rng_state(rng["torch"])
     torch.cuda.set_rng_state(rng["cuda"])
+    if layout_migration and dist.get_rank() == 0:
+        print(json.dumps({'checkpoint_layout_migration': {'from': 'padded', 'to': 'packed',
+                          'checkpoint': str(path), 'progress': metadata['progress'],
+                          'restored': ['model', 'optimizer', 'scheduler', 'sampler', 'rng']}}), flush=True)
     return metadata["progress"]

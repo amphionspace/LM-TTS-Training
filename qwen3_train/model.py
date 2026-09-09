@@ -40,7 +40,7 @@ class TTSModel(nn.Module):
         return self
 
     @classmethod
-    def from_assembled(cls, directory, load_weights=True):
+    def from_assembled(cls, directory, load_weights=True, attn_implementation="sdpa"):
         from .assembly import load_prefix, sha256
         directory = Path(directory)
         if not (directory / "ASSEMBLY_COMPLETE").exists():
@@ -51,8 +51,8 @@ class TTSModel(nn.Module):
                 if sha256(directory / name) != expected:
                     raise ValueError(f"Assembled artifact changed: {name}")
         config = Qwen3TTSConfig.from_dict(json.loads((directory / "config.json").read_text()))
-        config.talker_config._attn_implementation = "sdpa"
-        config.talker_config.code_predictor_config._attn_implementation = "sdpa"
+        config.talker_config._attn_implementation = attn_implementation
+        config.talker_config.code_predictor_config._attn_implementation = attn_implementation
         model = cls(config.talker_config, config.speaker_encoder_config)
         if load_weights:
             model.talker.load_state_dict(load_prefix(directory, "talker."), strict=True)
@@ -70,62 +70,80 @@ class TTSModel(nn.Module):
                 "parameters": sum(p.numel() for p in self.parameters())}
 
     def frame_embeddings(self, codes):
-        value = self.talker.model.codec_embedding(codes[..., 0])
+        value = self.talker.model.codec_embedding(codes[:, 0])
         for g in range(1, self.groups):
-            value = value + self.talker.code_predictor.get_input_embeddings()[g - 1](codes[..., g])
+            value = value + self.talker.code_predictor.get_input_embeddings()[g - 1](codes[:, g])
         return value
 
     def input_embeddings(self, batch):
-        text = self.talker.text_projection(self.talker.model.text_embedding(batch["text_ids"]))
-        frames = self.frame_embeddings(batch["codes"])
-        bos = self.talker.model.codec_embedding.weight[self.bos].expand(text.shape[0], 1, -1)
+        text = self.talker.text_projection(self.talker.model.text_embedding(batch['text_ids']))
+        frames = self.frame_embeddings(batch['codes'])
+        embedding = self.talker.model.codec_embedding
+        bos = embedding.weight[self.bos:self.bos + 1]
         speaker = None
         if self.speaker_encoder is not None:
-            speaker = self.speaker_encoder(batch["speaker_mels"]).unsqueeze(1).to(text.dtype)
-        protocol = getattr(self.config, "lm_tts_input_protocol", "legacy_prefix")
-        if protocol == "qwen3_non_streaming":
-            # Auto-language path of the official non-streaming generate().
-            # text_ids already contain tts_text_bos and tts_text_eod.
-            embedding = self.talker.model.codec_embedding
-            pad_id = batch["text_ids"].new_tensor([self.config.lm_tts_pad_token_id])
-            text_pad = self.talker.text_projection(self.talker.model.text_embedding(pad_id))[None]
-            role_ids = batch["text_ids"].new_tensor(self.config.lm_tts_role_ids)
-            role = self.talker.text_projection(self.talker.model.text_embedding(role_ids))[None].expand(text.shape[0], -1, -1)
-            control_ids = batch["text_ids"].new_tensor([
+            lengths = batch['speaker_lengths'].tolist()
+            mel_rows = batch['speaker_mels'].split(lengths)
+            groups = {}
+            for index, length in enumerate(lengths):
+                groups.setdefault(length, []).append(index)
+            speaker = text.new_zeros(len(lengths), self.config.hidden_size)
+            # ECAPA pooling must not see padding or other utterances.
+            for indices in groups.values():
+                speaker[indices] = self.speaker_encoder(torch.stack([mel_rows[i] for i in indices])).to(text.dtype)
+        protocol = getattr(self.config, 'lm_tts_input_protocol', 'legacy_prefix')
+        if protocol == 'qwen3_non_streaming':
+            text_pad = self.talker.text_projection(self.talker.model.text_embedding(
+                batch['text_ids'].new_tensor([self.config.lm_tts_pad_token_id])))
+            role = self.talker.text_projection(self.talker.model.text_embedding(
+                batch['text_ids'].new_tensor(self.config.lm_tts_role_ids)))
+            controls = embedding(batch['text_ids'].new_tensor([
                 self.config.codec_nothink_id, self.config.codec_think_bos_id,
-                self.config.codec_think_eos_id])
-            controls = embedding(control_ids)[None].expand(text.shape[0], -1, -1) + text_pad
-            if speaker is not None:
-                controls = torch.cat([controls, speaker + text_pad], dim=1)
+                self.config.codec_think_eos_id])) + text_pad
             text = text + embedding.weight[self.config.codec_pad_id]
-            prefix = torch.cat([role, controls, text], dim=1)
-            prefix_mask = torch.cat([torch.ones(prefix.shape[0], role.shape[1] + controls.shape[1],
-                                               dtype=torch.bool, device=text.device), batch["text_mask"]], dim=1)
-            bos = bos + text_pad
             frames = frames + text_pad
-        elif protocol == "legacy_prefix":
-            prefix = torch.cat([text, speaker], dim=1) if speaker is not None else text
-            prefix_mask = batch["text_mask"]
+            bos = bos + text_pad
             if speaker is not None:
-                prefix_mask = torch.cat([prefix_mask, torch.ones(text.shape[0], 1, dtype=torch.bool, device=text.device)], dim=1)
-        else:
-            raise ValueError(f"Unknown input protocol: {protocol}")
-        embeds = torch.cat([prefix, bos, frames], dim=1)
-        mask = torch.cat([prefix_mask, torch.ones(text.shape[0], 1, dtype=torch.bool, device=text.device), batch["frame_mask"]], dim=1)
-        return embeds, mask, prefix.shape[1]
+                speaker = speaker + text_pad
+        elif protocol != 'legacy_prefix':
+            raise ValueError(f'Unknown input protocol: {protocol}')
+        pieces, positions, audio_positions, offsets = [], [], [], [0]
+        text_rows = text.split(batch['text_lengths'].tolist())
+        frame_rows = frames.split(batch['frame_lengths'].tolist())
+        for index, (text_row, frame_row) in enumerate(zip(text_rows, frame_rows)):
+            prefix = [role, controls, text_row] if protocol == 'qwen3_non_streaming' else [text_row]
+            if speaker is not None:
+                prefix.insert(2 if protocol == 'qwen3_non_streaming' else 1, speaker[index:index + 1])
+            prefix_length = sum(len(part) for part in prefix)
+            length = prefix_length + 1 + len(frame_row)
+            pieces.extend([*prefix, bos, frame_row])
+            positions.append(torch.arange(length, device=text.device))
+            audio_positions.append(torch.arange(offsets[-1] + prefix_length, offsets[-1] + length, device=text.device))
+            offsets.append(offsets[-1] + length)
+        cu_seqlens = torch.tensor(offsets, dtype=torch.int32, device=text.device)
+        max_length = max(len(p) for p in positions)
+        inputs = dict(inputs_embeds=torch.cat(pieces).unsqueeze(0),
+                      position_ids=torch.cat(positions).unsqueeze(0),
+                      cu_seq_lens_q=cu_seqlens, cu_seq_lens_k=cu_seqlens,
+                      max_length_q=max_length, max_length_k=max_length)
+        return inputs, torch.cat(audio_positions)
 
     def hidden(self, batch):
-        embeds, mask, prefix_length = self.input_embeddings(batch)
-        positions = (mask.long().cumsum(-1) - 1).clamp_min(0)
-        outputs = self.talker.model(inputs_embeds=embeds, attention_mask=mask,
-                                    position_ids=positions, use_cache=False)
-        return outputs.last_hidden_state[:, prefix_length:]
+        inputs, audio_positions = self.input_embeddings(batch)
+        if self.config._attn_implementation != 'flash_attention_2':
+            positions = inputs['position_ids'][0]
+            segments = (positions == 0).cumsum(0)
+            inputs['attention_mask'] = ((segments[:, None] == segments[None, :]) &
+                                        (positions[:, None] >= positions[None, :]))[None, None]
+        outputs = self.talker.model(**inputs, use_cache=False)
+        return outputs.last_hidden_state[0, audio_positions]
 
     def forward(self, batch, mode="loss"):
         hidden = self.hidden(batch)
+        last_positions = (batch['frame_lengths'] + 1).cumsum(0) - 1
         if mode == "next_frame":
             # Generation uses one unpadded sample on every rank.
-            h = hidden[:, -1]
+            h = hidden[last_positions]
             logits = self.talker.codec_head(h).float()
             allowed = torch.cat([logits[:, :self.code_size], logits[:, self.eos:self.eos + 1]], dim=-1)
             first = allowed.argmax(-1)
@@ -142,16 +160,15 @@ class TTSModel(nn.Module):
             return torch.stack(codes, dim=-1), stop
         if mode != "loss":
             raise ValueError(mode)
-        codes, valid = batch["codes"], batch["frame_mask"].bool()
-        lengths = valid.sum(-1)
-        first_labels = codes.new_full(hidden.shape[:2], -100)
-        first_labels[:, :-1] = torch.where(valid, codes[..., 0], -100)
-        first_labels.scatter_(1, lengths[:, None], self.eos)
+        codes = batch['codes']
+        valid = torch.ones(hidden.shape[0], dtype=torch.bool, device=hidden.device)
+        valid[last_positions] = False
+        first_labels = codes.new_full((len(hidden),), self.eos)
+        first_labels[valid] = codes[:, 0]
+        h, target = hidden[valid], codes
         logits = self.talker.codec_head(hidden).float()
-        first_loss = F.cross_entropy(logits.flatten(0, 1), first_labels.flatten(), ignore_index=-100, reduction="sum")
+        first_loss = F.cross_entropy(logits, first_labels, reduction="sum")
         # h_t precedes frame_t. No target-frame leakage into the Talker.
-        h = hidden[:, :-1][valid]
-        target = codes[valid]
         inputs = [h.unsqueeze(1), self.talker.model.codec_embedding(target[:, 0]).unsqueeze(1)]
         predictor = self.talker.code_predictor
         for g in range(1, self.groups - 1):
@@ -162,8 +179,8 @@ class TTSModel(nn.Module):
             for g in range(1, self.groups)
         ])
         return {"first_sum": first_loss, "residual_sum": group_sums.sum(),
-                "group_sums": group_sums.detach(), "first_count": (first_labels != -100).sum(),
-                "frame_count": valid.sum()}
+                "group_sums": group_sums.detach(), "first_count": codes.new_tensor(len(first_labels)),
+                "frame_count": codes.new_tensor(len(target))}
 
 
 def make_config(backbone_config=None, tiny=False):

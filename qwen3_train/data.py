@@ -10,42 +10,12 @@ import torch
 
 class CodeDataset:
     def __init__(self, manifest):
-        self.references = None
+        self.target_speaker = False
         self.path = Path(manifest).resolve()
         self.fingerprint = hashlib.sha256(self.path.read_bytes()).hexdigest()
         self.rows = [json.loads(line) for line in self.path.read_text().splitlines() if line.strip()]
         if not self.rows:
             raise ValueError(f"Empty manifest: {manifest}")
-
-    def set_speaker_references(self, pool, seconds):
-        if not 0.1 <= seconds <= 30:
-            raise ValueError("speaker_reference_seconds must be between 0.1 and 30")
-        by_speaker = {}
-        for row in pool.rows:
-            if row.get("speaker"):
-                by_speaker.setdefault(row["speaker"], []).append(row)
-        by_id = {row['id']: row for row in pool.rows}
-        self.references = []
-        for row in self.rows:
-            if row.get('speaker_reference_id'):
-                reference = by_id.get(row['speaker_reference_id'])
-                if reference is None or reference.get('speaker') != row.get('speaker') or reference['id'] == row['id'] or reference['audio'] == row['audio']:
-                    raise ValueError(f"Invalid training-pool reference for {row['id']}")
-                self.references.append(str(Path(reference['audio']).resolve()))
-                continue
-            candidates = [r for r in by_speaker.get(row.get("speaker"), [])
-                          if r["id"] != row["id"] and r["audio"] != row["audio"]]
-            if not candidates:
-                raise ValueError(f"Need another training utterance with the same speaker for {row['id']}")
-            index = int(hashlib.sha256(row["id"].encode()).hexdigest(), 16) % len(candidates)
-            self.references.append(str(Path(candidates[index]["audio"]).resolve()))
-        self.reference_seconds = seconds
-        # Reference audio is part of the model input and therefore part of the
-        # exact-resume identity, even though codec features were cached earlier.
-        hashes = {path: hashlib.sha256(Path(path).read_bytes()).hexdigest()
-                  for path in sorted(set(self.references))}
-        self.reference_fingerprint = hashlib.sha256(json.dumps(
-            {"assignments": self.references, "audio_sha256": hashes}, sort_keys=True).encode()).hexdigest()
 
     def __len__(self):
         return len(self.rows)
@@ -62,32 +32,22 @@ class CodeDataset:
         if codes.min() < 0 or codes.max() >= 2048:
             raise ValueError(f"Invalid codec token for {row['id']}")
         item = {**row, "codes": codes}
-        if self.references is not None:
-            from .speaker import reference_mel
-            item["reference_audio"] = self.references[index]
-            item["speaker_mels"] = reference_mel(self.references[index], self.reference_seconds)
+        if self.target_speaker:
+            from .speaker import audio_mel
+            item['speaker_mels'] = audio_mel(row)
         return item
 
 
 def collate(rows):
-    b = len(rows)
-    text_len = max(len(r["text_ids"]) for r in rows)
-    frame_len = max(len(r["codes"]) for r in rows)
-    ids = torch.zeros(b, text_len, dtype=torch.long)
-    text_mask = torch.zeros_like(ids, dtype=torch.bool)
-    codes = torch.zeros(b, frame_len, 16, dtype=torch.long)
-    frame_mask = torch.zeros(b, frame_len, dtype=torch.bool)
-    for i, row in enumerate(rows):
-        n, t = len(row["text_ids"]), len(row["codes"])
-        if n == 0:
-            raise ValueError("Text token sequence cannot be empty")
-        ids[i, :n] = torch.tensor(row["text_ids"])
-        text_mask[i, :n] = True
-        codes[i, :t] = row["codes"]
-        frame_mask[i, :t] = True
-    batch = dict(text_ids=ids, text_mask=text_mask, codes=codes, frame_mask=frame_mask)
-    if "speaker_mels" in rows[0]:
-        batch["speaker_mels"] = torch.stack([r["speaker_mels"] for r in rows])
+    text_lengths = torch.tensor([len(r['text_ids']) for r in rows])
+    if (text_lengths == 0).any():
+        raise ValueError("Text token sequence cannot be empty")
+    batch = dict(text_ids=torch.cat([torch.tensor(r['text_ids'], dtype=torch.long) for r in rows]),
+                 codes=torch.cat([r['codes'] for r in rows]), text_lengths=text_lengths,
+                 frame_lengths=torch.tensor([len(r['codes']) for r in rows]))
+    if 'speaker_mels' in rows[0]:
+        batch['speaker_lengths'] = torch.tensor([len(r['speaker_mels']) for r in rows])
+        batch['speaker_mels'] = torch.cat([r['speaker_mels'] for r in rows])
     return batch
 
 

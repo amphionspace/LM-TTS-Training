@@ -135,7 +135,7 @@ class AssemblyTests(unittest.TestCase):
             changed = {**batch, "speaker_mels": batch["speaker_mels"] + 2}
             self.assertGreater((model.hidden(changed) - before).abs().max().item(), 1e-6)
             changed = {**batch, "codes": (batch["codes"] + 1) % 2048}
-            torch.testing.assert_close(model.hidden(changed)[:, :1], before[:, :1])
+            torch.testing.assert_close(model.hidden(changed)[:1], before[:1])
         initial = model.speaker_encoder.fc.weight.detach().clone()
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
         out = model(batch)

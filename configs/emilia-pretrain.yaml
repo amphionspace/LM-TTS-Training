@@ -1,0 +1,34 @@
+seed: 42
+model:
+  assembled_model: pretrained/assembled-qwen3-tts-frozen-conditioning
+  activation_checkpointing: false
+  attn_implementation: flash_attention_2
+data:
+  train: /ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-en-zh-1000h/train.jsonl
+  val: /ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-en-zh-1000h/val.jsonl
+train:
+  output: runs/emilia-en-zh-pretrain-1000h
+  batch_size: 48
+  accumulation: 1
+  max_steps: 5000
+  schedule_steps: 5000
+  warmup_steps: 200
+  lr: 0.0001
+  backbone_lr: 0.00002
+  weight_decay: 0.01
+  residual_weight: 0.3
+  grad_clip: 1.0
+  save_every: 500
+  keep_checkpoints: 2
+  eval_every: 100
+  log_every: 10
+eval:
+  num_samples: 8
+  train_num_samples: 2
+  audio_every: 500
+  max_frames: 160
+  codec: pretrained/Qwen3-TTS-Tokenizer-12Hz
+  codec_device: cuda:0
+  asr: true
+  asr_model: small
+  english_normalization: true

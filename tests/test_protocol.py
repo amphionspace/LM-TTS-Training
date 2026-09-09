@@ -36,7 +36,7 @@ class ProtocolTests(unittest.TestCase):
                 target['codes'][t] = frame[0]
                 self.model(collate([target]))
                 training_logits = [values.pop() for values in captures]
-                torch.testing.assert_close(training_logits[0][:, t], generated_logits[0],
+                torch.testing.assert_close(training_logits[0][t:t + 1], generated_logits[0],
                                            atol=2e-6, rtol=2e-5)
                 for g in range(1, 16):
                     torch.testing.assert_close(training_logits[g][t:t + 1], generated_logits[g],
@@ -46,16 +46,16 @@ class ProtocolTests(unittest.TestCase):
                 handle.remove()
 
     @torch.no_grad()
-    def test_padded_loss_matches_prefix_targets_and_official_depth_logits(self):
+    def test_packed_loss_matches_prefix_targets_and_official_depth_logits(self):
         second = {**self.row, 'text_ids': [5], 'codes': self.row['codes'][:1],
-                  'speaker_mels': self.row['speaker_mels'] + 1}
+                  'speaker_mels': self.row['speaker_mels'][:19] + 1}
         actual = self.model(collate([self.row, second]))
         first_sum = torch.zeros(())
         residual_sum = torch.zeros(())
         for row in [self.row, second]:
             for t in range(len(row['codes']) + 1):
                 prefix = {**row, 'codes': row['codes'][:t]}
-                h = self.model.hidden(collate([prefix]))[:, -1]
+                h = self.model.hidden(collate([prefix]))[-1:]
                 label = row['codes'][t, 0].item() if t < len(row['codes']) else self.model.eos
                 first_sum += F.cross_entropy(self.model.talker.codec_head(h), torch.tensor([label]), reduction='sum')
                 if t < len(row['codes']):

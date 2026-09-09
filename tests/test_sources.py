@@ -7,7 +7,6 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from qwen3_train.data import CodeDataset
 from qwen3_train.sources import emilia_short, short_record, materialize_audio
 from scripts.rescore_english import english_metrics
 
@@ -46,28 +45,6 @@ class SourceTests(unittest.TestCase):
         meta['short'][0]['rel_start_samples'] = 100
         with self.assertRaisesRegex(ValueError, 'cover its carrier'):
             short_record(meta, 'file.tar', 'audio.m4a', 512, 100)
-
-    def test_reference_must_be_another_training_recording_of_same_speaker(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            for name in ['a', 'b', 'c', 'val']:
-                (root / f'{name}.wav').write_bytes(name.encode())
-            rows = [dict(id=name, speaker=speaker, audio=str(root / f'{name}.wav'))
-                    for name, speaker in [('a', 's1'), ('b', 's1'), ('c', 's2')]]
-            pool_path = root / 'train.jsonl'
-            pool_path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
-            pool = CodeDataset(pool_path)
-            query_path = root / 'val.jsonl'
-            query = dict(id='val', speaker='s1', audio=str(root / 'val.wav'), speaker_reference_id='a')
-            query_path.write_text(json.dumps(query) + '\n')
-            dataset = CodeDataset(query_path)
-            dataset.set_speaker_references(pool, 3)
-            self.assertEqual(dataset.references, [str(root / 'a.wav')])
-            for invalid in [dict(speaker_reference_id='missing'), dict(speaker_reference_id='c'),
-                            dict(id='a'), dict(audio=str(root / 'a.wav'))]:
-                dataset.rows = [{**query, **invalid}]
-                with self.assertRaisesRegex(ValueError, 'Invalid training-pool reference'):
-                    dataset.set_speaker_references(pool, 3)
 
     def test_submillisecond_tail_padding_and_large_mismatch_rejection(self):
         with tempfile.TemporaryDirectory() as directory:

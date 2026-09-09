@@ -18,7 +18,7 @@ git archive dd2922bb0b41d0541365d42143d835b14d1dd252 configs | tar -x -C runs/cl
 
 本机已经建立 `.venv`，不继承系统 site-packages。
 Python 3.10；PyTorch 2.8.0+cu126；Transformers 4.57.3；qwen-tts 0.1.1。
-GPU：2 × A800 80GB。默认使用 SDPA；未安装外部 flash-attn 扩展。
+当前中英预训练使用 4 × A100 80GB 和 Flash Attention 2；历史 LJSpeech 实验使用双卡与 SDPA。依赖文件固定了官方 Flash Attention 2.8.3.post1 预编译 wheel 和 SHA256，面向 Linux x86_64、Python 3.10、PyTorch 2.8、CUDA 12、CXX11 ABI=true，不进行源码编译。
 
 ```bash
 cd /119010446/LM-TTS-Training

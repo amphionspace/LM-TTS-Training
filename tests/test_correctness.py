@@ -42,13 +42,13 @@ class Correctness(unittest.TestCase):
         with torch.no_grad():
             before = self.model.hidden(batch)
             changed = {k: v.clone() for k, v in batch.items()}
-            changed["codes"][:, 2] = (changed["codes"][:, 2] + 71) % 2048
+            changed["codes"][2] = (changed["codes"][2] + 71) % 2048
             after = self.model.hidden(changed)
         # BOS, frame_0 and frame_1 states predict frames_0..2 respectively.
-        torch.testing.assert_close(before[:, :3], after[:, :3], atol=1e-6, rtol=1e-6)
-        self.assertGreater((before[:, 3] - after[:, 3]).abs().max().item(), 1e-5)
+        torch.testing.assert_close(before[:3], after[:3], atol=1e-6, rtol=1e-6)
+        self.assertGreater((before[3] - after[3]).abs().max().item(), 1e-5)
 
-    def test_padding_does_not_change_loss(self):
+    def test_packing_preserves_sum_of_utterance_losses(self):
         a, b = row(2, (5, 6)), row(4, (7, 8, 9, 10))
         with torch.no_grad():
             one, two = self.model(collate([a])), self.model(collate([b]))
@@ -60,8 +60,8 @@ class Correctness(unittest.TestCase):
 
     def test_empty_audio_prefix_can_generate(self):
         batch = collate([row(1)])
-        batch["codes"] = batch["codes"][:, :0]
-        batch["frame_mask"] = batch["frame_mask"][:, :0]
+        batch["codes"] = batch["codes"][:0]
+        batch["frame_lengths"].zero_()
         with torch.no_grad():
             codes, stop = self.model(batch, mode="next_frame")
         self.assertEqual(codes.shape, (1, 16))

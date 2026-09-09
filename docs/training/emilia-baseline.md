@@ -1,5 +1,7 @@
 # Emilia2：先建立官方结构基线，再做初始化消融
 
+> 本文保留旧英语基线的实验决定与配方。2026-09-09 主线已切换为中英各约 500 小时、训练使用完整目标音频 speaker 条件的预训练；当前入口、数据流与 loss 详见 [完整预训练 pipeline](pretraining-pipeline.md)。下文旧命令和参考录音策略不代表当前默认任务。
+
 ## 当前实验决定
 
 目标是 **约 1,000 小时**，不是 20 小时。第一轮选英语，便于沿用当前英语 ASR 评估；范围为 2–10 秒、JSON **顶层 `type=short`** 的独立录音。不从 long/dialogue 的嵌套 short 视图取数据。
@@ -82,6 +84,8 @@ PYTHONPATH=. python scripts/run_emilia_baseline.py --export-pid <PID>
 控制脚本有进程锁，避免同一个 run 被重复启动；状态保存在 `runs/emilia-official-frozen-1000h/pipeline-status.json`，每阶段有独立日志。中断后重跑同一个入口会复用匹配 recipe 的 codec 缓存；已有 checkpoint 时沿用落盘的实际配置并 `--resume latest`。失败会记录原因并停止，不能把启动成功视为阶段完成。`--nproc-per-node` 同时控制 codec 设备数、显存测试和训练卡数；已有 checkpoint 时必须使用保存时的卡数。
 
 2026-09-09 恢复任务改用四张 A100 80GB，使用四卡 FSDP2、BF16、关闭 activation checkpointing。允许扩大全局 batch；按每卡 batch 96、80、64、48、32 依次进行压力测试，仅在 CUDA OOM 时降档。两次完整优化更新覆盖 AdamW 状态分配；只有压力测试通过才开始训练。最终配置写入 run 下 `baseline-config.yaml`，全局 batch 为每卡 batch × 4。这会改变每步数据量，不能与此前双卡计划视为相同训练预算；更新次数与学习率计划仍保持原定值。训练 5,000 updates，warmup 200，主干学习率 2e-5、新模块 1e-4；每 100 steps 验证 loss，默认 `keep_checkpoints: 2`，只在新 checkpoint 完整落盘后清理旧的完整 checkpoint；设为 null 可关闭自动清理。保留数量不影响恢复签名。每 500 steps 保存 checkpoint 并生成 8 条验证／2 条训练音频。所有验证 loss 使用 512 条验证集；生成内容分数只覆盖固定样本，不能代表完整验证集。
+
+同日中英预训练运行已切换到 `configs/emilia-pretrain.yaml`，详细数据与 loss 流程见 [预训练 pipeline](pretraining-pipeline.md)。安装官方预编译 Flash Attention 2.8.3.post1，BF16 与确定性反向计算下每卡 64 压测 OOM，每卡 48 两次优化更新通过，峰值 allocated 60.39 GiB。当前全局 batch 192，运行目录 `runs/emilia-en-zh-pretrain-1000h`，日志 `train-flash.log`。控制脚本从配置的 batch 开始尝试，只向更小档位降档。
 
 ```bash
 .venv/bin/tensorboard --logdir runs/emilia-official-frozen-1000h --port 6006

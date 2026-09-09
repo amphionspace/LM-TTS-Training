@@ -6,6 +6,7 @@ import os
 import random
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
 
@@ -61,14 +62,18 @@ def validate(model, dataset, batch_size, device):
 
 @torch.no_grad()
 def generate_sample(model, dataset, device, settings, output, step, writer, index=0, multi=False,
-                    codec=None, scorer=None, tag_prefix="eval"):
+                    codec=None, scorer=None, tag_prefix="eval", speaker_row=None):
     from qwen_tts import Qwen3TTSTokenizer
     model.eval()
     row = dataset[index]
+    if speaker_row is not None:
+        from .speaker import audio_mel
+        row['speaker_mels'] = audio_mel(speaker_row)
+        row['reference_audio'] = speaker_row['audio']
     tag = f"{tag_prefix}/sample_{index:02d}" if multi else tag_prefix
     batch = move(collate([row]), device)
-    batch["codes"] = batch["codes"][:, :0]
-    batch["frame_mask"] = batch["frame_mask"][:, :0]
+    batch["codes"] = batch["codes"][:0]
+    batch["frame_lengths"].zero_()
     generated = []
     stopped = False
     start = time.perf_counter()
@@ -83,13 +88,16 @@ def generate_sample(model, dataset, device, settings, output, step, writer, inde
             break
         dist.broadcast(frame, src=0)
         generated.append(frame[0].cpu())
-        batch["codes"] = torch.cat([batch["codes"], frame[:, None]], dim=1)
-        batch["frame_mask"] = torch.ones(batch["codes"].shape[:2], dtype=torch.bool, device=device)
-    result = {"id": row["id"], "text": row["text"], "frames": len(generated),
+        batch["codes"] = torch.cat([batch["codes"], frame], dim=0)
+        batch["frame_lengths"] += 1
+    result = {"id": row["id"], "text": row["text"], 'language': row.get('language', 'en'), "frames": len(generated),
               "eos_reached": stopped, "truncated": not stopped,
               "generation_seconds": time.perf_counter() - start}
     if "reference_audio" in row:
         result["speaker_reference_audio"] = row["reference_audio"]
+    if speaker_row is not None:
+        result['speaker_reference_id'] = speaker_row['id']
+        result['speaker_reference_source'] = speaker_row.get('audio_source', speaker_row['audio'])
     if dist.get_rank() == 0:
         folder = output / "evaluation" / f"step-{step:08d}"
         if multi:
@@ -112,9 +120,9 @@ def generate_sample(model, dataset, device, settings, output, step, writer, inde
             if settings.get("asr", True):
                 if scorer is None:
                     scorer = ASRScorer(settings.get("asr_model", "small.en"))
-                result["content"] = scorer.score(audio_path, row["text"])
-                result["reference_asr"] = scorer.score(target_audio, row["text"])
-                if settings.get("english_normalization", False):
+                result["content"] = scorer.score(audio_path, row["text"], row.get('language', 'en'))
+                result["reference_asr"] = scorer.score(target_audio, row["text"], row.get('language', 'en'))
+                if settings.get("english_normalization", False) and row.get('language', 'en') == 'en':
                     for key in ["content", "reference_asr"]:
                         result["english_" + key] = english_metrics(row["text"], result[key]["transcript"])
                     for key in ["wer", "cer"]:
@@ -125,7 +133,7 @@ def generate_sample(model, dataset, device, settings, output, step, writer, inde
         else:
             from .metrics import content_metrics
             result["content"] = content_metrics(row["text"], "")
-            if settings.get("english_normalization", False):
+            if settings.get("english_normalization", False) and row.get('language', 'en') == 'en':
                 result["english_content"] = english_metrics(row["text"], "")
             writer.add_scalar(f"{tag}/wer", 1.0, step)
             writer.add_scalar(f"{tag}/cer", 1.0, step)
@@ -157,18 +165,48 @@ def evaluate_audio(model, val_data, device, eval_settings, output, step, writer,
             sample_count = min(len(dataset), count)
             if sample_count < 1:
                 raise ValueError("Evaluation sample count must be positive")
+            speakers = {}
+            if model.speaker_encoder is not None:
+                for row in train_data.rows:
+                    choices = speakers.setdefault(row['speaker'], [])
+                    if len(choices) < 2:
+                        choices.append(row)
+            indices, references = [], []
+            languages = sorted({row.get('language', 'en') for row in dataset.rows})
+            per_language = {language: 0 for language in languages}
+            for i, row in enumerate(dataset.rows):
+                language = row.get('language', 'en')
+                if per_language[language] >= math.ceil(sample_count / len(languages)):
+                    continue
+                reference = next((r for r in speakers.get(row.get('speaker'), []) if r['id'] != row['id']), None)
+                if model.speaker_encoder is not None and reference is None:
+                    continue
+                indices.append(i)
+                references.append(reference)
+                per_language[language] += 1
+                if len(indices) == sample_count:
+                    break
+            if not indices:
+                raise ValueError('No generation samples have another training utterance for speaker conditioning')
             samples = [generate_sample(model, dataset, device, eval_settings, folder, step, writer,
-                                       index=i, multi=sample_count > 1, codec=codec, scorer=scorer, tag_prefix=tag)
-                       for i in range(sample_count)]
+                                       index=i, multi=True, codec=codec, scorer=scorer, tag_prefix=tag, speaker_row=reference)
+                       for i, reference in zip(indices, references)]
             if dist.get_rank() == 0 and all("content" in sample for sample in samples):
                 summary = aggregate_content([sample["content"] for sample in samples])
-                if all("english_content" in sample for sample in samples):
-                    summary["english"] = aggregate_content([sample["english_content"] for sample in samples])
+                summary['by_language'] = {
+                    language: aggregate_content([sample['content'] for sample in samples if sample['language'] == language])
+                    for language in sorted({sample['language'] for sample in samples})}
+                english = [sample['english_content'] for sample in samples if 'english_content' in sample]
+                if english:
+                    summary["english"] = aggregate_content(english)
                     for key in ["wer", "cer"]:
                         writer.add_scalar(f"{tag}/english_{key}", summary["english"][key], step)
                 summary["truncation_rate"] = sum(s["truncated"] for s in samples) / len(samples)
                 for key in ["wer", "cer", "truncation_rate"]:
                     writer.add_scalar(f"{tag}/{key}", summary[key], step)
+                for language, metrics in summary['by_language'].items():
+                    for key in ['wer', 'cer']:
+                        writer.add_scalar(f'{tag}/{language}/{key}', metrics[key], step)
                 (folder / "evaluation" / f"step-{step:08d}" / "summary.json").write_text(json.dumps(summary, indent=2))
                 writer.flush()
     random.setstate(python_state)
@@ -209,10 +247,12 @@ def main():
     torch.cuda.set_device(device)
     torch.set_num_threads(4)
     torch.use_deterministic_algorithms(True)
+    os.environ["FLASH_ATTENTION_DETERMINISTIC"] = "1"
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
     dist.init_process_group("nccl", timeout=timedelta(minutes=30), device_id=device)
     writer = None
+    reader = None
     try:
         rank, world = dist.get_rank(), dist.get_world_size()
         seed = config["seed"]
@@ -229,7 +269,8 @@ def main():
         if model_cfg.get("assembled_model"):
             assembled = Path(model_cfg["assembled_model"])
             assembly_fingerprint = hashlib.sha256((assembled / "assembly_report.json").read_bytes()).hexdigest()
-            model = TTSModel.from_assembled(assembled, load_weights=not args.resume)
+            model = TTSModel.from_assembled(assembled, load_weights=not args.resume,
+                                          attn_implementation=model_cfg.get("attn_implementation", "sdpa"))
             model_config = model.config
             initialization = {"source": str(assembled), "assembly_report_sha256": assembly_fingerprint,
                               "speaker_encoder": "pretrained Qwen ECAPA-TDNN, " + ("frozen" if getattr(model.config, "lm_tts_freeze_speaker_encoder", False) else "jointly trained")}
@@ -237,9 +278,8 @@ def main():
             for dataset in [train_data, val_data]:
                 for row in dataset.rows:
                     row["text_ids"] = [full_config["tts_bos_token_id"], *row["text_ids"], full_config["tts_eos_token_id"]]
-            seconds = config["data"]["speaker_reference_seconds"]
-            train_data.set_speaker_references(train_data, seconds)
-            val_data.set_speaker_references(train_data, seconds)
+            train_data.target_speaker = True
+            val_data.target_speaker = True
         else:
             base_cfg = None if model_cfg["tiny"] else AutoConfig.from_pretrained(model_cfg["backbone"])
             model_config = make_config(base_cfg, tiny=model_cfg["tiny"])
@@ -281,10 +321,10 @@ def main():
                      "train_manifest": train_data.fingerprint, "val_manifest": val_data.fingerprint,
                      "settings": {k: v for k, v in settings.items() if k not in ["output", "max_steps", "save_every", "eval_every", "log_every", "keep_checkpoints"]},
                      "eval": config["eval"], "torch": torch.__version__}
+        signature['batch_layout'] = 'packed'
         if assembly_fingerprint:
             signature.update(assembly_report_sha256=assembly_fingerprint,
-                             speaker_references={"seconds": seconds, "train": train_data.reference_fingerprint,
-                                                 "val": val_data.reference_fingerprint})
+                             speaker_conditioning='full_target_audio', generation_conditioning='other_training_utterance')
         progress = {"step": 0, "epoch": 0, "next_batch": 0}
         if args.resume:
             resume = args.resume
@@ -309,6 +349,7 @@ def main():
             evaluate_audio(model, val_data, device, eval_settings, output, progress["step"], writer, train_data)
             return
         cached_plan, cached_epoch = None, None
+        reader = ThreadPoolExecutor(max_workers=4)
         while progress["step"] < settings["max_steps"]:
             torch.cuda.reset_peak_memory_stats(device)
             start = time.perf_counter()
@@ -324,10 +365,10 @@ def main():
                     plan = train_batches(train_data, settings["batch_size"], world, rank, seed, progress["epoch"])
                     cached_plan, cached_epoch = plan, progress["epoch"]
                 indices = plan[progress["next_batch"]]
-                batches.append(collate([train_data[i] for i in indices]))
+                batches.append(collate(list(reader.map(train_data.__getitem__, indices))))
                 progress["next_batch"] += 1
-            counts = torch.tensor([sum(b["frame_mask"].sum().item() + len(b["codes"]) for b in batches),
-                                   sum(b["frame_mask"].sum().item() * 15 for b in batches)], dtype=torch.float64, device=device)
+            counts = torch.tensor([sum(b['frame_lengths'].sum().item() + len(b['frame_lengths']) for b in batches),
+                                   sum(b['frame_lengths'].sum().item() * 15 for b in batches)], dtype=torch.float64, device=device)
             dist.all_reduce(counts)
             optimizer.zero_grad(set_to_none=True)
             sums = torch.zeros(2, dtype=torch.float64, device=device)
@@ -382,6 +423,8 @@ def main():
             if audio_every and step % audio_every == 0:
                 evaluate_audio(model, val_data, device, config["eval"], output, step, writer, train_data)
     finally:
+        if reader:
+            reader.shutdown()
         if writer:
             writer.close()
         dist.destroy_process_group()

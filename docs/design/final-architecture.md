@@ -2,9 +2,9 @@
 
 ## 决定与验证顺序
 
-先尽量对齐 Qwen3-TTS-12Hz-0.6B 的公开结构，在 **约 1,000 小时 Emilia2 英语 short 数据**上建立基线，再讨论删掉 projector、解冻或重新初始化。LJSpeech 上的直接连接实验仅是诊断，不作为最终选择的依据。
+先尽量对齐 Qwen3-TTS-12Hz-0.6B 的公开结构，在 **Emilia2 英语、中文各约 500 小时 short 数据**上进行预训练，再讨论删掉 projector、解冻或重新初始化。LJSpeech 上的直接连接实验仅是诊断，不作为最终选择的依据。
 
-官方完整结构、0.6B / 1.7B 维度对照及尚未公开的初始化细节见 [官方结构与证据](official-qwen3-tts.md)。数据和实验步骤见 [Emilia 基线](../training/emilia-baseline.md)。
+官方完整结构、0.6B / 1.7B 维度对照及尚未公开的初始化细节见 [官方结构与证据](official-qwen3-tts.md)。数据读取、模型输入、loss 和四卡更新详见 [完整预训练 pipeline](../training/pretraining-pipeline.md)。
 
 ## 每个模块从哪里来，是否训练
 
@@ -56,17 +56,17 @@
 
 ## Reference 与数据边界
 
-每条训练样本为文本加整段目标 codec。ECAPA 使用同 speaker 的另一条训练录音；Emilia 中间层为每个 speaker 选择两个训练 anchor，确保 anchor 自己也能引用另一条。验证参考仍只能来自训练池。只将 mel 作为固定输入，ECAPA 输出在线计算，但不保留梯度，权重固定。
+每条训练样本为文本加整段目标 codec。训练和验证 loss 的 ECAPA 条件来自完整目标录音；变长 mel 按真实长度分组计算，避免 padding 影响池化。ECAPA 输出在线计算，但权重冻结。训练保留 singleton speaker；生成评估则使用同 speaker 的另一条训练录音，并跳过没有其他参考的样本。
 
 不显式构造独立的 ICL reference/target 训练对。已有 codec 历史的编排经过官方 ICL 函数对照；当前评估从空音频前缀生成，不能据此宣称完成 zero-shot 验证。基线先评价未见文本内容准确率，而非未见说话人能力。
 
-Emilia 仅接收 JSON 顶层 `type=short`，不从 long/dialogue 提取 short 切片。原始 m4a 保留在源 tar 中；中间 manifest 记录 locator；codec 离线缓存；仅保留训练参考音频，其他评估原音频按需解码。
+Emilia 仅接收 JSON 顶层 `type=short`，不从 long/dialogue 提取 short 切片。原始 m4a 保留在源 tar 中；中间 manifest 记录 locator；codec 离线缓存；speaker 音频在线解码，评估原音频按需落盘。
 
 ## 保存、恢复与验证要求
 
 单机多卡使用 FSDP2，逐 decoder block 分片后包整个模型；BF16 参数计算、FP32 梯度归约，支持 activation checkpointing。冻结参数不进入 AdamW。每个 epoch 的采样计划复用，避免在百万条规模下每步重新全量排序。
 
-DCP 保存模型、optimizer、scheduler、训练进度及每 rank RNG。组装报告 hash、manifest、参考分配／参考音频 hash 和关键训练设置进入恢复签名。更换初始化、冻结策略或输入协议必须使用新 run。
+DCP 保存模型、optimizer、scheduler、训练进度及每 rank RNG。组装报告 hash、manifest、speaker 条件方式和关键训练设置进入恢复签名。原始 tar 未做全库内容哈希，要求源音频保持不变。更换初始化、冻结策略或输入协议必须使用新 run。
 
 当前官方宽度产物可以由公开 Qwen wrapper 验证权重结构；**冻结策略由本项目加载器执行**，原版 wrapper 本身不认识本项目的冻结配置。训练 checkpoint 仍是 DCP，不能直接当作官方发布模型使用。
 

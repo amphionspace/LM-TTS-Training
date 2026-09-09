@@ -53,8 +53,8 @@ class ASRScorer:
         from faster_whisper import WhisperModel
         self.model = WhisperModel(model, device="cpu", compute_type="int8", cpu_threads=4, num_workers=1)
 
-    def score(self, audio, reference):
-        segments, _ = self.model.transcribe(str(audio), language="en", beam_size=5,
+    def score(self, audio, reference, language='en'):
+        segments, _ = self.model.transcribe(str(audio), language=language, beam_size=5,
                                             vad_filter=False, condition_on_previous_text=False)
         hypothesis = " ".join(segment.text.strip() for segment in segments)
         return {"transcript": hypothesis, **content_metrics(reference, hypothesis)}
