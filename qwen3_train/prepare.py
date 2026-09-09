@@ -52,7 +52,7 @@ def main():
     if not args.tiny_text:
         text_path = str(Path(args.backbone).resolve()) if Path(args.backbone).is_dir() else snapshot_download(
             args.backbone, allow_patterns=["config.json", "tokenizer*", "vocab.json", "merges.txt", "special_tokens_map.json"])
-        tokenizer = AutoTokenizer.from_pretrained(text_path)
+        tokenizer = AutoTokenizer.from_pretrained(text_path, fix_mistral_regex=False)
     recipe = {**vars(args), "source": str(source), "output": str(output),
               "codec_path": codec_path, "backbone_path": text_path,
               "metadata_sha256": hashlib.sha256(metadata.read_bytes()).hexdigest()}

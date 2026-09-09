@@ -71,3 +71,5 @@ DCP 保存模型、optimizer、scheduler、训练进度及每 rank RNG。组装�
 当前官方宽度产物可以由公开 Qwen wrapper 验证权重结构；**冻结策略由本项目加载器执行**，原版 wrapper 本身不认识本项目的冻结配置。训练 checkpoint 仍是 DCP，不能直接当作官方发布模型使用。
 
 验证包含：初始化逐张量来源核对；冻结前端更新前后严格相等；官方非流式／ICL embedding 对照；teacher forcing 与逐帧生成 logits 对齐；变长 padding 与 EOS；FSDP 梯度；真实 Emilia 小样本训练、保存及恢复；正式基线的验证 CE、固定样本音频、原音频 ASR 对照和生成 WER/CER。通过工程检查不等于语音质量达标。
+
+文本 tokenizer 固定 checkpoint 原生 Qwen 规则，显式关闭 Mistral regex 补丁；与当前官方 wrapper 开关的差异及实测见 [分词策略](../training/emilia-baseline.md#固定文本分词规则)。

@@ -64,7 +64,7 @@ def main():
     for row in records:
         if row['source']['dataset'] == 'emilia2' and row['source']['type'] != 'short':
             raise ValueError('Only top-level Emilia short records are allowed')
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, fix_mistral_regex=False)
     for record in records:
         record['text_ids'] = tokenizer.encode(record['text'], add_special_tokens=False)
     rejected_text = sum(not 0 < len(r['text_ids']) <= args.max_text_tokens for r in records)

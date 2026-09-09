@@ -48,8 +48,8 @@ def audit_sources(backbone, template, text_projection_init="pretrained", input_p
                    for key in BACKBONE_FIELDS if getattr(base, key) != getattr(tts.talker_config, key)}
     if differences:
         raise ValueError(f"Backbone weights are not structurally compatible: {differences}")
-    source_tokenizer = AutoTokenizer.from_pretrained(backbone)
-    target_tokenizer = AutoTokenizer.from_pretrained(template)
+    source_tokenizer = AutoTokenizer.from_pretrained(backbone, fix_mistral_regex=False)
+    target_tokenizer = AutoTokenizer.from_pretrained(template, fix_mistral_regex=False)
     vocab = vocabulary_plan(source_tokenizer.get_vocab(), target_tokenizer.get_vocab(), base.vocab_size)
     for field, token in TEXT_SPECIALS.items():
         if target_tokenizer.convert_tokens_to_ids(token) != getattr(tts, field):
@@ -225,7 +225,7 @@ def validate_saved(directory, dtype=torch.bfloat16):
         loaded = TTSModel(config.talker_config, config.speaker_encoder_config)
         loaded.talker.load_state_dict(load_prefix(directory, "talker."), strict=True)
         loaded.speaker_encoder.load_state_dict(load_prefix(directory, "speaker_encoder."), strict=True)
-        tokenizer = AutoTokenizer.from_pretrained(directory)
+        tokenizer = AutoTokenizer.from_pretrained(directory, fix_mistral_regex=False)
         for field, token in TEXT_SPECIALS.items():
             if tokenizer.convert_tokens_to_ids(token) != getattr(config, field):
                 raise ValueError(f"Special token changed on reload: {token}")

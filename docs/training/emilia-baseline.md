@@ -102,3 +102,9 @@ PYTHONPATH=. python scripts/run_emilia_baseline.py --export-pid <PID>
 真实 short 小样本的 metadata 导出、PyAV 解码、批量 codec 编码、11 train / 2 val 生成及双卡冻结前端训练已跑通。1,000 小时全量筛选／编码／训练的完成状态和指标需依据运行日志另行记录，不能由小样本验证替代。
 
 代码和训练验证记录见 [训练正确性与诊断](../validation/training-diagnosis.md)。
+
+## 固定文本分词规则
+
+训练与组装显式使用 `fix_mistral_regex=False`，保留 checkpoint 原生 Qwen tokenizer 规则。Transformers 4.57.3 的本地配置检测可能把 Qwen 的 4.57.3 配置也当作 Mistral 并给出警告；开启补丁会实际改变混合大小写词的 token ID，例如 `iPhone`。本机 1,004 条测试文本与 tokenizer.json 原生分词、此前预处理输入均一致，因此无需重编码已有数据。
+
+[官方 wrapper](https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/inference/qwen3_tts_model.py) 当前显式传入 True；在该依赖组合下可能应用另一套 regex。这是与本项目明确保留原生规则的一项差异；公开 wrapper 可重载权重结构不等于所有文本预处理行为一致。检测逻辑见 [Transformers 4.57.3 实现](https://github.com/huggingface/transformers/blob/v4.57.3/src/transformers/tokenization_utils_base.py)。不能从这个推理兼容开关推断官方预训练的 tokenizer 配方。
