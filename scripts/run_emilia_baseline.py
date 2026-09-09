@@ -118,18 +118,21 @@ def main():
         del texts, ids
         if config['model'].get('activation_checkpointing'):
             raise ValueError('This memory probe measures activation_checkpointing=false')
-        candidates = [config['train']['batch_size']]
+        budgets = (config['train']['max_batch_frames'], config['train']['max_batch_tokens'])
+        candidates = [budgets]
         if not resuming:
-            candidates += [size for size in [96, 80, 64, 48, 32] if size < candidates[0]]
-        for batch_size in candidates:
-            stage = f'memory-batch{batch_size}'
+            candidates += [(int(budgets[0] * scale), int(budgets[1] * scale)) for scale in [.8, .6, .4]]
+        for frames, tokens in candidates:
+            stage = f'memory-frames{frames}-tokens{tokens}'
             command = [str(ROOT / '.venv/bin/torchrun'), '--standalone', f'--nproc_per_node={args.nproc_per_node}',
                 'scripts/probe_batch_memory.py', '--assembled', config['model']['assembled_model'],
-                '--manifest', config['data']['train'], '--batch-size', str(batch_size),
+                '--manifest', config['data']['train'], '--max-batch-frames', str(frames),
+                '--max-batch-tokens', str(tokens),
                 '--attn-implementation', config['model'].get('attn_implementation', 'sdpa')]
             code = run(stage, command)
             if code == 0:
-                config['train']['batch_size'] = batch_size
+                config['train']['max_batch_frames'] = frames
+                config['train']['max_batch_tokens'] = tokens
                 break
             if 'out of memory' not in (output / f'{stage}.log').read_text().lower():
                 raise RuntimeError('Memory probe failed for a reason other than CUDA OOM')
@@ -138,8 +141,8 @@ def main():
         effective = output / 'baseline-config.yaml'
         effective.write_text(yaml.safe_dump(config, sort_keys=False))
         status('ready-to-train', preparation=report, world_size=args.nproc_per_node,
-               per_gpu_batch=config['train']['batch_size'],
-               global_batch=args.nproc_per_node * config['train']['batch_size'] * config['train']['accumulation'])
+               max_batch_frames=config['train']['max_batch_frames'],
+               max_batch_tokens=config['train']['max_batch_tokens'], accumulation=config['train']['accumulation'])
         command = ['bash', 'scripts/run_train.sh', '--config', str(effective)]
         if (output / 'checkpoints/latest').exists():
             command += ['--resume', 'latest']

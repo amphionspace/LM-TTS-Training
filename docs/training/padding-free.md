@@ -1,5 +1,7 @@
 # Padding-free 训练实现与验证
 
+本文保留当时的迁移与恢复实验记录。当前训练已统一转向 [dynamic batching](dynamic-batching.md)，旧布局迁移兼容代码已删除；下文的历史恢复命令不再作为当前入口。1kh 运行已完成 5,000 步，见 [最终报告](emilia-1kh-report.md)。
+
 当前实现已归入主目录 `/119010446/LM-TTS-Training`，临时工作目录已移除。原四卡训练已暂停，完整第 1000 步 checkpoint 和评估音频保留。当前没有正式 padding-free 训练任务，重启步骤见 [当前进展与恢复说明](restart-progress.md)。
 
 ## 数据和模型行为

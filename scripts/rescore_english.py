@@ -13,10 +13,13 @@ def main():
     root = Path(args.run)
     writer = SummaryWriter(str(root / 'tensorboard-english'))
     for tag, folder in [('eval', root), ('train_eval', root / 'train-evaluation')]:
-        for step in sorted((folder / 'evaluation').glob('step-*')):
+        for step in sorted((folder / 'evaluation').rglob('step-*')):
+            step_tag = '/'.join((tag, *step.parent.relative_to(folder / 'evaluation').parts))
             rows = []
             for path in sorted(step.rglob('metrics.json')):
                 row = json.loads(path.read_text())
+                if row.get('language', 'en') != 'en':
+                    continue
                 scored = {'id': row['id'], 'text': row['text']}
                 for key in ['content', 'reference_asr']:
                     if key in row:
@@ -30,8 +33,8 @@ def main():
                       'summary': summary, 'samples': rows}
             (step / 'english-scores.json').write_text(json.dumps(report, ensure_ascii=False, indent=2))
             for key in ['wer', 'cer']:
-                writer.add_scalar(f'{tag}/english_{key}', summary[key], int(step.name.split('-')[1]))
-            print(json.dumps({'tag': tag, 'step': step.name, **summary}))
+                writer.add_scalar(f'{step_tag}/english_{key}', summary[key], int(step.name.split('-')[1]))
+            print(json.dumps({'tag': step_tag, 'step': step.name, **summary}))
     writer.close()
 
 

@@ -2,7 +2,7 @@
 
 本文对应当前实现和 [`configs/emilia-pretrain.yaml`](../../configs/emilia-pretrain.yaml)。目标数据是 **约 500 小时英语 + 500 小时中文**，模型采用 Qwen3-TTS 的非流式输入结构，使用 Qwen3-0.6B-Base 初始化 Talker 主干，训练音频预测能力。
 
-实现已统一采用 padding-free 数据布局，正式训练已暂停，保留第 1000 步 checkpoint。完整四卡恢复短测已从第 1000 步运行到 1002 步并保存，见 [当前进展与恢复说明](restart-progress.md)；迁移与验证记录见 [padding-free 说明](padding-free.md)。
+实现已统一采用 padding-free 布局和按帧/token 预算动态组批。此前固定 batch 的 1kh 训练已完成 5,000 步，结果见 [1kh 报告](emilia-1kh-report.md)，产物按 [保留清单](run-retention.md) 归档。当前配置输出到新的动态组批 run；试训与验证见 [动态组批说明](dynamic-batching.md)。
 
 先明确三个容易混淆的地方：
 
@@ -22,7 +22,7 @@ flowchart TD
     D --> E[按 offset 读取 m4a 并解码为 24 kHz 单声道]
     E --> F[冻结 codec 编码为 T × 16 个整数]
     F --> G[NPZ 缓存与 prepared JSONL]
-    G --> H[合并中英清单、分桶采样、四卡各取一个 batch]
+    G --> H[合并中英清单、按帧和 token 预算动态组批、分配四卡]
     H --> I[文本 embedding 与 projector]
     H --> J[完整目标音频 mel 与冻结 ECAPA]
     H --> K[历史帧的 16 个码本 embedding 求和]
@@ -53,7 +53,7 @@ PYTHONPATH=. .venv/bin/python scripts/run_emilia_baseline.py --nproc-per-node 4
 | 上述目录下 `emilia-short-en-zh-1000h/part-0/` | 英语 prepared 数据 |
 | 上述目录下 `emilia-short-en-zh-1000h/part-1/` | 中文 prepared 数据 |
 | 上述目录下 `emilia-short-en-zh-1000h/train.jsonl`、`val.jsonl` | 合并后的训练入口 |
-| `runs/emilia-en-zh-pretrain-1000h/` | 流程状态、日志、最终配置、checkpoint、TensorBoard、生成评估 |
+| `runs/emilia-en-zh-dynamic-1000h/` | 当前配置的新运行输出：流程状态、日志、配置、checkpoint、TensorBoard、生成评估 |
 
 阶段状态写入 `pipeline-status.json`，控制脚本持有 `pipeline.lock` 防止重复启动。数据完成以 `PREPARATION_COMPLETE` 和 `preparation.json` 为准；约 1,000 小时是筛选目标，实际条数和时长应读取报告。
 
@@ -187,7 +187,7 @@ prepared 行保留原始文本、speaker、language、source，并增加：
 
 ## 4. 一个 batch 如何进入模型
 
-实现：[`CodeDataset / collate / train_batches`](../../qwen3_train/data.py)、[`audio_mel`](../../qwen3_train/speaker.py)、[`train.main`](../../qwen3_train/train.py)。
+实现：[`CodeDataset / collate / DistributedTokenBatchSampler`](../../qwen3_train/data.py)、[`audio_mel`](../../qwen3_train/speaker.py)、[`train.main`](../../qwen3_train/train.py)。
 
 ### 4.1 清单与样本读取
 
@@ -199,7 +199,9 @@ prepared 行保留原始文本、speaker、language、source，并增加：
 
 每次取样本时读取 NPZ，核对 SHA256，检查 codec 形状和范围。设置 `target_speaker=True` 后，还会解码该样本的**完整目标录音**，转换为 speaker mel。
 
-这里当前使用手工索引取样和 `collate()`，训练每个 rank 用 4 个线程并发读取当前 microbatch，按 `map()` 的输入顺序返回，保持采样顺序。没有提前缓存 speaker embedding，因此 codec 已缓存仍会发生原始音频读取、解码、mel 和 ECAPA 计算；这部分是观察吞吐时应区分的数据开销。验证 loss 目前仍按样本顺序读取。
+训练使用 PyTorch `DataLoader`，每个 rank 默认 4 个 worker 进程，每个 worker 提前准备 2 个 microbatch，由 `train.num_workers` 和 `train.prefetch_factor` 调整。worker 使用 `spawn` 启动并跨 epoch 复用，在 CPU 上完成 NPZ 读取、音频解码、mel 和 `collate()`；主进程通过 pinned memory 将 batch 传到 GPU。worker 根据字节索引读取 manifest，不复制主进程的完整样本字典列表。
+
+没有提前缓存 speaker embedding，因此 codec 已缓存仍会发生原始音频读取、解码、mel 和 ECAPA 计算。预取使 CPU 准备数据与 GPU 训练重叠，`train/data_wait_seconds` 记录每步获取 microbatch 的等待时间。验证 loss 目前仍按样本顺序读取。
 
 ### 4.2 speaker mel 和向量
 
@@ -209,11 +211,11 @@ prepared 行保留原始文本、speaker、language、source，并增加：
 
 ECAPA 输出 `[B, 1024]`，每条录音一个音色向量。它保持 `eval()` 且所有参数 `requires_grad=False`。冻结只表示不更新权重，当前仍在线执行前向；不存在单独 speaker loss。
 
-### 4.3 采样、分桶和四卡分配
+### 4.3 分布式采样和四卡分配
 
-每个 epoch 使用 `Random(seed + epoch)` 打乱全部索引，先随机丢弃不足一个全局 microbatch 的尾部，再在大小为 `batch_size × world_size × 32` 的桶内按 `num_frames + len(text_ids)` 排序。随后构造全局 batch 并打乱 batch 顺序，每个 rank 取其中连续的本卡部分。
+训练通过 PyTorch `DataLoader(batch_sampler=DistributedTokenBatchSampler(...))` 动态组批。每卡每个 microbatch 同时受 `train.max_batch_frames`（目标 codec 帧总数）和 `train.max_batch_tokens`（完整 Talker 输入 token 总数，包含文本、控制符、speaker 和 audio BOS）限制。超预算的单条样本会报错，不静默跳过。每个 epoch 使用 `seed + epoch` 打乱样本，按当前预算占用率给各 rank 分配可容纳的下一条样本；当所有 rank 都容纳不下时结束这组 batch。因此各 rank 的 batch 数一致、无重复填充，样本数可不同；仅在 epoch 尾部不足以给所有 rank 各分一条时丢弃至多 `world_size - 1` 条随机尾部样本。
 
-这保留了原来的样本顺序与分桶规则，便于从已有 checkpoint 接续采样；因为先随机丢尾部再按长度排序，不会每个 epoch 固定丢掉最长录音。采样计划每个 epoch 生成一次并复用，恢复时根据 `epoch / next_batch` 回到对应位置。padding-free 并不取消每步样本数：每卡仍取 48 条录音，随后展平它们的有效 token。
+checkpoint 保存已消费的 `epoch / next_batch`，不计入 worker 提前读取的 batch。恢复时由 Accelerate 的 `skip_first_batches()` 跳过已消费索引，避免重新解码这些样本。动态 batch 边界由相同数据、seed、epoch 和预算重建。每步样本数可变，loss 分母仍是所有 rank、全部累积 microbatch 的实际目标数。TensorBoard 记录 `global_samples`、`global_audio_frames`、`global_talker_tokens` 和两种 `*_budget_fill`；验证组批大小单独由 `eval.batch_size` 控制（默认 8）。
 
 中英数据按合并清单自然参与采样。500:500 小时不是每个 batch 强制 1:1 的样本数；两种语言平均录音长度不同时，样本数也可能不同。
 
@@ -398,11 +400,11 @@ accumulation 的分母已包含当前更新全部 microbatch，所以不再额�
 
 warmup 线性增长，之后 cosine 衰减至基础学习率的 10%。loss 和裁剪前梯度 norm 必须有限，否则直接停止。更新顺序是 `backward → clip_grad_norm_ → optimizer.step → scheduler.step`；日志中的学习率是在 scheduler 前进一步后记录的，对应下一次更新将使用的值。
 
-### 9.4 大 batch 如何确定
+### 9.4 动态预算如何确定
 
-正式训练前，在实际合并清单中分别找最长文本和最长 codec 音频，把二者组合成压力样本。从配置的每卡 batch 开始，失败时按 `96、80、64、48、32` 中更小的档位降档。每档跑两次真实 FSDP 优化更新，覆盖 AdamW 状态分配；只有 CUDA OOM 才降档，其他错误直接停止。
+正式训练前，在实际合并清单中分别找最长文本和最长 codec 音频，把二者组合成压力样本。这项压测覆盖最长单条输入，实际混合长度和更多短句的批次仍需试训确认显存。从配置的帧和 token 预算开始，计算压力样本能容纳的条数；OOM 时依次尝试原预算的 80%、60%、40%。每档跑两次真实 FSDP 优化更新，覆盖 AdamW 状态分配；只有 CUDA OOM 才降档，其他错误直接停止。
 
-通过的配置写入 run 下 `baseline-config.yaml`。2026-09-09 四张 A100 80GB、BF16、FA2、关闭 activation checkpointing，使用 88 个文本 token 和 125 个 codec 帧的组合压力样本：每卡 64 在第一次反向计算时 OOM；每卡 48 完成两次优化更新，峰值 allocated 60.39 GiB，reserved 67.76 GiB。当前每卡 batch 为 48，全局一次更新 `48 × 4 × 1 = 192` 条录音。压测日志为 `runs/emilia-en-zh-pretrain-1000h/memory-flash-batch{64,48}.log`。
+通过的配置写入 run 下 `baseline-config.yaml`。2026-09-09 四张 A100 80GB、BF16、FA2、关闭 activation checkpointing，使用 88 个文本 token 和 125 个 codec 帧的组合压力样本：每卡 64 在第一次反向计算时 OOM；每卡 48 完成两次优化更新，峰值 allocated 60.39 GiB，reserved 67.76 GiB。该历史 1kh 运行每卡固定 batch 为 48，全局一次更新 `48 × 4 × 1 = 192` 条录音。压测日志为 `runs/emilia-en-zh-pretrain-1000h/memory-flash-batch{64,48}.log`。
 
 ## 10. 验证 loss 与生成评估
 
@@ -431,11 +433,11 @@ ASR、生成时长比例、EOS、截断率都只是评估指标，不进入训�
 
 每 500 updates 保存一次，也在最后一步保存；保留最近两个完整 checkpoint。每份包含 DCP 模型和优化器状态、scheduler、`step / epoch / next_batch`、每个 rank 的 Python/NumPy/PyTorch/CUDA RNG 状态，以及恢复签名。
 
-先写 `.incomplete`，全部 rank 保存完成后写 `COMPLETE`、rename，再更新 `latest`。只有新 checkpoint 完成后才清理旧的完整 checkpoint。恢复要求相同 world size、模型与冻结设置、manifest 哈希、batch/accumulation、优化器和调度关键设置。当前签名还记录 `speaker_conditioning=full_target_audio` 与 `generation_conditioning=other_training_utterance`。
+先写 `.incomplete`，全部 rank 保存完成后写 `COMPLETE`、rename，再更新 `latest`。只有新 checkpoint 完成后才清理旧的完整 checkpoint。恢复要求相同 world size、模型与冻结设置、manifest 哈希、动态组批算法与预算、accumulation、优化器和调度关键设置。当前签名还记录 `speaker_conditioning=full_target_audio` 与 `generation_conditioning=other_training_utterance`。
 
 ```bash
 NPROC_PER_NODE=4 bash scripts/run_train.sh \
-  --config runs/emilia-en-zh-pretrain-1000h/baseline-config.yaml \
+  --config runs/emilia-en-zh-dynamic-1000h/baseline-config.yaml \
   --resume latest
 ```
 

@@ -16,7 +16,8 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--assembled', required=True)
     p.add_argument('--manifest', required=True)
-    p.add_argument('--batch-size', type=int, required=True)
+    p.add_argument('--max-batch-frames', type=int, required=True)
+    p.add_argument('--max-batch-tokens', type=int, required=True)
     p.add_argument('--attn-implementation', default='sdpa', choices=['sdpa', 'flash_attention_2'])
     args = p.parse_args()
     rank = int(os.environ['LOCAL_RANK'])
@@ -39,7 +40,13 @@ def main():
         longest_audio = max(range(len(data)), key=lambda i: data.rows[i]['num_frames'])
         longest_text = max(range(len(data)), key=lambda i: len(data.rows[i]['text_ids']))
         audio_row, text_row = data[longest_audio], data[longest_text]
-        rows = [{**audio_row, 'text_ids': text_row['text_ids']}] * args.batch_size
+        prefix_tokens = 2 + len(cfg['talker_config']['lm_tts_role_ids']) + 3
+        frames = len(audio_row['codes'])
+        tokens = frames + len(text_row['text_ids']) + prefix_tokens
+        batch_size = min(args.max_batch_frames // frames, args.max_batch_tokens // tokens)
+        if batch_size < 1:
+            raise ValueError('Batch budgets cannot fit the longest audio/text stress sample')
+        rows = [{**audio_row, 'text_ids': text_row['text_ids']}] * batch_size
         batch = move(collate(rows), device)
         model = TTSModel.from_assembled(args.assembled, attn_implementation=args.attn_implementation)
         configure_fsdp(model, device)
@@ -54,7 +61,8 @@ def main():
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1., error_if_nonfinite=True)
             optimizer.step()
             torch.cuda.synchronize()
-            print(json.dumps({'rank': rank, 'step': step + 1, 'batch_size': args.batch_size,
+            print(json.dumps({'rank': rank, 'step': step + 1, 'batch_size': batch_size,
+                'max_batch_frames': args.max_batch_frames, 'max_batch_tokens': args.max_batch_tokens,
                 'attn_implementation': model.config._attn_implementation,
                 'loss': loss.item(), 'grad_norm': grad_norm.item(), 'seconds': time.perf_counter() - started,
                 'text_tokens': len(text_row['text_ids']), 'audio_frames': len(audio_row['codes']),

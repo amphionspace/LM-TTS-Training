@@ -5,10 +5,10 @@ model:
 data:
   train: /ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-dual-check/train.jsonl
   val: /ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-dual-check/val.jsonl
-  speaker_reference_seconds: 3
 train:
   output: runs/emilia-frozen-conditioning-integration
-  batch_size: 2
+  max_batch_frames: 750
+  max_batch_tokens: 1200
   accumulation: 1
   max_steps: 3
   schedule_steps: 10
@@ -22,6 +22,7 @@ train:
   eval_every: 1
   log_every: 1
 eval:
+  batch_size: 2
   audio_every: 3
   max_frames: 4
   codec: pretrained/Qwen3-TTS-Tokenizer-12Hz

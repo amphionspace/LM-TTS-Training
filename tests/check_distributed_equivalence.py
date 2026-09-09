@@ -71,9 +71,9 @@ def main():
                 fully_shard(block, mesh=mesh, mp_policy=policy, reshard_after_forward=True)
         fully_shard(model, mesh=mesh, mp_policy=policy, reshard_after_forward=True)
         torch.manual_seed(19)
-        per_rank = 2 if args.bf16 else 1
+        batch_sizes = [1 + i % 3 for i in range(2 * world)]
         rows = [{"text_ids": list(range(1, i + 3)), "codes": torch.randint(0, 2048, (i + 1, 16))}
-                for i in range(2 * world * per_rank)]
+                for i in range(sum(batch_sizes))]
         if args.speaker:
             for i, row in enumerate(rows):
                 row["speaker_mels"] = torch.randn(24 + 3 * i, 8)
@@ -88,8 +88,9 @@ def main():
         (out["first_sum"] / total_first + 0.3 * out["residual_sum"] / total_residual).backward()
         for micro in range(2):
             model.set_requires_gradient_sync(micro == 1)
-            start = (micro * world + rank) * per_rank
-            out = model(batch(rows[start:start + per_rank]))
+            batch_index = micro * world + rank
+            start = sum(batch_sizes[:batch_index])
+            out = model(batch(rows[start:start + batch_sizes[batch_index]]))
             (world * (out["first_sum"] / total_first + 0.3 * out["residual_sum"] / total_residual)).backward()
         largest = 0.0
         squared_error, squared_target = 0.0, 0.0
@@ -110,7 +111,7 @@ def main():
         assert relative_error < .03
         if rank == 0:
             print(json.dumps({"status": "passed", "world_size": world, "accumulation": 2,
-                              "variable_lengths": True, "bf16": args.bf16, "speaker": args.speaker, "qwen_protocol": args.qwen_protocol, "frozen_frontend": args.frozen_frontend, "frozen_speaker": args.frozen_speaker, "max_gradient_absolute_error": largest,
+                              "variable_lengths": True, "variable_batch_sizes": True, "bf16": args.bf16, "speaker": args.speaker, "qwen_protocol": args.qwen_protocol, "frozen_frontend": args.frozen_frontend, "frozen_speaker": args.frozen_speaker, "max_gradient_absolute_error": largest,
                               "relative_gradient_error": relative_error}), flush=True)
     finally:
         dist.destroy_process_group()

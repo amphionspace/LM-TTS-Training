@@ -6,8 +6,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from qwen3_train.sources import emilia_short, short_record, materialize_audio
+from qwen3_train import sources
+from qwen3_train.sources import emilia_short, short_record, materialize_audio, decode_emilia_audio, decode_emilia_group
 from scripts.rescore_english import english_metrics
 
 
@@ -45,6 +47,58 @@ class SourceTests(unittest.TestCase):
         meta['short'][0]['rel_start_samples'] = 100
         with self.assertRaisesRegex(ValueError, 'cover its carrier'):
             short_record(meta, 'file.tar', 'audio.m4a', 512, 100)
+
+    def test_long_short_view_preserves_original_id_and_rejects_invalid_boundary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory) / 'data'
+            data.mkdir()
+            archive = data / 'fixture.tar'
+            item = {**self.meta['short'][0], 'id': 'original-utterance', 'rel_start_samples': 1234,
+                    'rel_end_samples': 55555}
+            meta = {**self.meta, 'id': 'carrier_L0', 'type': 'long', 'frames': 44100 * 60,
+                    'short': [item, {**item, 'id': 'invalid', 'rel_start_samples': -882}]}
+            payload = json.dumps(meta).encode()
+            dialogue = json.dumps({**meta, 'id': 'carrier_D0', 'type': 'dialogue',
+                                   'short': [{**item, 'id': 'dialogue-utterance'}]}).encode()
+            dialogue_offset = len(payload) + 5
+            archive.write_bytes(payload + b'audio' + dialogue + b'audio')
+            archive.with_suffix('.tar.idx').write_text(
+                f'carrier.json\t0\t{len(payload)}\ncarrier.m4a\t{len(payload)}\t5\n'
+                f'dialogue.json\t{dialogue_offset}\t{len(dialogue)}\n'
+                f'dialogue.m4a\t{dialogue_offset + len(dialogue)}\t5\n')
+            with self.assertWarnsRegex(UserWarning, 'Invalid long short annotation'):
+                rows = list(emilia_short(directory, include_long_shorts=True))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['id'], 'emilia2:original-utterance')
+            self.assertEqual(rows[0]['audio']['frames'], 44100 * 60)
+            self.assertEqual(rows[0]['audio']['start_frame'], 1234)
+            self.assertEqual(rows[0]['audio']['end_frame'], 55555)
+            self.assertAlmostEqual(rows[0]['duration'], (55555 - 1234) / 44100)
+
+    def test_grouped_decode_matches_native_rate_slices_with_one_carrier_decode(self):
+        from scipy.signal import resample_poly
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            samples = np.random.default_rng(42).uniform(-.5, .5, 88200).astype(np.float32)
+            payload = io.BytesIO()
+            sf.write(payload, samples, 44100, format='WAV', subtype='FLOAT')
+            archive = root / 'carrier.tar'
+            archive.write_bytes(payload.getvalue())
+            records = [{'id': str(index), 'audio': {'kind': 'tar_member', 'archive': str(archive),
+                        'offset': 0, 'size': len(payload.getvalue()), 'frames': len(samples),
+                        'sample_rate': 44100, 'start_frame': start, 'end_frame': end}}
+                       for index, (start, end) in enumerate([(0, 12345), (23457, 55555), (55555, 88200)])]
+            with patch.object(sources, '_decode_emilia_carrier', wraps=sources._decode_emilia_carrier) as decode:
+                actual = decode_emilia_group(records)
+                self.assertEqual(decode.call_count, 1)
+            for row in records:
+                locator = row['audio']
+                expected = resample_poly(samples[locator['start_frame']:locator['end_frame']], 80, 147)
+                np.testing.assert_array_equal(actual[row['id']], expected)
+                np.testing.assert_array_equal(decode_emilia_audio(row), expected)
+            invalid = {**records[0], 'audio': {**records[0]['audio'], 'start_frame': -1}}
+            with self.assertRaisesRegex(ValueError, 'Invalid audio slice'):
+                decode_emilia_audio(invalid)
 
     def test_submillisecond_tail_padding_and_large_mismatch_rejection(self):
         with tempfile.TemporaryDirectory() as directory:

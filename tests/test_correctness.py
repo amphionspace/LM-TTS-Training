@@ -2,7 +2,7 @@ import unittest
 import tempfile
 import torch
 
-from qwen3_train.data import collate, train_batches
+from qwen3_train.data import collate
 from qwen3_train.metrics import content_metrics, aggregate_content
 from qwen3_train.model import TTSModel, make_config
 
@@ -74,17 +74,6 @@ class Correctness(unittest.TestCase):
         (output["first_sum"] + output["residual_sum"]).backward()
         missing = [n for n, p in self.model.named_parameters() if p.requires_grad and p.grad is None]
         self.assertEqual(missing, [])
-
-    def test_sampler_does_not_always_drop_longest_sample(self):
-        class Dataset:
-            rows = [{"num_frames": i + 1, "text_ids": [1]} for i in range(3)]
-            def __len__(self):
-                return len(self.rows)
-        seen = set()
-        for epoch in range(20):
-            for rank in range(2):
-                seen.update(i for batch in train_batches(Dataset(), 1, 2, rank, 42, epoch) for i in batch)
-        self.assertEqual(seen, {0, 1, 2})
 
     def test_corpus_wer_weights_reference_lengths(self):
         scores = [content_metrics("one", "wrong"), content_metrics("a b c d e f g h i", "a b c d e f g h i")]

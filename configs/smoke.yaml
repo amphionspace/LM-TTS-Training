@@ -8,7 +8,8 @@ data:
   val: data/synthetic-smoke/val.jsonl
 train:
   output: runs/smoke
-  batch_size: 1
+  max_batch_frames: 12
+  max_batch_tokens: 32
   accumulation: 2
   max_steps: 3
   schedule_steps: 10
@@ -22,6 +23,7 @@ train:
   eval_every: 1
   log_every: 1
 eval:
+  batch_size: 1
   audio_every: 0
   max_frames: 4
   asr: false

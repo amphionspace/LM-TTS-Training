@@ -1,5 +1,7 @@
 # 当前进展与重启恢复（2026-09-09）
 
+本文保留当时的迁移与恢复实验记录。当前训练已统一转向 [dynamic batching](dynamic-batching.md)，旧布局迁移兼容代码已删除；下文的历史恢复命令不再作为当前入口。1kh 运行已完成 5,000 步，见 [最终报告](emilia-1kh-report.md)。
+
 ## 已暂停并保留的进度
 
 - 唯一工作目录：`/119010446/LM-TTS-Training`。padding-free 源码已归入此目录，临时 worktree 已移除。

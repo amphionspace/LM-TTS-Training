@@ -4,6 +4,7 @@ from pathlib import Path
 import io
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 import numpy as np
 import soundfile as sf
@@ -31,7 +32,7 @@ def short_record(meta, archive, member, offset, size):
                        'dnsmos': item.get('dnsmos')}}
 
 
-def _emilia_shard(index):
+def _emilia_shard(index, include_long_shorts=False):
     records = []
     members = {}
     for line in index.read_text().splitlines():
@@ -46,15 +47,33 @@ def _emilia_shard(index):
                 continue
             audio_file.seek(offset)
             meta = json.loads(audio_file.read(size))
-            if meta.get('type') != 'short':
+            if meta.get('type') != 'short' and not (include_long_shorts and meta.get('type') == 'long'):
                 continue
             audio_name = name[:-5] + '.m4a'
             audio_offset, audio_size = members[audio_name]
-            records.append(short_record(meta, archive, audio_name, audio_offset, audio_size))
+            if meta['type'] == 'short':
+                records.append(short_record(meta, archive, audio_name, audio_offset, audio_size))
+            else:
+                for item in meta['short']:
+                    if item.get('language') not in ('en', 'zh'):
+                        continue
+                    start, end = item['rel_start_samples'], item['rel_end_samples']
+                    if not 0 <= start < end <= meta['frames'] or not item.get('speaker') or not item.get('text', '').strip():
+                        warnings.warn(f"Invalid long short annotation: {meta['id']} / {item.get('id')}", stacklevel=2)
+                        continue
+                    records.append({'schema_version': 1, 'id': 'emilia2:' + item['id'],
+                        'text': item['text'].strip(), 'speaker': 'emilia2:' + item['speaker'],
+                        'language': item['language'], 'duration': (end - start) / meta['sample_rate'],
+                        'audio': {'kind': 'tar_member', 'archive': str(archive), 'member': audio_name,
+                                  'offset': audio_offset, 'size': audio_size, 'frames': meta['frames'],
+                                  'sample_rate': meta['sample_rate'], 'start_frame': start, 'end_frame': end},
+                        'source': {'dataset': 'emilia2', 'type': 'long', 'view': 'short',
+                                   'carrier_id': meta['id'], 'recording_id': meta['recording_id'],
+                                   'dnsmos': item.get('dnsmos')}})
     return records
 
 
-def emilia_short(root, max_shards=0, workers=8):
+def emilia_short(root, max_shards=0, workers=8, include_long_shorts=False):
     indices = sorted((Path(root).resolve() / 'data').glob('*.tar.idx'))
     if not indices:
         raise ValueError('No Emilia tar indices found')
@@ -62,7 +81,8 @@ def emilia_short(root, max_shards=0, workers=8):
     with ThreadPoolExecutor(max_workers=workers) as executor:
         # Bounded prefetch; deterministic shard order regardless of I/O completion.
         for start in range(0, len(indices), workers):
-            for records in executor.map(_emilia_shard, indices[start:start + workers]):
+            for records in executor.map(partial(_emilia_shard, include_long_shorts=include_long_shorts),
+                                        indices[start:start + workers]):
                 yield from records
 
 
@@ -78,7 +98,7 @@ def ljspeech(root):
                'source': {'dataset': 'ljspeech', 'type': 'utterance'}}
 
 
-def decode_emilia_audio(record):
+def _decode_emilia_carrier(record):
     locator = record['audio']
     if locator['kind'] != 'tar_member':
         raise ValueError(f"Expected tar member: {locator['kind']}")
@@ -105,12 +125,30 @@ def decode_emilia_audio(record):
     if missing > 0:
         warnings.warn(f"Audio tail padded for {record['id']}: {missing} samples at {locator['sample_rate']} Hz", stacklevel=2)
         samples = np.pad(samples, (0, missing))
-    samples = samples[:locator['frames']]
+    return samples[:locator['frames']]
+
+
+def _emilia_slice(samples, locator):
+    start, end = locator.get('start_frame', 0), locator.get('end_frame', locator['frames'])
+    if not 0 <= start < end <= len(samples):
+        raise ValueError(f'Invalid audio slice: {start}:{end} / {len(samples)}')
+    # Slice at the annotated native-rate boundaries before resampling, so no
+    # neighboring utterance contributes to the resampling filter at either edge.
+    samples = samples[start:end]
     from scipy.signal import resample_poly
     from math import gcd
     divisor = gcd(locator['sample_rate'], 24000)
     samples = resample_poly(samples, 24000 // divisor, locator['sample_rate'] // divisor)
     return samples.astype(np.float32, copy=False)
+
+
+def decode_emilia_audio(record):
+    return _emilia_slice(_decode_emilia_carrier(record), record['audio'])
+
+
+def decode_emilia_group(records):
+    samples = _decode_emilia_carrier(records[0])
+    return {row['id']: _emilia_slice(samples, row['audio']) for row in records}
 
 
 def write_prepared_audio(samples, destination):
