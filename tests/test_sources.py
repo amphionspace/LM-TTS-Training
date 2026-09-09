@@ -100,6 +100,48 @@ class SourceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Invalid audio slice'):
                 decode_emilia_audio(invalid)
 
+    def test_aac_random_access_preserves_timing_and_is_repeatable(self):
+        import av
+        from fractions import Fraction
+        with tempfile.TemporaryDirectory() as directory:
+            rate = 44100
+            t = np.arange(rate * 6 + 13) / rate
+            samples = (.2 * np.sin(2 * np.pi * (200 * t + 70 * t * t))
+                       + .01 * np.random.default_rng(8).standard_normal(len(t))).astype(np.float32)
+            payload = io.BytesIO()
+            with av.open(payload, 'w', format='ipod') as output:
+                stream = output.add_stream('aac', rate=rate)
+                stream.layout = 'mono'
+                for start in range(0, len(samples), 4096):
+                    frame = av.AudioFrame.from_ndarray(samples[None, start:start + 4096], format='flt', layout='mono')
+                    frame.sample_rate, frame.pts, frame.time_base = rate, start, Fraction(1, rate)
+                    for packet in stream.encode(frame):
+                        output.mux(packet)
+                for packet in stream.encode(None):
+                    output.mux(packet)
+            archive = Path(directory) / 'audio.tar'
+            # Nonzero tar offset and trailing bytes exercise the subfile boundary.
+            archive.write_bytes(b'x' * 512 + payload.getvalue() + b'y' * 1024)
+            base = {'kind': 'tar_member', 'archive': str(archive), 'offset': 512,
+                    'size': len(payload.getvalue()), 'frames': len(samples), 'sample_rate': rate}
+            full = sources._decode_emilia_carrier({'id': 'aac', 'audio': base})
+            for start, end in [(0, 73111), (rate * 2 + 17, rate * 4 + 29), (rate * 5 + 9, len(samples))]:
+                locator = {**base, 'start_frame': start, 'end_frame': end}
+                record = {'id': 'aac', 'audio': locator}
+                expected = sources._emilia_slice(full, locator)
+                actual = decode_emilia_audio(record)
+                self.assertEqual(len(actual), len(expected))
+                np.testing.assert_array_equal(actual, decode_emilia_audio(record))
+                if start == 0:
+                    np.testing.assert_array_equal(actual, expected)
+                else:
+                    # AAC noise synthesis depends on decoder history. Compare
+                    # nearby alignments so that noise cannot hide a sample shift.
+                    errors = [np.mean((actual[8:-8] - expected[8 + lag:len(expected) - 8 + lag]) ** 2)
+                              for lag in range(-4, 5)]
+                    self.assertEqual(int(np.argmin(errors)), 4)
+                    np.testing.assert_allclose(np.std(actual), np.std(expected), rtol=.01)
+
     def test_submillisecond_tail_padding_and_large_mismatch_rejection(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

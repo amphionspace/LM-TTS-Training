@@ -5,6 +5,7 @@ import io
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+from fractions import Fraction
 
 import numpy as np
 import soundfile as sf
@@ -128,13 +129,13 @@ def _decode_emilia_carrier(record):
     return samples[:locator['frames']]
 
 
-def _emilia_slice(samples, locator):
+def _emilia_slice(samples, locator, offset=0):
     start, end = locator.get('start_frame', 0), locator.get('end_frame', locator['frames'])
-    if not 0 <= start < end <= len(samples):
+    if not 0 <= start - offset < end - offset <= len(samples):
         raise ValueError(f'Invalid audio slice: {start}:{end} / {len(samples)}')
     # Slice at the annotated native-rate boundaries before resampling, so no
     # neighboring utterance contributes to the resampling filter at either edge.
-    samples = samples[start:end]
+    samples = samples[start - offset:end - offset]
     from scipy.signal import resample_poly
     from math import gcd
     divisor = gcd(locator['sample_rate'], 24000)
@@ -143,7 +144,47 @@ def _emilia_slice(samples, locator):
 
 
 def decode_emilia_audio(record):
-    return _emilia_slice(_decode_emilia_carrier(record), record['audio'])
+    locator = record['audio']
+    if locator['kind'] != 'tar_member':
+        raise ValueError(f"Expected tar member: {locator['kind']}")
+    if 'start_frame' not in locator:
+        return _emilia_slice(_decode_emilia_carrier(record), locator)
+    import av
+    start, end, rate = locator['start_frame'], locator['end_frame'], locator['sample_rate']
+    if not 0 <= start < end <= locator['frames']:
+        raise ValueError(f'Invalid audio slice: {start}:{end} / {locator["frames"]}')
+    # FFmpeg subfile bounds all seeks/reads to this tar member; opening a full
+    # BytesIO payload would still read the entire long recording on every sample.
+    source = f"subfile,,start,{locator['offset']},end,{locator['offset'] + locator['size']},,:{locator['archive']}"
+    chunks, covered = [], start
+    with av.open(source) as container:
+        stream = container.streams.audio[0]
+        origin = (stream.start_time or 0) * stream.time_base
+        # Decode a second of preroll for AAC overlap state, then crop at native
+        # sample boundaries. Seeking may change AAC noise synthesis slightly.
+        if start > rate:
+            container.seek(int((origin + Fraction(start - rate, rate)) / stream.time_base), stream=stream)
+        resampler = av.AudioResampler(format='flt', layout='mono', rate=rate)
+        for frame in container.decode(audio=0):
+            for output in resampler.resample(frame):
+                position = round((output.pts * output.time_base - origin) * rate)
+                values = output.to_ndarray().reshape(-1)
+                if position > covered:
+                    raise ValueError(f'Gap in decoded audio for {record["id"]}: {covered}:{position}')
+                left, right = max(covered - position, 0), min(end - position, len(values))
+                if right > left:
+                    chunks.append(values[left:right])
+                    covered = position + right
+            if covered == end:
+                break
+    missing = end - covered
+    if missing > (rate + 999) // 1000 or not chunks:
+        raise ValueError(f'Decoded length differs from annotation for {record["id"]}: {covered} / {end}')
+    samples = np.concatenate(chunks)
+    if missing:
+        warnings.warn(f"Audio tail padded for {record['id']}: {missing} samples at {rate} Hz", stacklevel=2)
+        samples = np.pad(samples, (0, missing))
+    return _emilia_slice(samples, locator, offset=start)
 
 
 def decode_emilia_group(records):

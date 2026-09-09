@@ -348,7 +348,7 @@ def main():
             ratio = min(1.0, (step - warmup) / max(1, settings["schedule_steps"] - warmup))
             return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * ratio))
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_factor)
-        signature = {"protocol": 3, "deterministic": True,
+        signature = {"protocol": 3, "audio_decoder": "emilia_native_seek_v1", "deterministic": True,
                      "cublas_workspace": os.environ["CUBLAS_WORKSPACE_CONFIG"], "seed": seed, "model": model_cfg,
                      "train_manifest": train_data.fingerprint, "val_manifest": val_data.fingerprint,
                      "settings": {k: v for k, v in settings.items() if k not in ["output", "max_steps", "save_every", "eval_every", "log_every", "keep_checkpoints", "num_workers", "prefetch_factor"]},
