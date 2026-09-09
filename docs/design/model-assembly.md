@@ -12,7 +12,7 @@
 | text projection | ResizeMLP，2048 → 1024 | 保留官方 2048→2048→1024，加载配套权重并冻结 |
 | codec embedding / head | 3072 项 | 新初始化，内容 token 为 0–2047 |
 | Code Predictor | 5 层，16 码本，每组 2048 项 | 官方结构，新初始化 |
-| speaker encoder | ECAPA-TDNN，24 kHz，128 mel，1024 输出 | 加载公开 Qwen TTS 的 speaker_encoder 权重，继续联合训练 |
+| speaker encoder | ECAPA-TDNN，24 kHz，128 mel，1024 输出 | 加载公开 Qwen TTS 的 speaker_encoder 权重，冻结 |
 | speech tokenizer | 12.5 Hz，16 码本，24 kHz 解码 | 复制官方 encoder / decoder，冻结并离线编码 |
 | 位置编码 | Talker MRoPE | 保留结构，本工程使用相同轴位置的一维序列 |
 | 输入协议 | ChatML、流式双轨等 | 官方非流式 Auto 模式的 ChatML、控制前缀与双通道 embedding |
@@ -41,7 +41,7 @@ embedding 已有 151936 行，因此无需增大矩阵，当前基线加载公�
 | BatchNorm | 未使用 | 使用 |
 
 依据：[Qwen 实现](https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/core/models/modeling_qwen3_tts.py)、[SpeechBrain 配置](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb/blob/main/hyperparams.yaml)。两者不能直接互载，仅加输出投影也无法解决内部结构差异。
-当前采用 Qwen 公开 ECAPA 权重，使用 backbone 学习率继续训练。
+当前采用 Qwen 公开 ECAPA 权重并冻结，不进入优化器，保持 eval 模式。这是当前基线的选择，与官方报告中的联合训练不同。
 
 训练和验证均从训练 manifest 中选同 speaker 的另一条录音，需要可靠的 speaker 标签，每个训练 speaker 至少两条不同录音。
 固定中心裁剪 3 秒，短录音重复至该长度，按官方参数计算 mel。只缓存输入 mel，speaker embedding 在线计算并保留梯度。

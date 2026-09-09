@@ -26,10 +26,18 @@ class TTSModel(nn.Module):
         if getattr(config, "lm_tts_freeze_text_frontend", False):
             self.talker.model.text_embedding.requires_grad_(False)
             self.talker.text_projection.requires_grad_(False)
+        if self.speaker_encoder is not None and getattr(config, "lm_tts_freeze_speaker_encoder", False):
+            self.speaker_encoder.requires_grad_(False).eval()
         self.groups = config.num_code_groups
         self.code_size = config.code_predictor_config.vocab_size
         self.bos = config.codec_bos_id
         self.eos = config.codec_eos_token_id
+
+    def train(self, mode=True):
+        super().train(mode)
+        if self.speaker_encoder is not None and getattr(self.config, "lm_tts_freeze_speaker_encoder", False):
+            self.speaker_encoder.eval()
+        return self
 
     @classmethod
     def from_assembled(cls, directory, load_weights=True):

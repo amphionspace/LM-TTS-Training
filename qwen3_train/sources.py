@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import io
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -77,13 +78,10 @@ def ljspeech(root):
                'source': {'dataset': 'ljspeech', 'type': 'utterance'}}
 
 
-def materialize_audio(record, destination):
+def decode_emilia_audio(record):
     locator = record['audio']
-    destination = Path(destination)
-    if locator['kind'] == 'file':
-        return Path(locator['path']).resolve()
     if locator['kind'] != 'tar_member':
-        raise ValueError(f"Unknown audio locator: {locator['kind']}")
+        raise ValueError(f"Expected tar member: {locator['kind']}")
     # PyAV uses FFmpeg's MP4 demuxer with edit-list handling. BytesIO is seekable.
     import av
     with Path(locator['archive']).open('rb') as archive:
@@ -98,16 +96,37 @@ def materialize_audio(record, destination):
             chunks.extend(f.to_ndarray().reshape(-1) for f in resampler.resample(frame))
         chunks.extend(f.to_ndarray().reshape(-1) for f in resampler.resample(None))
     samples = np.concatenate(chunks)
-    if not locator['frames'] <= len(samples) <= locator['frames'] + 1023:
-        raise ValueError(f"Decoded length differs from annotation: {len(samples)} / {locator['frames']}")
+    # MP4 millisecond timestamps can leave a sub-millisecond tail discrepancy.
+    # Preserve the annotated length without shifting or stretching audible samples.
+    missing = locator['frames'] - len(samples)
+    tolerance = (locator['sample_rate'] + 999) // 1000
+    if missing > tolerance or missing < -1023:
+        raise ValueError(f"Decoded length differs from annotation for {record['id']}: {len(samples)} / {locator['frames']}")
+    if missing > 0:
+        warnings.warn(f"Audio tail padded for {record['id']}: {missing} samples at {locator['sample_rate']} Hz", stacklevel=2)
+        samples = np.pad(samples, (0, missing))
     samples = samples[:locator['frames']]
     from scipy.signal import resample_poly
     from math import gcd
     divisor = gcd(locator['sample_rate'], 24000)
     samples = resample_poly(samples, 24000 // divisor, locator['sample_rate'] // divisor)
+    return samples.astype(np.float32, copy=False)
+
+
+def write_prepared_audio(samples, destination):
+    destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(destination, samples, 24000, subtype='FLOAT')
+    temporary = destination.with_suffix('.incomplete')
+    sf.write(temporary, samples, 24000, subtype='FLOAT', format='WAV')
+    temporary.replace(destination)
     return destination.resolve()
+
+
+def materialize_audio(record, destination):
+    locator = record['audio']
+    if locator['kind'] == 'file':
+        return Path(locator['path']).resolve()
+    return write_prepared_audio(decode_emilia_audio(record), destination)
 
 
 def evaluation_audio(row):

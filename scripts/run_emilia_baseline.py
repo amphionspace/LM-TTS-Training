@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--config', default='configs/emilia-baseline.yaml')
-    p.add_argument('--manifest', default='data/emilia-short-en-1000h.raw.jsonl')
+    p.add_argument('--manifest', default='/ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-en-1000h.raw.jsonl')
     p.add_argument('--export-pid', type=int, help='An already running exporter to wait for; never launches a duplicate')
     args = p.parse_args()
     os.chdir(ROOT)
@@ -64,7 +64,7 @@ def main():
         preparation = Path(config['data']['train']).parent
         checked('prepare', [python, 'scripts/prepare_manifest.py', '--manifest', str(manifest),
             '--output', str(preparation), '--tokenizer', config['model']['assembled_model'],
-            '--codec', config['eval']['codec'], '--device', 'cuda:0', '--batch-size', '16',
+            '--codec', config['eval']['codec'], '--device', 'cuda:0', '--secondary-device', 'cuda:1', '--batch-size', '16',
             '--workers', '8', '--val-count', '512'])
         report = json.loads((preparation / 'preparation.json').read_text())
         if not (preparation / 'PREPARATION_COMPLETE').exists():
@@ -95,7 +95,7 @@ def main():
         checked('train', command)
         checkpoint = output / 'checkpoints' / (output / 'checkpoints/latest').read_text().strip()
         checked('frozen-weights', [python, 'scripts/check_frozen_frontend.py', '--assembled',
-            config['model']['assembled_model'], '--checkpoint', str(checkpoint)])
+            config['model']['assembled_model'], '--checkpoint', str(checkpoint), '--include-speaker'])
         checked('english-scores', [python, 'scripts/rescore_english.py', str(output)])
         status('complete', checkpoint=str(checkpoint), preparation=report)
     except Exception as error:

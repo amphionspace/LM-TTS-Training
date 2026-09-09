@@ -69,11 +69,14 @@ class FrozenFrontendProtocolTests(QwenProtocolTests):
         config.text_hidden_size = 128
         config.lm_tts_text_projection = 'mlp'
         config.lm_tts_freeze_text_frontend = True
+        config.lm_tts_freeze_speaker_encoder = True
         speaker = Qwen3TTSSpeakerEncoderConfig(enc_dim=64, mel_dim=8, enc_channels=[16, 16, 16, 16, 48])
         self.model = TTSModel(config, speaker).eval()
 
     def test_frozen_frontend_survives_optimizer_step(self):
-        modules = [self.model.talker.model.text_embedding, self.model.talker.text_projection]
+        self.model.train()
+        self.assertFalse(self.model.speaker_encoder.training)
+        modules = [self.model.talker.model.text_embedding, self.model.talker.text_projection, self.model.speaker_encoder]
         before = [p.detach().clone() for module in modules for p in module.parameters()]
         out = self.model(collate([self.row]))
         optimizer = torch.optim.AdamW([p for p in self.model.parameters() if p.requires_grad], lr=1e-3)

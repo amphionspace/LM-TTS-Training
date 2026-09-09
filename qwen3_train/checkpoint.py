@@ -1,6 +1,8 @@
 import json
 import os
 import random
+import re
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -10,7 +12,31 @@ import torch.distributed.checkpoint as dcp
 from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
 
 
-def save_checkpoint(root, model, optimizer, scheduler, progress, signature):
+def prune_checkpoints(root, keep):
+    if keep is None:
+        return []
+    if not isinstance(keep, int) or keep < 1:
+        raise ValueError("keep_checkpoints must be a positive integer or null")
+    root = Path(root)
+    latest = (root / "latest").read_text().strip()
+    candidates = sorted(path for path in root.iterdir()
+                        if re.fullmatch(r"step-[0-9]{8}", path.name) and not path.is_symlink()
+                        and path.is_dir() and (path / "COMPLETE").is_file())
+    if latest not in {path.name for path in candidates}:
+        raise ValueError("latest must point to a completed checkpoint before pruning")
+    retained = {latest}
+    others = [path for path in candidates if path.name != latest]
+    if keep > 1:
+        retained.update(path.name for path in others[-(keep - 1):])
+    removed = []
+    for path in candidates:
+        if path.name not in retained:
+            shutil.rmtree(path)
+            removed.append(path.name)
+    return removed
+
+
+def save_checkpoint(root, model, optimizer, scheduler, progress, signature, keep=None):
     rank = dist.get_rank()
     target = Path(root) / f"step-{progress['step']:08d}"
     temporary = target.with_name(target.name + ".incomplete")
@@ -33,6 +59,9 @@ def save_checkpoint(root, model, optimizer, scheduler, progress, signature):
         latest = Path(root) / "latest.tmp"
         latest.write_text(target.name + "\n")
         latest.replace(Path(root) / "latest")
+        removed = prune_checkpoints(root, keep)
+        if removed:
+            print(json.dumps({"pruned_checkpoints": removed}), flush=True)
     dist.barrier()
     return target
 

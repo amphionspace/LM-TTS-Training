@@ -74,8 +74,12 @@ class AssemblyTests(unittest.TestCase):
                 torch.testing.assert_close(restored.talker.state_dict()[key], tensor, atol=0, rtol=0)
             frozen_config = copy.deepcopy(config)
             frozen_config.talker_config.lm_tts_freeze_text_frontend = True
+            frozen_config.talker_config.lm_tts_freeze_speaker_encoder = True
             frozen = initialize_model(frozen_config, base, donor, {"<new_tts>": 7}, dtype=torch.float32,
                                       text_projection_init="pretrained", text_initialization="qwen-tts")
+            self.assertTrue(all(not p.requires_grad for p in frozen.speaker_encoder.parameters()))
+            for key, tensor in donor_model.speaker_encoder.state_dict().items():
+                torch.testing.assert_close(frozen.speaker_encoder.state_dict()[key], tensor, atol=0, rtol=0)
             for module in ['text_projection', 'model.text_embedding']:
                 expected = donor_model.talker.get_submodule(module)
                 actual = frozen.talker.get_submodule(module)

@@ -36,7 +36,7 @@ def vocabulary_plan(source_vocab, target_vocab, embedding_rows):
 
 
 def audit_sources(backbone, template, text_projection_init="pretrained", input_protocol="qwen3_non_streaming",
-                  text_initialization="qwen-tts", freeze_text_frontend=True):
+                  text_initialization="qwen-tts", freeze_text_frontend=True, freeze_speaker_encoder=True):
     base = AutoConfig.from_pretrained(backbone)
     raw = json.loads((Path(template) / "config.json").read_text())
     tts = Qwen3TTSConfig.from_dict(raw)
@@ -66,6 +66,7 @@ def audit_sources(backbone, template, text_projection_init="pretrained", input_p
         lm_tts_text_projection="identity" if text_projection_init == "identity" else "mlp",
         lm_tts_input_protocol=input_protocol,
         lm_tts_freeze_text_frontend=freeze_text_frontend,
+        lm_tts_freeze_speaker_encoder=freeze_speaker_encoder,
         lm_tts_role_ids=target_tokenizer.encode("<|im_start|>assistant\n", add_special_tokens=False),
         lm_tts_pad_token_id=raw["tts_pad_token_id"])
     config = Qwen3TTSConfig.from_dict(modified)
@@ -94,6 +95,7 @@ def audit_sources(backbone, template, text_projection_init="pretrained", input_p
     }
     report["text_initialization"] = text_initialization
     report["freeze_text_frontend"] = freeze_text_frontend
+    report["freeze_speaker_encoder"] = freeze_speaker_encoder
     if text_initialization == "qwen-tts":
         report["loaded_modules"].remove("talker.model.text_embedding (shared rows)")
         report["loaded_modules"].extend(["talker.model.text_embedding (all rows from Qwen TTS)",
@@ -184,6 +186,8 @@ def initialize_model(config, backbone, speaker_source, added_tokens, dtype=torch
     if getattr(config.talker_config, "lm_tts_freeze_text_frontend", False):
         model.talker.model.text_embedding.requires_grad_(False)
         model.talker.text_projection.requires_grad_(False)
+    if getattr(config.talker_config, "lm_tts_freeze_speaker_encoder", False):
+        model.speaker_encoder.requires_grad_(False).eval()
     return model
 
 

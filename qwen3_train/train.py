@@ -190,6 +190,9 @@ def main():
         p.error("--eval-samples requires --eval-only and a positive count")
     config = yaml.safe_load(Path(args.config).read_text())
     settings = config["train"]
+    settings.setdefault("keep_checkpoints", 2)
+    if settings["keep_checkpoints"] is not None and (not isinstance(settings["keep_checkpoints"], int) or settings["keep_checkpoints"] < 1):
+        raise ValueError("keep_checkpoints must be a positive integer or null")
     if args.max_steps is not None:
         settings["max_steps"] = args.max_steps
     if args.output:
@@ -229,7 +232,7 @@ def main():
             model = TTSModel.from_assembled(assembled, load_weights=not args.resume)
             model_config = model.config
             initialization = {"source": str(assembled), "assembly_report_sha256": assembly_fingerprint,
-                              "speaker_encoder": "pretrained Qwen ECAPA-TDNN, jointly trained"}
+                              "speaker_encoder": "pretrained Qwen ECAPA-TDNN, " + ("frozen" if getattr(model.config, "lm_tts_freeze_speaker_encoder", False) else "jointly trained")}
             full_config = json.loads((assembled / "config.json").read_text())
             for dataset in [train_data, val_data]:
                 for row in dataset.rows:
@@ -276,7 +279,7 @@ def main():
         signature = {"protocol": 2, "deterministic": True,
                      "cublas_workspace": os.environ["CUBLAS_WORKSPACE_CONFIG"], "seed": seed, "model": model_cfg,
                      "train_manifest": train_data.fingerprint, "val_manifest": val_data.fingerprint,
-                     "settings": {k: v for k, v in settings.items() if k not in ["output", "max_steps", "save_every", "eval_every", "log_every"]},
+                     "settings": {k: v for k, v in settings.items() if k not in ["output", "max_steps", "save_every", "eval_every", "log_every", "keep_checkpoints"]},
                      "eval": config["eval"], "torch": torch.__version__}
         if assembly_fingerprint:
             signature.update(assembly_report_sha256=assembly_fingerprint,
@@ -337,7 +340,7 @@ def main():
                 loss.backward()
                 sums += torch.stack([out["first_sum"].detach(), out["residual_sum"].detach()])
             speaker_grad_norm = None
-            if model.speaker_encoder is not None:
+            if model.speaker_encoder is not None and any(p.requires_grad for p in model.speaker_encoder.parameters()):
                 squared = torch.zeros((), device=device)
                 for parameter in model.speaker_encoder.parameters():
                     if parameter.grad is None:
@@ -365,7 +368,7 @@ def main():
                     writer.add_scalar(f"train/{key}", value, step)
                 print(json.dumps({"step": step, "train": metrics}), flush=True)
             if step % settings["save_every"] == 0 or step == settings["max_steps"]:
-                saved = save_checkpoint(output / "checkpoints", model, optimizer, scheduler, progress.copy(), signature)
+                saved = save_checkpoint(output / "checkpoints", model, optimizer, scheduler, progress.copy(), signature, keep=settings["keep_checkpoints"])
                 if rank == 0:
                     writer.flush()
                     print(f"Saved {saved}", flush=True)

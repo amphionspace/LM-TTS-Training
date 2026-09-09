@@ -1,11 +1,14 @@
 import copy
+import io
+import numpy as np
+import soundfile as sf
 import json
 from pathlib import Path
 import tempfile
 import unittest
 
 from qwen3_train.data import CodeDataset
-from qwen3_train.sources import emilia_short, short_record
+from qwen3_train.sources import emilia_short, short_record, materialize_audio
 from scripts.rescore_english import english_metrics
 
 
@@ -65,6 +68,27 @@ class SourceTests(unittest.TestCase):
                 dataset.rows = [{**query, **invalid}]
                 with self.assertRaisesRegex(ValueError, 'Invalid training-pool reference'):
                     dataset.set_speaker_references(pool, 3)
+
+    def test_submillisecond_tail_padding_and_large_mismatch_rejection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            payload = io.BytesIO()
+            sf.write(payload, np.linspace(-.1, .1, 989, dtype=np.float32), 44100, format='WAV', subtype='FLOAT')
+            archive = root / 'fixture.tar'
+            archive.write_bytes(payload.getvalue())
+            record = {'id': 'tail-fixture', 'audio': {'kind': 'tar_member',
+                'archive': str(archive), 'offset': 0, 'size': len(payload.getvalue()),
+                'sample_rate': 44100, 'frames': 1000}}
+            with self.assertWarnsRegex(UserWarning, '11 samples'):
+                path = materialize_audio(record, root / 'padded.wav')
+            waveform, rate = sf.read(path)
+            self.assertEqual(rate, 24000)
+            self.assertEqual(len(waveform), (1000 * 24000 + 44099) // 44100)
+            self.assertFalse(path.with_suffix('.incomplete').exists())
+            record['audio']['frames'] = 1100
+            with self.assertRaisesRegex(ValueError, 'tail-fixture'):
+                materialize_audio(record, root / 'invalid.wav')
+            self.assertFalse((root / 'invalid.wav').exists())
 
     def test_english_numbers_do_not_hide_actual_number_errors(self):
         reference = 'or eight inches about one hundred forty-five pounds'

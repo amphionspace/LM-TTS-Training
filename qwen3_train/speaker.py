@@ -1,4 +1,4 @@
-"""Reference features for the trainable official ECAPA speaker encoder."""
+"""Reference features for the official ECAPA speaker encoder."""
 from functools import lru_cache
 
 import numpy as np

@@ -45,6 +45,7 @@ def main():
     p.add_argument("--dtype", choices=["bfloat16", "float32"], default="bfloat16")
     p.add_argument("--text-projection-init", choices=["pretrained", "identity", "random", "near-identity"], default=None)
     p.add_argument("--text-initialization", choices=["qwen-tts", "text-base"], default="qwen-tts")
+    p.add_argument("--train-speaker-encoder", action="store_true", help="Opt in to joint speaker training; default freezes public ECAPA")
     p.add_argument("--train-text-frontend", action="store_true", help="Unfreeze text embedding and projection; default freezes both")
     p.add_argument("--input-protocol", choices=["qwen3_non_streaming", "legacy_prefix"], default="qwen3_non_streaming")
     p.add_argument("--audit-only", action="store_true", help="Write a JSON report; do not download weights or build a model")
@@ -62,7 +63,7 @@ def main():
     for name in ["backbone", "tts_template"]:
         paths[name] = resolve(getattr(args, name), getattr(args, name + "_revision"), weights=False)
     config, tokenizer, report = audit_sources(paths["backbone"], paths["tts_template"], args.text_projection_init, args.input_protocol,
-                                               args.text_initialization, not args.train_text_frontend)
+                                               args.text_initialization, not args.train_text_frontend, not args.train_speaker_encoder)
     report.update(format_version=2, seed=args.seed, dtype=args.dtype, text_projection_init=args.text_projection_init)
     report["sources"] = {name: {"requested": getattr(args, name), "revision": getattr(args, name + "_revision")}
                          for name in DEFAULTS}

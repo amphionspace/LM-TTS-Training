@@ -18,6 +18,7 @@ from qwen3_train.model import TTSModel, make_config
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--speaker", action="store_true")
+    parser.add_argument("--frozen-speaker", action="store_true")
     parser.add_argument("--qwen-protocol", action="store_true")
     parser.add_argument("--frozen-frontend", action="store_true")
     args = parser.parse_args()
@@ -50,6 +51,7 @@ def main():
             config.text_hidden_size = 128
             config.lm_tts_text_projection = "mlp"
             config.lm_tts_freeze_text_frontend = True
+        config.lm_tts_freeze_speaker_encoder = args.frozen_speaker
         model = TTSModel(config, speaker_config).cuda()
         reference = copy.deepcopy(model)
         mesh = init_device_mesh("cuda", (world,))
@@ -86,7 +88,7 @@ def main():
             largest = max(largest, (actual - target).abs().max().item())
         if rank == 0:
             print(json.dumps({"status": "passed", "world_size": world, "accumulation": 2,
-                              "variable_lengths": True, "speaker": args.speaker, "qwen_protocol": args.qwen_protocol, "frozen_frontend": args.frozen_frontend, "max_gradient_absolute_error": largest}), flush=True)
+                              "variable_lengths": True, "speaker": args.speaker, "qwen_protocol": args.qwen_protocol, "frozen_frontend": args.frozen_frontend, "frozen_speaker": args.frozen_speaker, "max_gradient_absolute_error": largest}), flush=True)
     finally:
         dist.destroy_process_group()
 

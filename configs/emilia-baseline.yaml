@@ -1,10 +1,10 @@
 seed: 42
 model:
-  assembled_model: pretrained/assembled-qwen3-tts-official-frozen
+  assembled_model: pretrained/assembled-qwen3-tts-frozen-conditioning
   activation_checkpointing: false
 data:
-  train: data/emilia-short-en-1000h/train.jsonl
-  val: data/emilia-short-en-1000h/val.jsonl
+  train: /ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-en-1000h/train.jsonl
+  val: /ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-en-1000h/val.jsonl
   speaker_reference_seconds: 3
 train:
   output: runs/emilia-official-frozen-1000h
@@ -19,6 +19,7 @@ train:
   residual_weight: 0.3
   grad_clip: 1.0
   save_every: 500
+  keep_checkpoints: 2
   eval_every: 100
   log_every: 10
 eval:

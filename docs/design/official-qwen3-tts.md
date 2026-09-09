@@ -167,6 +167,6 @@ E_text(pad) + sum(历史帧 16 组 embedding), ...
 | 从同一个 0.6B Base 加载 embedding 与 decoder，必须加 MLP 吗？ | 不必须；同源同宽可以直接连接 |
 | 新增音频表、输出 head、深度预测器能从文本 LM 原样加载吗？ | 没有逐项对应的文本参数，须训练新模块或明确选择其他预训练来源 |
 
-本工程当前先采用官方 2048 维 text embedding 和已训练 MLP 的成套公开权重，并冻结两者；28 层 Talker decoder / norm 从 Qwen3-0.6B-Base 加载；ECAPA 和 codec 加载 Qwen 公开权重；音频 embedding、输出 head 和 Code Predictor 新初始化。这样优先对齐官方结构并保护文本前端，但前端与文本 Base 主干并非原本共同训练，仍需在 Emilia2 上验证适配效果。直接连接、解冻和重新初始化前端留作后续独立消融。
+本工程当前先采用官方 2048 维 text embedding 和已训练 MLP 的成套公开权重，并冻结两者；28 层 Talker decoder / norm 从 Qwen3-0.6B-Base 加载；ECAPA 和 codec 加载 Qwen 公开权重并冻结；音频 embedding、输出 head 和 Code Predictor 新初始化。这样优先对齐官方结构并保护文本前端，但前端与文本 Base 主干并非原本共同训练，仍需在 Emilia2 上验证适配效果。直接连接、解冻和重新初始化前端留作后续独立消融。
 
 可验证的初始化要求是：共享文本 token 的 ID 不变；除新增 TTS token 行外 embedding 不变；decoder/norm 权重严格一致；每个新模块有明确记录；加载时不接受缺失权重后静默随机补齐。完整训练配置、产物 SHA256、来源 revision 和对照实验应与这些结构说明一起保存。

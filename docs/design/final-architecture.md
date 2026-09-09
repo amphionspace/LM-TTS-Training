@@ -1,4 +1,4 @@
-# 当前基线：官方结构、冻结公开文本前端
+# 当前基线：官方结构、冻结公开文本前端和 speaker encoder
 
 ## 决定与验证顺序
 
@@ -18,10 +18,10 @@
 | 15 组残余 embedding | 每张 `[2048,1024]` | 新初始化 | 训练 |
 | Code Predictor | 5 层，hidden 1024，15 个 2048 类输出 head | 新初始化 | 训练 |
 | Talker→Code Predictor projection | 1024→1024，Identity | 无参数 | 不适用 |
-| ECAPA speaker encoder | 24 kHz、128 mel、1024 输出 | 公开 Qwen TTS speaker encoder | 联合训练，使用主干学习率 |
+| ECAPA speaker encoder | 24 kHz、128 mel、1024 输出 | 公开 Qwen TTS speaker encoder | **冻结**，不进入优化器，保持 eval 模式 |
 | Speech tokenizer encoder/decoder | 12.5 Hz，16 码本，24 kHz 波形 | 官方公开 codec | 冻结，离线编码 |
 
-总参数 **914,643,008**；冻结文本前端 **317,459,456**；可训练参数 **597,183,552**，不计独立冻结 codec。文本 LM 的 embedding 和输出 head 不在此基线中使用；公开 TTS 的 Talker transformer、audio embedding/head、Code Predictor 权重不加载。
+总参数 **914,643,008**；冻结文本前端 **317,459,456**；冻结 ECAPA **8,854,336**；合计冻结 **326,313,792**，可训练参数 **588,329,216**，不计独立冻结 codec。文本 LM 的 embedding 和输出 head 不在此基线中使用；公开 TTS 的 Talker transformer、audio embedding/head、Code Predictor 权重不加载。
 
 “初始化”不等于“随机初始化”。这里 embedding 和 projector 都明确使用公开预训练权重初始化，并冻结；只有没有采用预训练来源的音频预测模块新初始化。不是把完整公开 TTS 模型拿来微调，也不是所有权重从零开始。
 
@@ -56,7 +56,7 @@
 
 ## Reference 与数据边界
 
-每条训练样本为文本加整段目标 codec。ECAPA 使用同 speaker 的另一条训练录音；Emilia 中间层为每个 speaker 选择两个训练 anchor，确保 anchor 自己也能引用另一条。验证参考仍只能来自训练池。只将 mel 作为固定输入，ECAPA 输出在线计算且保留梯度。
+每条训练样本为文本加整段目标 codec。ECAPA 使用同 speaker 的另一条训练录音；Emilia 中间层为每个 speaker 选择两个训练 anchor，确保 anchor 自己也能引用另一条。验证参考仍只能来自训练池。只将 mel 作为固定输入，ECAPA 输出在线计算，但不保留梯度，权重固定。
 
 不显式构造独立的 ICL reference/target 训练对。已有 codec 历史的编排经过官方 ICL 函数对照；当前评估从空音频前缀生成，不能据此宣称完成 zero-shot 验证。基线先评价未见文本内容准确率，而非未见说话人能力。
 
