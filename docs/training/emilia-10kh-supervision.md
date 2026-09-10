@@ -1,15 +1,21 @@
 # 10kh 正式训练与巡检记录
 
-用户授权：完整数据检查通过后，从初始组装模型启动正式训练，训练两个 epoch；每半小时检查训练过程，发现具体问题可以调整，但必须详细记录证据、原因、修改和结果。现有 1kh 和试训产物继续保留。
+用户授权：完整数据检查通过后，从初始组装模型启动正式训练；原计划两个 epoch，2026-09-10最新要求改为第19,000步结束；每半小时检查训练过程，发现具体问题可以调整，但必须详细记录证据、原因、修改和结果。现有 1kh 和试训产物继续保留。
+
+## 当前最高优先级交接：19000步停止
+
+2026-09-10 06:21 UTC，用户明确要求“到19000停吧，你可以给那个监控的说一声”。这替代此前“先不停止”的暂缓要求和历史两epoch目标。源配置max_steps已改19000，schedule_steps保持38539。主会话已诊断并修复接续时的显存碎片OOM，当前PID104206已实际加载19000停止配置，完成至少100次更新验证；详见下方07:12恢复记录。
+
+停止配置接续已由主会话落实，run/stop-at-19000-ack.json已为applied；巡检继续监督现有进程，不重复为此重启。不要按旧目标训练到19270或38539。最终19000完整checkpoint、512条val loss、每模式8条生成summary、冻结检查通过后正常结束监控。不扩大全量生成评估。
 
 ## 固定训练计划
 
 - 配置：`configs/emilia-10kh-pretrain.yaml`；输出：`runs/emilia-en-zh-dynamic-10000h/`。
 - 完整训练数据 6,869,742 条、9,999.19476 小时；验证集 512 条（中英各 256）。完整清单 SHA256、样本核查及精确 epoch 规划见 run 下 `preflight.json`。
 - 4 × A100 80GB，BF16、FSDP、Flash Attention 2；每卡动态预算 6,000 音频帧 / 9,000 talker token，累积 1，16 DataLoader workers / 卡，prefetch 2。
-- seed 42 下两个 epoch 分别 19,270、19,269 次更新，总计 38,539；schedule_steps 同为 38,539。warmup 1,000，主干峰值 LR 1e-4、新参数峰值 LR 3e-4。
+- seed 42 下第一 epoch 为19,270次更新；最新停止点为19,000步，略早于第一epoch结束。schedule_steps保留原来的38,539，不重新压缩学习率曲线。warmup 1,000，主干峰值 LR 1e-4、新参数峰值 LR 3e-4。
 - 从 `pretrained/assembled-qwen3-tts-frozen-conditioning` 初始化；不接续 1kh 或试训。训练仍只使用 speaker embedding，不新增 ICL 训练任务。
-- 每 500 步保存和评估，保留最近两个完整 checkpoint；最后第 38,539 步同样保存并执行验证 loss 和两种生成评估。本次补齐末步评估条件，避免末步不是 500 的倍数时缺少最终结果。
+- 每 500 步保存和评估，保留最近两个完整 checkpoint；最后第19,000步保存并执行验证loss和两种生成评估。本次补齐末步评估条件，避免末步不是 500 的倍数时缺少最终结果。
 
 ## 验证口径
 
@@ -21,7 +27,7 @@
 
 在项目根目录运行 `python runs/emilia-en-zh-dynamic-10000h/launch.py`。后台启动需要将 stdin 关闭，并把 launcher stdout/stderr 写到本 run 的 `launcher.log`；launcher 有运行锁，训练 PID、进程启动标识和命令写入 `training-process.json`，退出码写入 `training-exit.json`，训练日志追加至 `train.log`。
 
-有完整 checkpoint 时 launcher 自动 `--resume latest`。已有启动记录而没有完整 checkpoint 时拒绝自动从头重跑，需要核查失败现场。不要修改 checkpoint 元数据或绕过恢复签名；修改学习率/动态预算等训练语义前，必须先验证恢复路径和两个 epoch 的计划。所有人工或自动干预追加到本文。
+有完整 checkpoint 时 launcher 自动 `--resume latest`。已有启动记录而没有完整 checkpoint 时拒绝自动从头重跑，需要核查失败现场。不要修改 checkpoint 元数据或绕过恢复签名；修改学习率/动态预算等训练语义前，必须先验证恢复路径及19,000步停止计划。所有人工或自动干预追加到本文。
 
 ## 2026-09-09 启动前核查
 
@@ -912,3 +918,100 @@ ModuleNotFoundError: No module named 'qwen3_train'
 - 全部512条验证数据（中英各256）参与验证loss；其中511条有合格的同speaker、同语言、不同文本训练参考。当前eval.num_samples=8，每个模式固定生成8条（中英各4），两种模式共16条音频；生成WER/CER并非全验证集统计。
 - 用户提到一个epoch后停止，随后明确先不停止当前训练。本轮只核查既有停止/恢复逻辑，未修改max_steps=38539或schedule_steps=38539，未停止、重启或发送训练信号，也未安排未来自动重启。第一epoch为19270步，但该停止点尚未应用。当前训练进程及原巡检继续运行。
 - 按用户明确的commit/push请求提交当前巡检文档；无训练代码、配置或checkpoint元数据变更。
+
+
+## 2026-09-10 06:21 UTC 最新用户授权：19000步停止，交由巡检落实
+
+- 用户最新原话：“到19000停吧，你可以给那个监控的说一声”。这明确替代上一条“先不停止”的暂缓状态；既定停止点为19000，不是19270或38539。
+- 主会话已改源配置train.max_steps=19000，保留schedule_steps=38539和原token loss；已更新故障处置表、当前计划及run/supervision-prompt.md的停止/最终验收要求。当前训练未被主会话停止或重启。
+- 巡检请立即重新读取run/supervision-prompt.md最新指令，并写stop-at-19000-ack.json确认接收。旧PID5005不会热读配置，需要在完整checkpoint和该步val/双summary结束后，通过launch.py接续一次以加载新停止点；验证run/config.yaml、恢复游标、原scheduler及20次更新后才标记applied。不要只改磁盘配置或仅口头确认。
+- 19000步checkpoint、验证loss、每模式8条生成及冻结检查完成后正常退出，监控按final-verification.step=19000验收。保留原学习率计划，无需全量生成WER评估。
+
+
+## 2026-09-10 06:24 UTC 巡检接收19000步停止指令（执行前记录）
+
+- 本轮旧快照提示仍为38539步；现场发现并重读主会话06:21最新用户授权记录、更新后的supervision-prompt.md和故障处置表：按明确转交的用户原话将停止点改为19000，保留schedule_steps=38539。已原子写stop-at-19000-ack.json status=received。
+- PID5005/start84647923、launcher5004和四rank5030–5033仍存活；run/config.yaml的max_steps仍38539，源配置仅max_steps变为19000，因此尚未生效。已读train.py签名排除max_steps、checkpoint.py完整模型/优化器/scheduler/RNG加载及数据游标恢复路径；14000/14500签名相同、14500 COMPLETE/val齐全。14500 speaker_only完成，ICL正在生成，等待该步双summary后再核对身份并仅TERM本run，通过launch.py严格接续一次。恢复后校验配置、游标与20次更新，才改ack为applied；不会编辑checkpoint元数据或宣称接收即生效。
+
+- 2026-09-10T06:29:30.005736+00:00：14500 COMPLETE、val、双summary各8条均完成；已核对源/运行配置只有max_steps差异及PID/start_ticks/cmdline。第一次发信号前脚本因假设各rank共用PGID的断言失败，未发信号、未修改训练。实际各rank为独立PGID且PPID5005；按torchrun传播信号机制仅TERM已核对的torchrun组5005，等待其回收各rank。停止前metadata、val、全部生成产物SHA256、进程身份与日志偏移保存stop-at-19000/before-stop.json；原config/process文件留副本。停止前最后日志step=14550，从14500接续将重算其后未保存更新，不跳过数据。
+
+- 2026-09-10T06:30:04.362444+00:00：旧launcher/torchrun/四rank均已退出；launcher记录PID5005 exit_code=1，完整SignalException15与56 semaphore关闭警告保存在train.log及stop-at-19000/stop.log，属于本次主动TERM。旧退出记录已复制before-training-exit.json。通过原launch.py、start_new_session=True、DEVNULL stdin、launcher.log输出在项目根目录脱离巡检恢复，launcher PID=3731574，从14500 COMPLETE严格加载。源配置19000/38539已复核；等待实际初始化与20次更新验证，ack暂为received。
+
+## 2026-09-10 06:31 UTC 本轮巡检指标与生成核验（停止点接续验证进行中）
+
+- 依据与进度：本轮快照20260910T062129Z.json于06:21:31记录14000→14500、50个新日志点；06:22:56现场14500正在生成，14500双summary随后完成，主动TERM前最后训练日志14550。已读manual.active=false、最新review 20260910T055129Z.md及status（上一巡检退出码0）。06:21主会话新停止要求及本轮接收、接续操作见上文；此次接续不是OOM/NaN/卡死修复。
+- 接续前身份/资源：torchrun5005/start84647923、launcher5004/start84647921、四rank5030–5033/start84648072均匹配，四rank的PPID5005，各自独立PGID。GPU占用77519/77211/76025/77861 MiB（各81920），06:22:56利用率0/100/100/100%，compute-apps只有本run四rank；rank0生成/ASR期间瞬时低GPU利用率，但metrics持续增加，不判停滞。主机已用237GiB、available1.7TiB、无swap；磁盘可用582712.61GiB。主动TERM前无新Traceback/OOM/Non-finite/Error；旧Traceback是10000步主动停止历史。本次TERM的新退出记录PID5005/code1及完整SignalException15已单独保留，不误认训练故障。
+- 近半小时14010–14500共50个每10步当步值全部有限：first_ce最小/中位/最大/末值1.186965/1.241697/1.298818/1.211980；residual_ce 5.842497/5.889591/5.939464/5.865010；clip前grad_norm 0.368330/0.426963/0.522892/0.420436。主干LR7.586006846e-5→7.420789722e-5，新参数2.275802054e-4→2.226236917e-4，按38539步cosine连续下降。
+- 动态batch与吞吐：帧填充94.5083%–99.8042%、中位98.3125%；token填充91.3056%–98.1861%、中位95.4806%；global samples315–400。step范围1.975639–2.285803s、中位2.125766s；音频秒/墙钟秒836.328–940.191、中位888.410；data_wait范围0.0002395–0.0004522s、中位0.0002771s；没有>3s慢步，较上一轮2.128165s/885.795/0.0002745s相近，未见供数下降。rank0 peak allocated最高56.8457GiB。以上为稀疏当步值，不是包含评估的窗口平均。
+- Checkpoint：latest=step-00014500、COMPLETE时间06:16:06.675319 UTC，progress={step:14500,epoch:0,next_batch:14500}、world_size4、scheduler.last_epoch14500、LR7.420789722e-5/2.226236917e-4。14000/14500签名一致，四distributed分片各约2.093GB、.metadata1424887字节、四rng各14613字节齐全；13500为训练器keep_checkpoints=2正常轮转，本巡检未清理或编辑metadata。14500 val first/residual CE1.298761/5.895098，较14000的1.310338/5.909446下降，15码本CE均有限（3.716236–6.653376）。结构检查后已启动严格恢复，实际加载结论待下文。
+
+|完整评估，每模式EN4/ZH4，greedy/min_new_frames=2|EN基础WER/CER|EN英语规范化WER/CER|ZH WER/CER|截断/零帧/仅2帧|
+|---|---|---|---|---|
+|14000 speaker_only|0.277778/0.139860|0.305556/0.139860|1.125/0.488095|0/8、0/8、0/8|
+|14000 icl|0.083333/0.034965|0.083333/0.034965|1.125/0.428571|0/8、0/8、0/8|
+|14500 speaker_only|0.444444/0.391608|0.5/0.384615|1.125/0.595238|0/8、0/8、0/8|
+|14500 icl|0.194444/0.104895|0.194444/0.104895|1.125/0.440476|0/8、0/8、0/8|
+
+- 实读14000与14500共四summary、32条metrics及32WAV；全部24kHz单声道、有限、时长与metrics一致，目标ID/文本、speaker_reference_id/reference_text、policy与各自上一轮相同。两种英语口径有真实差异：14000 SO00的didn't展开为did not，使句WER0.75→1；14500 SO00同样1.25→1.5，SO05为1.5→1.75，不能混用口径。8条诊断样本不能代表全部512条验证数据，未试听，ASR文本不当作人工听感。
+- 13500 ICL EN00的2帧/0.16s近静音在14000和14500均恢复19帧/1.52s、目标1.81s；RMS分别0.057919/0.067168，最长开头零段0.05075/0.047667s。14000 ASR“the liquid spears.” WER0.25，14500“The li-lidley spares.” WER0.75/CER0.5；恢复有效能量不等于内容完全正确。ICL ZH04同样持续有23/24帧、1.84/1.92s、目标2.3s，RMS0.096415/0.102728，CER0.384615/0.153846；14500“其实然毕竟坚持了这么多年”仍有缺换词。此两步两模式均无仅2帧输出，不据此宣称过早EOS根因消失。
+- 长ZH ICL03连续10500–14500九次无截断或历史长零段：14000/14500均89帧/7.12s、目标6.28s、比1.133758，RMS0.034625/0.042629，零比例11.2477%/10.3400%，最长近开头零段0.444/0.446708s；CER0.5/0.527778。14500 ASR“又起了半個小時現在是下午2點50,起了大概10公里,現在剩餘的電量是80%”，含繁简、数字和起/骑等差异。SO03为86→89帧、6.88→7.12s，14500 RMS0.040874、最长零段0.0055s，但ASR开头“和學校校時…”错误，CER0.666667。未出现32秒截断/多秒零段不表示文本已完整正确。
+- SO英语错误仍反复：sample00为14000的24帧/1.92s→14500的30帧/2.4s（目标1.81s），14500 ASR“I didn't show you the liquid spars.”、规范化WER1.5；sample05为24帧/1.92s→34帧/2.72s（目标1.62s、比1.679012），RMS0.070060、最长零段0.054375s，ASR“Cheetah bird Debbie O'Have flanked his uni.”、规范化WER1.75/CER2。未复发13000的8.64s长重复，但仍有额外内容。SO06增至63帧/5.04s、目标3.56s，ASR开头多出“Up in Syngesie”，WER0.333333；SO02仍WER0.0625。配对与输入策略未变，现无可直接修复的数据/实现错误证据，不据此调整LR、loss或解码。
+- 其他14500结果：SO01 13帧/1.04s/目标0.98s、CER0.5；SO04 29帧/2.32s/目标2.3s、CER0.692308；SO12 52帧/4.16s/目标5.28s、CER0.482759。ICL01 11帧/0.88s/CER0.333333、02 WER0、05 19帧/1.52s/WER0.5、06 WER0.166667；ICL12仍45帧/3.6s/比0.681818、ASR“相信你跟师父都看过我寄给你们的卷 微久微久”、CER0.482759，尾部video混合语音仍错误/不完整。
+- 保持与未解决：本巡检不改训练代码、预算6000/9000、workers16/prefetch2、原token loss、38539步LR曲线或生成设置；仅执行主会话明确转交的19000停止计划接续。长期跟踪短句额外内容、ICL尾部缺失和历史近静音反复；最终19000 COMPLETE、val、双summary及include-speaker冻结核验尚未到期，未执行最终冻结检查、未写final-verification passed=true。
+- 命令与验证：cat/head/tail读约定、现场文件和新增主会话指令；rg/sed读train/checkpoint/sampler/launcher恢复与停止实现；Python解析日志、/proc、checkpoint、配置差异、SHA256、磁盘；nvidia-smi/free；soundfile/numpy核验WAV/时长/能量/零段及配对；现有test_dynamic_batching.py两项测试通过。发信号前PGID断言失败的脚本没有执行停止；修正现场判断后一次TERM、一次脱离巡检的launch.py恢复，操作证据见上文与stop-at-19000/。没有提交、push、PR、外发消息、timer/Codex/subagent或额外删除清理。
+
+
+## 2026-09-10T06:41:17.493071+00:00 接续异常：14510后无更新，尚未通过20步验证
+
+- 新PID3731575/start86271004、launcher3731574/start86271002、四rank3731608–3731611/start86271458存活；初始化已严格加载14500/epoch0/next_batch14500，run/config.yaml已为19000/38539，checkpoint metadata及35个评估文件SHA256均未变。14510日志first/residual CE1.268082/5.907184、grad0.460999，LR7.417383362298285e-5/0.00022252150086894855与原38539曲线精确一致；仅10次更新，未达到20步验收，ack仍received。
+- 06:37:04后日志不动，新增四条terminate called without an active exception及输入幅值最大1.05318/最小-1.02278警告。06:37:32、06:37:54、06:40:28多次无新step，非保存/评估；rank3全部16个DataLoader worker退出，仅resource_tracker仍在，其他rank workers存活等待，GPU0–2 busy/rank3 idle。尚无首个Python异常或OOM traceback，不能归因于幅值警告或声称确定OOM。
+- 现场保存resume-attempt.log与resume-incident.json（身份/各卡显存/进程/等待点）；/proc/stack和临时目录py-spy读取均被系统拒绝，未调整系统权限。临时安装py-spy0.4.2到/tmp/tts-stop19000-pyspy（项目依赖未改），先前索引DNS重试后安装成功；后发现/tmp/emilia-profiler已有工具。train.py finally先销毁loader再destroy_process_group，可能在清理中阻挡原异常输出，此为推断。现只TERM已核对的等待rank0进程组3731608以打断collective并让launcher退出/输出异常，保留14500完整恢复点；根因未明前不无修改循环恢复。
+
+- 2026-09-10T06:42:35.224048+00:00：torchrun已回收其余rank，launcher记录PID3731575 exit_code=1；所有新launcher/torchrun/rank退出，GPU退回空闲（详见resume-verification.json）。完整ChildFailedError保存resume-attempt.log；其中rank0/-15是本巡检为结束等待发送的SIGTERM结果，并非首个故障根因，rank3原异常仍未输出。未再次恢复、未改训练代码或降低预算。
+- 严格恢复的14510 first/residual loss、grad、global samples/frames/tokens与两组LR均与旧PID同一步精确相等，证实该步数据及更新轨迹一致；但只有10次更新，不能用旧进程的14520日志充作本次20步验证。checkpoint metadata及全部35个14500评估产物SHA256仍一致；本run当前无运行训练进程，最近完整恢复点14500。
+- 已原子更新stop-at-19000-ack.json：pid3731575、status仍received，runtime_max_steps=19000、schedule_steps=38539，验证仅10/20步，state=stopped_pending_root_cause；完整结果在stop-at-19000/resume-verification.json。19000配置已加载过，但未达到applied验收要求，不能报已完成停止计划落实。主会话/后续巡检应先在分布式清理前输出完整原始异常，并从同14500游标进行受控诊断，确认失败batch/阶段及根因后再修复恢复；当前不凭GPU占用推断OOM、不盲改预算/输入或绕过签名。
+- 本轮最终状态：训练停止待根因诊断；保持完整checkpoint、双模式评估和全部退出日志。14500 val与生成核验已完成；19000最终训练、val/双summary和include-speaker冻结检查仍未完成，final-verification.json不存在，未写passed=true。巡检结束，由既有外层安排下一轮；无新增timer/subagent或外发消息。
+
+
+## 2026-09-10 06:50 UTC 主会话接管恢复失败诊断
+
+- 用户询问是否暂停，现场确认训练已于06:41异常收尾，GPU空闲，尚未到19000步。主会话已把manual-observation.active设为true，巡检只读，避免重复干预。
+- 保留14500 checkpoint和前次失败记录；在train.py增加原异常于finally分布式清理前输出的诊断，编译检查通过。从同一14500 checkpoint经原launch.py启动一次受控复现，未修改batch、数据、学习率或签名，max_steps/schedule_steps仍为19000/38539。证据位于stop-at-19000/main-diagnostic/；这不是无修改循环恢复。
+
+## 2026-09-10 06:53 UTC 单次巡检：主会话接管，受控复现仍在加载
+
+- 依据与权限：已读故障处置表、本文及06:50主会话接管记录、manual、快照20260910T065129Z.json、最新巡检20260910T062129Z.md与status（上一巡检退出码0）。manual.active=true，phase=diagnose-stop19000-resume-failure，owner=main session，06:50:07接管。本轮仅检查与追加记录，不改代码/配置、ack或控制训练；主会话负责当前复现与后续处理。
+- 当前进程：training-process.json PID4015636/start_ticks86396222与/proc一致，命令为本项目torchrun、4 ranks、原config、--resume latest；launcher4015635/start86396220/PPID1。四rank4015667/4015668的start86396561，4015669/4015670的start86396562，PPID均4015636，均R；launcher/torchrun为S。主会话于06:50:56通过原launch.py从14500发起受控复现，证据stop-at-19000/main-diagnostic/launch.json，日志起始offset1857190。06:52:22至06:53附近读取量继续增加，当前偏移后尚无新训练/初始化日志；GPU各761/81920MiB、利用率0%，compute-apps仅上述新四rank各752MiB。各rank CPU读清单约4.08–4.13GB且存活，符合启动加载阶段，不能沿用上一PID的停滞判断。
+- 进度口径：上一快照14500→本次快照last_step14510；new_logged_steps=6实际包含旧PID5005的14510/14520/14530/14540/14550五条和失败恢复PID3731575重算的14510一条，不是六个新step，也不是当前PID的恢复进度。旧运行最高已记录14550，之后从14500恢复而最后日志14510；当前受控复现计划从14500开始，但截至本轮尚无本PID的initialized记录，不能宣称已完成恢复加载或20步验收。
+- 近半小时历史训练值：旧PID5005五个日志点first_ce范围1.182595–1.299318、中位1.266781；residual_ce 5.891338–5.921766、中位5.907184；grad_norm 0.388499–0.460999、中位0.396290，均有限。step中位2.230936s（2.037235–2.342457）、音频吞吐中位847.931（818.115–917.243）、等待中位0.0002456s（0.0002378–0.0004351）；帧填充96.8125%–99.8125%、token93.8667%–96.9889%、samples314–362，rank0 peak最高56.3372GiB。主干LR7.417383362e-5→7.403744519e-5、新参数2.225215009e-4→2.221123356e-4按原曲线下降。
+- 失败恢复PID3731575另有唯一14510日志：first/residual CE1.268082/5.907184、grad0.460999、LR7.417383362e-5/2.225215009e-4，step2.594715s、吞吐716.379、等待0.0004126s、samples360、帧/token填充96.8125%/94.1528%、peak56.2828GiB。其loss/grad/组批/LR与旧PID同一步精确匹配已在上轮核验，但随后未达14520；这些历史值不能与当前启动合并算吞吐或训练质量趋势。
+- Checkpoint与退出：latest仍step-00014500，COMPLETE及progress={step:14500,epoch:0,next_batch:14500}、world_size4、scheduler.last_epoch14500、LR7.420789722e-5/2.226236917e-4一致。14000/14500签名相同，两份各四distcp约2.093GB、.metadata1424887字节、四rng各14613字节完整；14500 metadata SHA256与上轮停止前相同。当前training-exit.json不存在；主会话已把旧PID3731575/code1退出记录留在main-diagnostic/previous-exit.json等副本。快照列出的Traceback/ChildFailedError来自旧日志，不能当作新PID错误；上轮rank0/-15是巡检结束等待的信号结果，首个rank3异常仍未知。
+- 诊断改动核验：实读train.py，主会话已在finally清理前增加except BaseException、traceback.print_exc()、raise，避免原始异常被分布式清理等待掩盖。主会话记录编译检查通过；本巡检未重跑测试或更改其代码。当前新日志段无异常也无initialized，因此诊断是否取得原始失败堆栈尚待主会话观察，不能推定故障已解决或确定OOM/输入损坏。
+
+|最近完整14500评估，每模式4EN/4ZH，greedy/min_new_frames=2|EN基础WER/CER|EN英语规范化WER/CER|ZH WER/CER|截断/零帧/仅2帧|
+|---|---|---|---|---|
+|speaker_only|0.444444/0.391608|0.5/0.384615|1.125/0.595238|0/8、0/8、0/8|
+|icl|0.194444/0.104895|0.194444/0.104895|1.125/0.440476|0/8、0/8、0/8|
+
+- 评估/音频：本轮重读两summary与16条metrics，14500全部35个评估文件SHA256与上轮一致；无更新到15000的产物，未重复解码或试听。故上轮已核验的24kHz单声道、有限、时长匹配及固定目标/参考配对结论仍适用。14500 val first/residual CE1.298761/5.895098、15码本CE有限，属于最近完整checkpoint的验证，不属于当前新PID进度。英语规范化SO00的didn't展开使WER1.25→1.5，SO05为1.5→1.75；ZH含繁简/数字口径差异，不能混用口径或凭8句调超参。
+- 异常输出仍待后续跟踪：SO00 2.4s/目标1.81s，SO05 2.72s/目标1.62s且规范化WER1.75/CER2，SO06 5.04s/目标3.56s，均有额外内容；ICL00与04为1.52/1.92s，未复发仅2帧，但仍有换词；长ZH ICL03为7.12s/目标6.28s、CER0.527778，既有波形核验未见历史多秒零段。ICL12仍3.6s/目标5.28s、CER0.482759，尾部video变成“微久微久”。无截断不等于内容完整，没有新增评估就不重复宣称改善。
+- 资源与配置：06:52:22主机已用105GiB、available1.9TiB、无swap；磁盘可用582613.11GiB，无当前容量不足证据。源配置与run/config.yaml均为max_steps19000/schedule_steps38539、预算6000/9000、workers16/prefetch2、原token loss；run/config.yaml仍可能为上一次初始化产物，不能单据该文件认定当前PID已经加载。ack仍received且PID3731575、旧验证10/20；主会话完成本次真实20步接续验证后应更新为当前PID/applied，本巡检不越过manual接管更新ack。
+- 判断与未解决：保持当前主会话诊断安排与训练参数，原因是manual.active=true且新PID仍加载，不重复启动或发信号。建议主会话优先取得14510后首个rank/step/batch/阶段的完整原始异常，再依根因修复；不能把旧SIGTERM或波形幅值警告当成根因，也不能混用不同PID的14510/14520证明接续通过。最终停止目标19000不变；19000 COMPLETE、最终val/双summary及include-speaker冻结检查尚未完成，final-verification.json不存在，本轮未执行冻结验收或写passed=true。
+- 命令/修改/结果：cat/tail读约定、manual/进程/退出/ack/快照/review/status及main-diagnostic证据；Python核对/proc PID/start_ticks/cmdline/IO、分段日志、checkpoint结构/签名、SHA256、配置和历史指标；nvidia-smi GPU/compute-apps、free -h；重读双summary/逐句metrics，最后复核manual/current-log/exit。全部成功；唯一人工写入为本段追加。未修改训练代码/配置/数据、ack或进程，未运行测试、timer/Codex/subagent，未提交推送/发消息/额外清理。本次巡检结束。
+
+- 06:54:06→06:54:20最终补核：当前PID仍4015636、manual仍true、training-exit仍无。新日志先增至472字节（四条Flash Attention 2未显式指定dtype初始化提示），随后实际输出initialized=true、world_size4、progress={step:14500,epoch:0,next_batch:14500}、parameters914643008；rank0 rchar从约4.11GB增至10.49GB。故本PID现已完成严格恢复初始化，不再只是准备加载，但尚无当前PID训练更新/20步验证，不能称故障已解决。上文“尚无initialized/新日志”仅对应较早采样。最后一个只读核验脚本原先断言尚无initialized，因加载恰好完成而失败，未执行该脚本拟追加的过期判断、未修改训练；本补记以实际新日志修正，非训练报错。此前检查均成功，这次巡检脚本断言失败不应混入训练故障。仅追加本补记，仍由主会话观察后续结果，本轮结束。
+
+
+## 2026-09-10 07:02 UTC 捕获原始OOM并调整显存分配器
+
+- 同14500 checkpoint、相同设置受控复现，在14510日志后的loss.backward捕获FlashAttention反向torch.OutOfMemoryError：GPU3申请5.85GiB、设备可用5.66GiB；PyTorch allocated 50.42GiB，reserved但未分配21.60GiB。原始堆栈已保存stop-at-19000/main-diagnostic/oom-traceback.log；这次已确认是反向显存分配失败，大量不可复用保留显存支持碎片机制，不再把DataLoader worker退出当作首因。
+- 原异常先输出后仍在分布式清理中等待，核对PID4015636/start86396222及命令后TERM其torchrun组，确认所有rank退出、四GPU空闲；未改checkpoint或跳过数据。此前5005能连续训练并不能保证恢复后的缓存分配布局相同。
+- scripts/run_train.sh默认启用PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True，显式环境变量可覆盖。依据安装版本的PyTorch2.8显存管理说明及OOM提示，针对动态batch变化减少不可复用碎片；batch6000/9000、workers16、prefetch2、原token loss、LR和19000/38539计划保持。另保留train.py在finally前输出原始异常的修正。
+- shell/语法检查通过；两卡BF16/FA2、冻结speaker/frontend、变长变样本数、两次累积的FSDP梯度及验证指标检查通过，相对梯度误差0.004082。已由launch.py从14500启动实际四卡验证，PID104206，/proc环境确认PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True；证据stop-at-19000/allocator-recovery/。尚未观察到实际更新，manual.active仍为true，巡检不得重复干预。
+
+
+## 2026-09-10T07:12:53.228152+00:00 分配器修复通过实际恢复验证，交回巡检
+
+- PID104206从14500/epoch0/next_batch14500完整恢复，已推进至14630，连续130次更新均正常。四rank均确认expandable_segments:True，运行配置19000/38539，原token loss、预算及LR保持。14510和14520的first/residual CE、grad_norm、样本/帧/token数及两组LR均与旧正常进程逐值相等。
+- 原14500 checkpoint metadata哈希及35份评估文件哈希完全一致；此次启动后无Traceback/OOM/Non-finite。后续稀疏日志的step_seconds中位数为2.176792秒；当前各卡总显存占用约60–61GiB，相比原OOM时保留空间明显降低。证据stop-at-19000/allocator-recovery/verification.json和verified-training.log。
+- stop-at-19000-ack.json及请求记录已标记applied；manual.active改为false，原监控继续监督此进程至19000最终保存/val/双模式生成及冻结检查。历史OOM日志保留，后续错误扫描应以当前PID104206的初始化为界。最终19000验收尚未到期，没有写final-verification.json。

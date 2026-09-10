@@ -13,7 +13,7 @@ train:
   accumulation: 1
   num_workers: 16
   prefetch_factor: 2
-  max_steps: 38539
+  max_steps: 19000
   schedule_steps: 38539
   warmup_steps: 1000
   lr: 0.0003

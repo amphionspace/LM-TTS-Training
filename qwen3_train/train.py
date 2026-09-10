@@ -6,6 +6,7 @@ import os
 import random
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 import time
+import traceback
 from datetime import timedelta
 from pathlib import Path
 
@@ -508,6 +509,10 @@ def main():
             audio_every = config["eval"].get("audio_every", 0)
             if audio_every and (step % audio_every == 0 or step == settings["max_steps"]):
                 evaluate_audio(model, val_data, device, config["eval"], output, step, writer, train_data)
+    except BaseException:
+        # Distributed teardown can wait on peers; report the original failure first.
+        traceback.print_exc()
+        raise
     finally:
         reader = epoch_loader = loader = None
         if writer:

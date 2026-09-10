@@ -23,6 +23,8 @@ eval:
 
 TensorBoard 增加 `train/global_samples`、`global_audio_frames`、`global_talker_tokens`、`frame_budget_fill` 和 `token_budget_fill`。这些是整个优化更新的全局统计。现有 `peak_memory_gib` 和 `data_wait_seconds` 为 rank 0 的记录。
 
+启动脚本默认设置 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`，减少动态 batch 尺寸变化造成的显存碎片；显式传入该环境变量可覆盖默认值。实际恢复曾在 Flash Attention 反向申请5.85 GiB时OOM，现场仍有21.60 GiB的PyTorch保留但未使用显存，因此不应只看总显存或据此直接减小batch预算。此分配策略不改变训练目标、batch序列或学习率计划，机制见[PyTorch 2.8显存管理说明](https://docs.pytorch.org/docs/2.8/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)。
+
 ## Loss 聚合
 
 通过 `train.loss_reduction` 选择 `token`（默认）、`sample` 或 `sqrt`：

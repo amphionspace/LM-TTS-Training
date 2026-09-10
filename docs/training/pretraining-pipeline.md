@@ -240,13 +240,13 @@ accumulation 的分母已包含当前更新全部 microbatch，所以不再额�
 | weight decay | `0.01` |
 | 全模型 gradient clipping norm | `1.0` |
 | warmup | 1000 updates |
-| 总训练与调度长度 | 38,539 updates（两个epoch） |
+| 停止步数 / 调度长度 | 19,000 / 38,539 updates（用户提前停止，保留原学习率曲线） |
 
 warmup 线性增长，之后 cosine 衰减至基础学习率的 10%。loss 和裁剪前梯度 norm 必须有限，否则直接停止。更新顺序是 `backward → clip_grad_norm_ → optimizer.step → scheduler.step`；日志中的学习率是在 scheduler 前进一步后记录的，对应下一次更新将使用的值。
 
 ### 9.4 动态预算如何确定
 
-当前每卡预算6000音频帧/9000 Talker token，累积1次。完整数据预检按相同seed和四卡规划，两个epoch分别19270和19269步，总计38539步；预算不应在恢复时随意修改。最长音频与最长文本的组合压力样本已完成四卡实际优化更新；证据在当前run的 `memory-probe.log`，实际长期吞吐和显存见巡检记录。
+当前每卡预算6000音频帧/9000 Talker token，累积1次。完整数据预检按相同seed和四卡规划，两个epoch分别19270和19269步；用户于2026-09-10指定19000步停止，schedule_steps仍为38539。预算不应在恢复时随意修改。最长音频与最长文本的组合压力样本已完成四卡实际优化更新；证据在当前run的 `memory-probe.log`，实际长期吞吐和显存见巡检记录。
 
 ## 10. 验证 loss 与生成评估
 
