@@ -711,3 +711,204 @@ ModuleNotFoundError: No module named 'qwen3_train'
 从10000完整恢复后已实际推进至10170步，17个每10步日志点全部指标有限；LR逐点符合原38539步cosine计划。最新first/residual CE为1.297313/6.019990，grad norm 0.513839；恢复后记录点step中位2.1306秒，rank0取批等待中位0.0002675秒。torchrun PID5005/start_ticks84647923一致，四卡继续运行，无新的退出记录。恢复验证见eos-minimum-fix/resume-verification.json。manual.active已改回false，交回原持久化巡检PID441407、session 01a08697-ba78-7cd3-bb9e-b01eba12d724，每1800秒继续检查；长期ICL静音/截断尚未解决。
 
 用户明确要求runs只留两个正式实验，并清理过时文档。实际移除34个旧顶层条目，文件分配空间合计74.0854GiB；1kh所有原有文件大小/修改时间未变。源码归档/历史清理记录归入1kh的provenance，10kh数据准备日志归入当前run的provenance/data-preparation。两个正式实验的checkpoint、数据、初始化及原始音频依赖均保留。runs顶层另按用户要求保留README.md，明确两个目录完整保护。清单见cleanup-20260910/。旧试训/迁移/LJSpeech等9份过时文档与编辑器副本删除，当前模型、数据、ICL、动态组批、环境与pipeline说明更新；本文历史巡检中的旧路径保留为当时记录，不代表产物仍存在。用户已授权commit/push，正在单独完成版本管理。
+
+
+## 2026-09-10 02:27 UTC 单次巡检：恢复后10500步保存验证通过，生成评估进行中
+
+- 依据/权限：已读故障处置表、本文（含EOS修复、02:11恢复交接）、manual、快照`supervision/20260910T022129Z.json`、最近巡检`20260910T015129Z.md`及status。manual.active=false，phase=eos-fix-complete-training-resumed，主会话已观察至10170。上一快照10000（主动暂停）→本轮02:21:29快照10440→02:25:14现场10500；02:26:29仍10500但生成metrics继续落盘，属于正常评估阶段。原目标仍两个epoch/38539步。
+- 进程/恢复：PID5005/start_ticks84647923与/proc匹配，cmdline为项目torchrun、4 ranks、原config、--resume latest；launcher5004/start84647921/PPID1，四rank5030–5033/start84648072/PPID5005均存活。现场rank为R，torchrun为S。train.log实读initialized/world_size4/progress={step:10000,epoch:0,next_batch:10000}及随后50个训练日志点。已读主会话resume-verification.json，确认其10170交接记录。training-exit.json不存在；完整日志中的唯一Traceback来自旧PID621410的主动TERM，最终SignalException signal15，已对照上下文，不能当成新退出。以本次恢复初始化为边界扫描，未见新Traceback/OOM/Non-finite/Error/Aborted。
+- 恢复后10010–10500共50个每10步当步值全部有限：first_ce范围1.234879–1.359359、中位1.307179、末1.315523；residual_ce范围5.959869–6.064899、中位6.012993、末5.993888；grad_norm范围0.396307–0.561454、中位0.473285、末0.430976（clip前）。主干LR8.780193827e-5→8.651142368e-5、新参数2.634058148e-4→2.595342710e-4，恢复后按既定计划连续下降，未清空或改scheduler。
+- 动态batch/吞吐：frame填充94.5458%–99.6708%、中位98.3854%；token填充91.8972%–98.0056%、中位95.3333%；global samples291–410。step中位2.130537s、范围1.965201–19.647187s；音频秒/墙钟秒中位881.655、范围96.967–942.886；data_wait中位0.0002731s、范围0.0002150–0.0004573s。唯一>3s记录是10450的19.647187s，取批等待仅0.0002974s、loss/梯度有限；前10440为2.140936s、后10460为2.136809s，末10500为2.145701s。没有持续3点恶化证据，不能归因为供数或checkpoint（该步不是保存步），原因未定位，本轮未重启。恢复最初10010/10020为2.44/2.61s，随后稳定。rank0训练peak allocated最高56.9387GiB；上述为稀疏当步记录，不是包含暂停/初始化/评估的半小时平均。
+- Checkpoint/val：latest=step-00010500，COMPLETE时间02:24:07.077596 UTC；progress={step:10500,epoch:0,next_batch:10500}、world_size4、scheduler.last_epoch10500、LR8.651142368e-5/2.595342710e-4。10000/10500两COMPLETE签名逐项相等，各自四distributed分片约2.093GB、.metadata1424887字节、四rng各14613字节齐全；目录结构核查不等于本轮实际试加载10500。9500由训练器keep_checkpoints=2轮转，本轮未清理或编辑metadata。10500 val first/residual CE1.357246/6.007607，较10000的1.370062/6.024738下降；15码本CE均有限（3.798398–6.784663）。
+
+|最近完整10000步复评，每模式EN4/ZH4，greedy/min_new_frames=2|EN基础WER/CER|EN英语规范化WER/CER|ZH WER/CER|截断/零帧|
+|---|---|---|---|---|
+|speaker_only|0.444444/0.321678|0.472222/0.321678|1/0.345238|0/8、0/8|
+|icl|0.111111/0.076923|0.111111/0.076923|2.125/0.666667|1/8、0/8|
+
+- 完整评估核验：实读正式10000两summary、16条metrics/16WAV，全部24kHz单声道、有限、时长与metrics一致；目标ID/文本/speaker_reference_id/reference_text与9500一致，均记录修复后policy。与9500的旧策略口径有变化，不能把恢复直接归因于修复；10000原ICL sample04本来已有24帧，直接EOS干预证据仍是主会话9000同权重实验。两模式只有8条诊断，不代表全验证集质量，未试听。
+- 长ZH ICL sample03仍400帧/32s、目标6.28s、比5.09554、未EOS且截断；RMS0.01943356、peak0.291229、零比例63.0680%，最长零段[0,15.753625]秒。每4秒RMS约[0,0,0,0.016111,0.039917,0.026853,0.021148,0.000003525]。当前ASR为“丹主肃请。丹主肃! 京 Additional … 张晓敏 …”，WER3.25/CER1.083333。实读before-evaluation中旧10000同目标metrics，原ASR“止難地轉入內地 首上以年 …”、WER/CER1；逐文件SHA256确认两WAV相同。评分变化存在ASR重复运行差异，不能报告为EOS修复改变音频或模型质量进一步下降；两次ASR都不能忠实评价近静音。原始预测码重复、PCM16前近静音由主会话9000官方生成实验已复现，最短长度修复不解决该问题，本轮未重复加载模型。
+- 同目标speaker_only为94帧/7.52s/比1.19745、EOS、不截断；RMS0.0390152、零比例10.2061%、最长零段0.005375s，CER0.305556，历史多秒零段未复发但有替换及数字口径差异。ICL sample00有14帧/1.12s/WER0.25；sample04为24帧/1.92s/CER0.384615（繁简差异）；sample12为45帧/3.6s/比0.681818/CER0.344828，仍有尾部缺失/词替换。其余ICL EN sample02/05/06 WER0.0625/0/0.166667，短ZH sample01 CER0.333333。
+- speaker_only英语异常仍主要sample05：54帧/4.32s/目标1.62s、比2.66667，基础WER2.5/CER2.461538，英语规范化WER2.75；ASR“2BW terse, to push the terse to take a DDDB young.”，2BW拆分使两种WER不同。其余EN sample00/02/06 WER0.75/0.0625/0.166667；ZH sample04 CER0、sample01/12 CER0.5/0.517241。不能因时长正常即判内容恢复。
+- 10500评估进展：02:25:29 speaker_only sample00已29帧/2.32s、EOS、min2、WAV有限；基础WER0.75，英语规范化去除um后WER0.5。02:26:10 sample01 metrics新落盘，37帧/2.96s、目标0.98s、比3.0204、EOS，提示该短ZH本次变长，尚未据未完成评估下结论。02:26:29最终计数speaker_only2条、ICL0条、两summary均尚无，是刚开始的新一轮评估，不是文件丢失；不拼接10000结果构造10500汇总，也不等待整轮评估再结束本次巡检。
+- 资源（02:25附近）：GPU0–3总占用77519/77209/76023/77859 MiB（各81920），利用率0/100/100/100%，compute-apps仅本run四rank。生成评估期间单次rank0 GPU低利用率不足判停滞，metrics随后新增。主机已用237GiB、available1.7TiB、无swap，磁盘可用583227.98GiB。没有新OOM或资源短缺证据。
+- 判断/处理：保持代码、预算6000/9000、workers16/prefetch2、LR、训练进程及38539步目标。恢复、后续保存和val均通过现场核验，无证实需干预的运行故障。继续跟踪10500完整评估、ICL长近静音/截断、EN sample05及短ZH变长；慢步若复发再按连续证据诊断。当前10500/38539，final-verification.json不存在，未执行或宣称最终冻结验收。最终仍须38539 COMPLETE、最终val/双summary和包含speaker的冻结权重检查实际通过。
+- 命令/修改：cat/tail/ls读约定与状态，Python解析快照、train.log、/proc、checkpoint metadata/分片、统计finite和min/median/max、扫描恢复后错误、读取磁盘，nvidia-smi/free，soundfile/numpy读取WAV/零段，hashlib对照旧新同目标音频。一次寻找监督脚本的rg通配路径不存在返回2，不涉及训练错误；未据此修改配置。唯一人工写入为本段追加；未启停恢复/发信号、修改代码配置数据、创建timer/Codex/subagent、提交推送发消息或删除清理。本次巡检结束。
+
+
+## 2026-09-10 02:53 UTC 单次巡检：10990步，10500步ICL长中文本次恢复正常时长
+
+- 依据/进度：已读故障处置表、本文、manual、快照`supervision/20260910T025129Z.json`、最近巡检`20260910T022129Z.md`与status（上轮退出码0、固定session不变）。manual.active=false、主会话已观察至10170。上一现场10500/快照10440→本轮02:51:30快照10950→02:52:34现场10980→02:52:59最终采样10990。10500 checkpoint/val/双summary完整；最终采样时11000尚未到步，无对应产物不是故障。
+- 进程/退出：training-process.json PID5005/start_ticks84647923与/proc匹配，cmdline为项目torchrun、4 ranks、原config、--resume latest；launcher5004/start84647921/PPID1、四rank5030–5033/start84648072/PPID5005均存活。torchrun/launcher为S、rank为R，step持续增加。training-exit.json不存在；以10000恢复初始化为界扫描完整后续日志，无Traceback/OOM/Non-finite/Error/Aborted。快照仍收录旧主动TERM的Traceback，已在上轮核实为PID621410的历史退出，不当作当前异常。
+- 近半小时10450–10980共54个每10步当步值全部有限：first_ce范围1.250051–1.384805、中位1.303462；residual_ce范围5.927572–6.038371、中位5.994222；grad_norm范围0.389444–0.558983、中位0.462407（clip前）。主干LR8.664557344e-5→8.519585960e-5、新参数2.599367203e-4→2.555875788e-4，既定cosine连续下降。最终10990 first/residual CE1.270140/5.987254、grad0.477924、LR8.516792644e-5/2.555037793e-4，step2.204338s，均有限。
+- 动态batch/吞吐：上述54点帧填充94.9167%–99.7792%、中位98.0292%；token填充91.7694%–97.5306%、中位95.3069%；global samples297–385。step中位2.112482s、范围1.939990–19.647187s；音频秒/墙钟秒中位887.286、范围96.967–949.160；data_wait中位0.0002823s、范围0.0002345–0.0007438s。唯一>3s点仍是上轮已记录的10450慢步，不是新复发；后续无持续恶化。与上轮中位2.130537s/881.655音频秒每秒/等待0.0002731s接近。rank0训练peak allocated最高56.7562GiB，不代表各rank总占用；稀疏当步记录不能当作含评估的窗口平均。
+- Checkpoint/val：02:52:59 latest仍step-00010500，COMPLETE时间02:24:07.077596 UTC；progress={step:10500,epoch:0,next_batch:10500}、world_size4、scheduler.last_epoch10500、LR8.651142368e-5/2.595342710e-4。10000/10500签名相等，四distributed分片各约2.093GB、.metadata1424887字节、四rng各14613字节齐全；仅结构核查，未实际试加载。10500 val first/residual CE1.357246/6.007607，较10000的1.370062/6.024738下降，15码本CE有限（3.798398–6.784663）。本轮未清理checkpoint或改metadata。
+
+|10500步，每模式EN4/ZH4，greedy/min_new_frames=2|EN基础WER/CER|EN英语规范化WER/CER|ZH WER/CER|截断/零帧|
+|---|---|---|---|---|
+|speaker_only|0.277778/0.111888|0.250000/0.097902|1.125/0.559524|0/8、0/8|
+|icl|0.111111/0.055944|0.111111/0.055944|1.125/0.476190|0/8、0/8|
+
+- 评估核验：实读两summary、16条metrics/16WAV，全部24kHz单声道、有限、时长与metrics匹配；目标ID/文本/speaker_reference_id/reference_text与10000一致，均记录相同min2策略。10000→10500英语规范化WER speaker_only0.472222→0.25，ICL0.111111不变；ZH CER0.345238→0.559524、0.666667→0.476190。SO英语两口径差异由sample00的um在英语规范化中去除导致。每模式仅8条诊断，不据汇总波动改变超参，未试听。
+- 长ZH ICL sample03：从10000的400帧/32秒截断变为86帧/6.88s、目标6.28s、比1.09554、EOS、不截断。RMS0.0340204、peak0.277557、零比例11.8580%；最长连续零段位于开头[0,0.529667]秒，较上轮15.753625秒显著缩短；前4秒/后2.88秒RMS0.035887/0.031243。ASR“又騎了半個小時,現在是下午2點50,騎了大概10公里,先生與電量是80%”，CER0.611111，包含繁简/数字口径与实际词替换。未出现类似reference_text“最高时速只有二十四，比骑自行车还慢”的开头内容，但不据ASR证明绝无重复。9500也曾恢复而10000复发，故仅确认本次音频时长和能量改善，不宣布近静音根因已解决。
+- speaker_only同长ZH：89帧/7.12s/比1.13376、EOS、不截断，RMS0.0386415、零比例10.2499%、最长零段为末尾0.019625s；前4秒/后3.12秒RMS0.038837/0.038389，历史多秒零段未复发。ASR“客气的半个小时…气的大概十公里…现生域的电量百分之八十”，CER0.277778（10000为0.305556），仍有替换与缺词。
+- 上轮新见SO短ZH sample01异常已完整核验：37帧/2.96s，目标0.98s、比3.0204、EOS、不截断，RMS0.0637783、零比例14.4637%、最长零段0.200667s；ASR“脏血血的年轻后 随着久久久久久久久的温柳”，CER3，明显超长且评分含重复内容，不能只看EOS判正常。同目标ICL仍13帧/1.04s/CER0.5（組織/煮至及繁简差异），最长零段末尾0.197083s。配对未变、WAV可读，尚无直接实现故障证据；保留异常，后续11000核对是否持续，不据单句暂停训练。
+- SO EN sample05从10000的54帧/4.32s、基础WER2.5恢复为26帧/2.08s/比1.28395，ASR“TWA, Flanders Uni.”、WER0.75/CER0.153846；仍有专名与分词差异，但未见前轮长串错误内容。SO sample00/02/06基础WER0.75/0.0625/0.25，sample04/12 CER0.615385/0.379310；SO00规范化WER0.5。ICL sample00持续有19帧/1.52s/WER0.25；sample04有23帧/1.84s/比0.8/CER0.076923（坚实/坚持），未立即EOS；sample12为46帧/3.68s/比0.69697/CER0.482759，尾部仍不完整。ICL sample02/05/06 WER0/0.25/0.166667。两模式无零帧不等于所有内容正确。
+- 资源（02:52:34附近）：GPU0–3总占用77519/77211/76023/77859 MiB（各81920），利用率98/93/21/22%，compute-apps仅本run四rank。step持续推进，不由单次各rank利用率差判卡死。主机已用237GiB、available1.7TiB、无swap；磁盘可用583210.63GiB，无新OOM或资源短缺证据。
+- 判断/处理/未解决：保持训练代码、配置、预算6000/9000、workers16/prefetch2、LR与两个epoch38539步计划；训练供数正常，长ICL及SO英语异常本次部分改善，无证实需重启或修复实现的运行故障。长近静音历史反复、短ZH SO新超长及其他内容缺失仍须跟踪；主会话9000官方生成实验已证明近静音可在PCM16前出现，本轮不重复加载模型或自行改采样/惩罚策略。当前尚未完成训练，未执行最终冻结检查，final-verification.json不存在，未写passed=true；最终仍需38539 COMPLETE、最终val/双summary及include-speaker冻结检查实际通过。
+- 命令/修改/结果：cat/tail读约定、manual、快照和最新review/status；Python解析日志统计finite/min/median/max/慢步、扫描恢复后错误、核对/proc身份、checkpoint分片/metadata/signature、datetime/shutil.disk_usage；nvidia-smi GPU/compute-apps、free -h；soundfile/numpy读16WAV/metrics、核验配对/时长并测长ZH及短ZH连续零段；最终复核10990、latest、manual、退出/验收文件。全部成功；唯一人工写入为本段追加。未改代码/配置/数据、启停恢复或发信号、启动timer/Codex/subagent、提交推送发消息或删除清理。本次巡检结束。
+
+
+## 2026-09-10 03:24 UTC 单次巡检：11500步已保存验证，11000步长ICL连续两次无截断
+
+- 依据/进度：已读故障处置表、本文、manual、快照`supervision/20260910T032129Z.json`、最近巡检`20260910T025129Z.md`与status（上轮退出码0、固定session不变）。manual.active=false，主会话交接观察至10170。上一现场10990/快照10950→本轮03:21:30快照11470→03:23:49现场11500，03:24:07复核处于11500生成评估，metrics持续新增。11000 checkpoint/val/双summary完成；11500 checkpoint/val完成、生成尚在进行，不能当作卡死或缺失故障。
+- 进程/退出：training-process.json PID5005/start_ticks84647923与/proc匹配，cmdline为项目torchrun、4 ranks、原config、--resume latest；launcher5004/start84647921/PPID1、四rank5030–5033/start84648072/PPID5005均存活。launcher/torchrun为S、rank为R。training-exit.json不存在；以10000恢复初始化为界扫描后续完整日志，无Traceback/OOM/Non-finite/Error/Aborted。快照收录的旧Traceback仍为已记录的主动TERM历史，不代表当前进程出错。
+- 近半小时10960–11500共55个每10步当步值全部有限：first_ce范围1.243198–1.338702、中位1.291119、末1.329843；residual_ce范围5.927708–6.034699、中位5.976868、末5.974521；grad_norm范围0.389546–0.584246、中位0.464089、末0.525584（clip前）。主干LR8.525166246e-5→8.371575465e-5、新参数2.557549874e-4→2.511472640e-4，既定cosine连续下降。
+- 动态batch/吞吐：帧填充94.5167%–99.7542%、中位98.0125%；token填充91.6111%–97.8306%、中位95.2722%；global samples324–401。step范围1.981670–2.243841s、中位2.108031s；音频秒/墙钟秒830.005–936.138、中位889.630；data_wait范围0.0001405–0.0004789s、中位0.0002761s。记录无>3s慢步，旧10450慢步未复发；较上轮2.112482s/887.286音频秒每秒/等待0.0002823s相近，供数正常。rank0训练peak allocated最高56.8644GiB；这些是稀疏当步值，不是含评估的窗口均值。
+- Checkpoint/val：latest=step-00011500，COMPLETE时间03:22:19.358855 UTC；progress={step:11500,epoch:0,next_batch:11500}、world_size4、scheduler.last_epoch11500、LR8.371575465e-5/2.511472640e-4。11000/11500签名相等，每份四distributed分片各约2.093GB、.metadata1424887字节、四rng各14613字节齐全。仅结构核查，未实际试加载；10500由训练器keep_checkpoints=2轮转，本轮未清理或编辑metadata。11000 val first/residual CE1.346106/5.993912，11500进一步降至1.341276/5.979663；11500的15码本CE均有限（3.780324–6.756024）。
+
+|最近完整11000步，每模式EN4/ZH4，greedy/min_new_frames=2|EN基础WER/CER|EN英语规范化WER/CER|ZH WER/CER|截断/零帧|
+|---|---|---|---|---|
+|speaker_only|0.333333/0.181818|0.333333/0.181818|1.375/0.392857|0/8、0/8|
+|icl|0.138889/0.062937|0.138889/0.062937|1.125/0.333333|0/8、0/8|
+
+- 完整评估核验：实读11000两summary、16条metrics/16WAV，均24kHz单声道、有限、时长与metrics匹配；目标ID/文本/speaker_reference_id/reference_text与10500一致，生成policy相同。10500→11000英语规范化WER speaker_only0.25→0.333333、ICL0.111111→0.138889；ZH CER0.559524→0.392857、0.476190→0.333333。本轮两种英语口径相同。仅8条诊断，不据其波动推断全验证集质量或调超参，未试听。
+- 长ZH ICL sample03连续10500/11000两次无截断：88帧/7.04s、目标6.28s、比1.12102、EOS，RMS0.0339098、peak0.300507、零比例14.8550%，最长零段开头[0,0.361]秒（10500为0.529667秒）；前4秒/后3.04秒RMS0.032608/0.035550。ASR“又起了半个小时,现在是下午2点50,起了大概10公里,现在剩余的点量是80%”，CER0.361111，较10500的0.611111降低，但含繁简口径变化、数字写法以及起/骑、点/电等词差异。长零段本轮未复发；历史9500恢复后10000复发，仍不宣布根因解决。
+- speaker_only同长ZH为85帧/6.8s/比1.08280、EOS，不截断；RMS0.0381077、零比例7.2034%、最长零段0.003875s，前4秒/后2.8秒RMS0.040488/0.034423。CER0.333333（10500为0.277778），ASR有“最起/起”等替换和数字口径差异，时长/连续能量正常不等于内容完全正确。
+- 短ZH sample01上轮SO超长未延续：11000为13帧/1.04s/比1.06122，较10500的37帧/2.96s回到目标时长附近，RMS0.0711111、零比例21.1939%、最长零段0.207042s；ASR“早就來白色後”，CER0.666667，仍有内容错误但未见上轮长串重复。ICL同句12帧/0.96s/CER0.5（组织拿/煮至奶），最长尾部零段0.158167s。两模式配对未变，没有直接实现错误证据。
+- 英语问题仍集中少量目标：SO sample00仍29帧/2.32s/比1.28177，ASR“I that lamine and sparse spears.”、WER1.25/CER0.833333，较10500错误增多；SO sample05为26帧/2.08s、ASR“TWA, Flanders, SUNY.”、WER1/CER0.307692，未恢复10000那种超长但专名仍错。SO sample02 WER/CER0、sample06 WER0.25；sample04/12 CER0.538462/0.344828。SO12为64帧/5.12s/比0.96970，WER4受中英混合文本分词和插词影响，应同时看CER及ASR，不能单看ZH WER推断全面退化。
+- ICL sample00为16帧/1.28s/WER0.25，sample04为24帧/1.92s/CER0.153846（歇时/坚持），仍未立即EOS；sample12为46帧/3.68s/比0.69697/CER0.344828，尾部内容仍缺失或替换。ICL sample02/05/06 WER0/0.5/0.166667。无零帧与无截断不等于所有目标已恢复。
+- 11500评估进展：03:24:07复核speaker_only两条metrics、ICL零条、双summary尚无；SO00于03:23:31落盘22帧/1.76s/比0.97238、ASR“The liquid spears.”、WER0.25，相比11000明显改善；SO01于03:23:59落盘14帧/1.12s/比1.14286、CER0.666667，超长未再次出现。这两WAV均24kHz、有限、时长匹配，EOS、不截断、min2。新metrics说明评估持续推进；未把两条结果拼接旧summary，也未等待整轮评估后才结束本次巡检。
+- 资源（03:23:49附近）：GPU0–3总占用77519/77211/76025/77859 MiB（各81920），利用率0/100/100/100%，compute-apps仅本run四rank。生成评估阶段rank0瞬时低利用率且文件继续新增，不判停滞。主机已用237GiB、available1.7TiB、无swap；磁盘可用583265.45GiB，无新OOM或资源短缺证据。
+- 判断/处理/未解决：保持训练代码、配置、预算6000/9000、workers16/prefetch2、LR及两个epoch38539步计划；训练、供数、保存验证正常，生成部分异常改善，无证实需干预的运行故障。持续跟踪长ICL历史反复及SO00/05和其他内容缺失；主会话9000实验已证明PCM16前近静音可通过官方贪心生成复现，本轮不自行改解码策略或重复加载GPU模型。当前11500/38539，training-exit与final-verification均不存在，未执行或宣称最终冻结验收；最终仍需38539 COMPLETE、最终val/双summary及include-speaker冻结检查实际通过。
+- 命令/修改/结果：cat/tail读约定、manual、快照与最新review/status；Python解析完整日志统计finite/min/median/max/慢步、扫描恢复后错误、核对/proc身份、checkpoint分片/metadata/signature、datetime/shutil.disk_usage；nvidia-smi GPU/compute-apps、free -h；soundfile/numpy核验11000的16条metrics/WAV、配对/时长/长短ZH零段，并复核11500两条WAV/metrics和manual/latest/退出验收文件。全部成功；唯一人工写入为本段追加。未改代码/配置/数据、启停恢复或发信号、启动timer/Codex/subagent、提交推送发消息或删除清理。本次巡检结束。
+
+
+## 2026-09-10 03:53 UTC 单次巡检：12000步保存验证完成，11500步SO短英文内容异常复发
+
+- 依据/进度：已读故障处置表、本文、manual、快照`supervision/20260910T035129Z.json`、最近巡检`20260910T032129Z.md`与status（上轮退出码0、固定session不变）。manual.active=false，交接观察至10170。上一现场11500/快照11470→本轮03:51:29快照12000→03:52:42现场及03:53:01复核12000。当前处于生成评估，文件继续新增；11500双summary完整，12000 checkpoint/val完成，尚未完成的生成不当作停滞或缺失故障。
+- 进程/退出：training-process.json PID5005/start_ticks84647923与/proc精确一致，cmdline为项目torchrun、4 ranks、原config、--resume latest。launcher5004/start84647921/PPID1、四rank5030–5033/start84648072/PPID5005均存活，launcher/torchrun为S、rank为R。training-exit.json不存在；以10000恢复初始化为界扫描日志，无新Traceback/OOM/Non-finite/Error/Aborted。快照中的旧Traceback仍对应此前已记录的主动TERM，不能当成当前故障。
+- 近半小时11480–12000共53个每10步当步值全部有限：first_ce范围1.218950–1.378092、中位1.280091、末1.306826；residual_ce范围5.898612–6.026089、中位5.960677、末5.960677；grad_norm范围0.403036–0.525584、中位0.455410、末0.480992（clip前）。主干LR8.377370547e-5→8.224126458e-5、新参数2.513211164e-4→2.467237937e-4，按既定cosine连续下降。
+- 动态batch/吞吐：帧填充94.9958%–99.9625%、中位98.3833%；token填充91.6972%–97.5306%、中位95.5444%；global samples310–391。step范围2.008735–2.333160s、中位2.124192s；音频秒/墙钟秒819.455–927.865、中位889.066；data_wait范围0.0002332–0.0004798s、中位0.0002735s。无>3s记录，旧慢步未复发；与上轮2.108031s/889.630音频秒每秒/等待0.0002761s接近，无持续供数下降。rank0训练peak allocated最高57.3033GiB；以上为稀疏当步值，不是含评估的窗口均值或全部rank显存。
+- Checkpoint/val：latest=step-00012000，COMPLETE时间03:51:09.106357 UTC；progress={step:12000,epoch:0,next_batch:12000}、world_size4、scheduler.last_epoch12000、LR8.224126458e-5/2.467237937e-4。11500/12000签名相等，各自四distributed分片约2.093GB、.metadata1424887字节、四rng各14613字节齐全；结构核验不等于本轮实际恢复加载。11000由训练器keep_checkpoints=2轮转，本巡检未清理或编辑metadata。12000 val first/residual CE1.337219/5.965698，较11500的1.341276/5.979663下降，15码本CE有限（3.773642–6.738522）。
+
+|最近完整11500步，每模式EN4/ZH4，greedy/min_new_frames=2|EN基础WER/CER|EN英语规范化WER/CER|ZH WER/CER|截断/零帧|
+|---|---|---|---|---|
+|speaker_only|0.388889/0.300699|0.388889/0.300699|1.125/0.547619|0/8、0/8|
+|icl|0.194444/0.118881|0.194444/0.118881|1/0.428571|0/8、0/8|
+
+- 评估核验：实读11500两summary、16条metrics/16WAV，均24kHz单声道、有限、时长与metrics一致；目标ID/文本/speaker_reference_id/reference_text与11000一致，policy相同。本轮两种英语口径相同。11000→11500 EN WER speaker_only0.333333→0.388889、ICL0.138889→0.194444；ZH CER0.392857→0.547619、0.333333→0.428571。8条诊断不足判断全验证集退化，逐句归因如下；未试听。
+- 长ZH ICL sample03连续10500/11000/11500三次无截断：87帧/6.96s、目标6.28s、比1.10828、EOS，RMS0.0346063、peak0.215698、零比例15.7549%，最长连续零段开头[0,0.446708]秒（上轮0.361秒），前4秒/后2.96秒RMS0.036008/0.032617。ASR“又起了半個小時,現在是下午2點50 起了大概10公里,先剩餘的電量是80%”，CER0.555556，包含繁简/数字口径及同音替换和缺词。未复发多秒零段；仍不据三次恢复宣布历史近静音根因消失。
+- speaker_only同目标82帧/6.56s/比1.04459、EOS、不截断；RMS0.0393162、零比例13.6782%、最长零段0.019583s，前4秒/后2.56秒RMS0.038719/0.040232，连续能量正常。ASR“最起的半個小時,先是下午2點50,起的大概10公里,先剩許電量是80%”，CER0.694444，较11000的0.333333升高，含繁简、数字变化及替换/遗漏；不能仅凭正常时长判内容恢复。
+- SO EN sample05内容异常复发：38帧/3.04s、目标1.62s、比1.87654，EOS、不截断；ASR“to bear to purse bouquet that it cage you with.”、WER2.5/CER2.461538，RMS0.0624154、零比例0.1014%、最长零段0.0000833s，明显内容错误并非长零段。10000也曾4.32s/WER2.5，10500/11000曾回到2.08s及专名近似输出；本次重新变长。目标/参考配对未变，同目标ICL仍21帧/1.68s、ASR“W. Flanders, uni.”、WER0.5/CER0.153846，未见同样长串内容。已扩大至两模式同目标和波形对照，但没有证实可直接修复的配对、裁剪或音频写出错误；保留异常，后续12000核对，不据此改LR或解码策略。
+- SO sample00维持上轮已见改善：22帧/1.76s、WER0.25；sample02为58帧/4.64s、WER/CER0，sample06为48帧/3.84s、WER0.25。短ZH sample01为14帧/1.12s/比1.14286、CER0.666667，最长尾部零段0.171792s，10500超长未复发；ICL同句13帧/1.04s/CER0.333333、最长尾部零段0.214208s。SO sample04/12 CER0.538462/0.344828；sample12缩短至49帧/3.92s/比0.74242，尾部仍缺失。ICL sample00为17帧/1.36s/WER0.25；sample04为25帧/2s/CER0.384615，未立即EOS；sample12为42帧/3.36s/比0.63636/CER0.310345，虽CER降低但时长更短，不能视为内容完整。ICL sample02/06 WER0.125/0.166667（sample02末尾you know变为yeah，sample06专名和swamp仍错）。
+- 12000现场评估：03:53:01 speaker_only两条metrics、ICL零条、两summary均尚无。SO00于03:52:21落盘24帧/1.92s/WER0.5，SO01于03:52:49落盘12帧/0.96s/CER0.666667；两WAV均24kHz、有限、时长匹配、EOS、不截断、min2。快照时四GPU利用率0%发生在刚完成保存的时间点；之后rank1–3为100%、metrics不断新增，排除仅据快照判卡死。未拼接部分结果构造新summary，也未等待完整评估后才结束巡检。
+- 资源（03:52:42附近）：GPU0–3占用77519/77211/76025/77859 MiB（各81920），利用率0/100/100/100%，compute-apps仅本run四rank。主机已用238GiB、available1.7TiB、无swap，磁盘可用583202.25GiB；无新OOM或资源短缺证据。
+- 判断/处理/未解决：保持训练代码、配置、预算6000/9000、workers16/prefetch2、LR与两个epoch38539步目标。训练、供数、保存验证正常，未证实需启停或修复实现的运行故障。继续跟踪长ICL历史近静音反复、SO05再次超长和其他内容缺失；主会话9000实验已补充官方贪心生成可复现PCM16前近静音的证据，本轮未重复加载GPU模型。当前12000/38539，退出及final-verification文件均不存在；未执行最终冻结检查、未写passed=true，最终仍须38539 COMPLETE、最终val/双summary和include-speaker冻结检查实际通过。
+- 命令/修改/结果：cat/tail读约定、manual、快照与最近review/status；Python解析日志统计finite/min/median/max/慢步、扫描恢复后错误、核对/proc身份、checkpoint分片/metadata/signature、datetime/shutil.disk_usage；nvidia-smi GPU/compute-apps、free -h；soundfile/numpy核验11500的16条metrics/WAV、配对/时长及长ZH/短ZH/EN05零段，并复核12000两条metrics/WAV、manual/latest和退出验收文件。全部成功；唯一人工写入为本段追加。未改代码/配置/数据、启停恢复或发信号、启动timer/Codex/subagent、提交推送发消息或删除清理。本次巡检结束。
+
+
+## 2026-09-10 04:23 UTC 单次巡检：12500步保存验证完成，12000步长ICL连续四次无截断
+
+- 依据/进度：已读故障处置表、本文、manual、快照`supervision/20260910T042129Z.json`、最近巡检`20260910T035129Z.md`和status（上轮退出码0、固定session不变）。manual.active=false、交接观察至10170。上一现场/快照12000→本轮04:21:29快照12500→04:22:34现场及04:22:52复核12500，正在生成评估，metrics持续新增。12000双summary完整，12500 checkpoint/val已完成，不能将评估时step不变当作卡死。
+- 进程/退出：training-process.json PID5005/start_ticks84647923与/proc匹配，cmdline为项目torchrun、4 ranks、原config、--resume latest；launcher5004/start84647921/PPID1、四rank5030–5033/start84648072/PPID5005均存活，launcher/torchrun为S、rank为R。training-exit.json不存在；以10000恢复初始化为界扫描日志，无新Traceback/OOM/Non-finite/Error/Aborted。快照旧Traceback是已记录的主动TERM历史，不是本次新错误。
+- 近半小时12010–12500共50个每10步当步值全部有限：first_ce范围1.210874–1.346308、中位1.282574、末1.210874；residual_ce范围5.903436–5.992973、中位5.951023、末5.922611；grad_norm范围0.397385–0.508671、中位0.436212、末0.443391（clip前）。主干LR8.221127958e-5→8.071908330e-5、新参数2.466338387e-4→2.421572499e-4，按既定cosine连续下降。
+- 动态batch/吞吐：帧填充94.4833%–99.8333%、中位98.0625%；token填充91.6333%–97.5500%、中位95.0736%；global samples309–394。step范围1.985113–2.260113s、中位2.118143s；音频秒/墙钟秒839.289–940.866、中位884.230；data_wait范围0.0002192–0.0005910s、中位0.0002691s。无>3s慢步，与上轮2.124192s/889.066音频秒每秒/等待0.0002735s相近，无持续供数恶化。rank0训练peak allocated最高56.6604GiB；以上为稀疏当步值，不代表含评估的窗口均值或全部rank峰值。
+- Checkpoint/val：latest=step-00012500，COMPLETE时间04:20:09.267095 UTC；progress={step:12500,epoch:0,next_batch:12500}、world_size4、scheduler.last_epoch12500、LR8.071908330e-5/2.421572499e-4。12000/12500签名逐项相等，各自四distributed分片约2.093GB、.metadata1424887字节、四rng各14613字节齐全；结构核查不等于本轮实际试加载。11500由训练器keep_checkpoints=2轮转，本轮未清理或编辑metadata。12500 val first/residual CE1.330940/5.950863，较12000的1.337219/5.965698下降，15码本CE均有限（3.761661–6.721716）。
+
+|最近完整12000步，每模式EN4/ZH4，greedy/min_new_frames=2|EN基础WER/CER|EN英语规范化WER/CER|ZH WER/CER|截断/零帧|
+|---|---|---|---|---|
+|speaker_only|0.388889/0.174825|0.388889/0.174825|1.25/0.428571|0/8、0/8|
+|icl|0.166667/0.048951|0.166667/0.048951|1/0.547619|0/8、0/8|
+
+- 评估核验：实读12000两summary、16条metrics/16WAV，均24kHz单声道、有限、时长与metrics匹配；目标ID/文本/speaker_reference_id/reference_text与11500一致，policy相同。本轮两种英语口径相同。11500→12000 EN WER speaker_only0.388889不变、ICL0.194444→0.166667，SO EN CER0.300699→0.174825；ZH CER0.547619→0.428571、0.428571→0.547619。每模式只有8条诊断，汇总包含繁简、数字、分词及实际错词影响，不能据此推断整体退化或调超参；未试听。
+- 长ZH ICL sample03连续10500–12000四次不截断：88帧/7.04s、目标6.28s、比1.12102、EOS，RMS0.0378150、peak0.275482、零比例14.6982%，最长连续零段开头[0,0.510042]秒（11500为0.446708秒），前4秒/后3.04秒RMS0.035458/0.040709。ASR“又起了半個小時,現在是下午2點50,起了大概11公里,現在剩餘的電量是80%”，CER0.527778，有繁简/数字口径差异及起/骑、11/十等实际错误。多秒零段未复发，但不宣布历史根因已消失。
+- speaker_only同目标89帧/7.12s/比1.13376、EOS、不截断，RMS0.0396150、零比例11.7609%、最长尾部零段0.031458s，前4秒/后3.12秒RMS0.038208/0.041349；CER0.5，ASR有“起/五时”等替换和繁简/数字差异。时长与连续能量正常不等于内容完全正确。
+- SO EN sample05连续11500/12000两次明显内容错误：本轮29帧/2.32s、目标1.62s、比1.43210，较上轮3.04s缩短；ASR“t-bed tech at the Fly in the Suny.”、WER2.25/CER1.307692（上轮2.5/2.461538），RMS0.0721389、零比例0.1221%、最长零段0.0000833s，不是长静音。不能把时长/CER下降写成恢复。同目标ICL仍21帧/1.68s，ASR“WA Flanders Uni”、WER0.75/CER0.076923，WER升高包含WA与W A分词差异，内容比SO接近。两模式配对一致，未确认可修复的输入、裁剪或写WAV错误；保留复发记录，待12500完整结果验证是否持续，未自行改解码策略。
+- 短ZH SO sample01为12帧/0.96s/CER0.666667，最长零段0.030750s；ICL同句13帧/1.04s、ASR“煮至奶白色後”、CER0.166667，仅后/後口径差异，最长零段0.023917s。旧超长未复发。SO sample00/02/06 WER0.5/0/0.25；sample04/12 CER0.615385/0.206897，sample12为50帧/4s/比0.75758、ASR尾部“videos videos”，仍有词/语气缺失，WER3受中英混合分词影响。ICL sample00为16帧/1.28s/WER0.5（Lilliquid），sample04为24帧/1.92s/CER0.538462（缺词及繁简），未立即EOS；sample12为46帧/3.68s/比0.69697，ASR“相信你跟師傅都看過我寄給你們的捐威尿”、CER0.655172，末段明显错/缺，不能把中文汇总变化全部解释成繁简。ICL sample02/06 WER0/0.083333，后者仍有Jeffreeze专名差异。
+- 12500评估现场：04:22:52 speaker_only三条metrics、ICL零条、两summary尚无；SO00于04:21:33落盘23帧/1.84s/WER0.5，SO01于04:22:02落盘14帧/1.12s/CER0.833333，SO02于04:22:49落盘58帧/4.64s/WER0.1875（末尾yeah you know变为Yay）。三WAV均24kHz、有限、时长匹配、EOS、不截断、min2。文件持续新增证明当前评估推进，未拼接部分结果构造summary，也未等待整轮评估结束。
+- 资源（04:22:34附近）：GPU0–3占用77519/77211/76025/77859 MiB（各81920），利用率0/100/100/100%，compute-apps仅本run四rank；生成评估时rank0瞬时低利用率且文件持续更新，不判卡死。主机已用238GiB、available1.7TiB、无swap，磁盘可用583155.04GiB，无新OOM或资源短缺证据。
+- 判断/处理/未解决：保持训练代码、配置、预算6000/9000、workers16/prefetch2、LR和两个epoch38539步目标。训练供数、保存验证正常，没有证实需启停或修复实现的运行故障。继续跟踪SO05连续内容异常、ICL12末段缺失及长ICL历史近静音；主会话9000官方贪心生成复现PCM16前近静音的证据仍有效，本轮未重复加载模型或改采样/惩罚策略。当前12500/38539，退出及final-verification文件不存在；未执行最终冻结检查、未写passed=true，最终仍需38539 COMPLETE、最终val/双summary与include-speaker冻结检查实际通过。
+- 命令/修改/结果：cat/tail读约定、manual、快照与最近review/status；Python解析日志作finite/min/median/max/慢步及恢复后错误扫描，核对/proc身份、checkpoint分片/metadata/signature、datetime/shutil.disk_usage；nvidia-smi GPU/compute-apps、free -h；soundfile/numpy核验12000的16条metrics/WAV、配对/时长及长ZH/短ZH/EN05零段，最后复核12500三条metrics/WAV、manual/latest、退出验收文件。全部成功；唯一人工写入为本段追加。未改代码/配置/数据、启停恢复或发信号、启动timer/Codex/subagent、提交推送发消息或删除清理。本次巡检结束。
+
+
+## 2026-09-10 04:53 UTC 单次巡检：13000步保存验证完成，12500步SO短英文异常部分改善
+
+- 依据/进度：已读故障处置表、本文、manual、快照`supervision/20260910T045129Z.json`、最近巡检`20260910T042129Z.md`及status（上轮退出码0、固定session不变）。manual.active=false，交接观察至10170。上一现场/快照12500→本轮04:51:29快照13000→04:52:36现场及04:52:59复核13000，当前生成评估持续落盘。12500双summary完整；13000 checkpoint/val完成，不能把评估中step不变判为卡死。
+- 进程/退出：training-process.json PID5005/start_ticks84647923与/proc精确一致，cmdline为项目torchrun、4 ranks、原config、--resume latest；launcher5004/start84647921/PPID1、四rank5030–5033/start84648072/PPID5005均存活。launcher/torchrun为S、rank为R。training-exit.json不存在；以10000恢复初始化为界扫描后续日志，无新Traceback/OOM/Non-finite/Error/Aborted；快照收录的旧Traceback仍为此前主动TERM历史。
+- 近半小时12510–13000共50个每10步当步值全部有限：first_ce范围1.181593–1.309338、中位1.267505、末1.260264；residual_ce范围5.879136–5.979296、中位5.923925、末5.929438；grad_norm范围0.381394–0.559982、中位0.443423、末0.437677（clip前）。主干LR8.068817139e-5→7.915187570e-5、新参数2.420645142e-4→2.374556271e-4，既定cosine连续下降。
+- 动态batch/吞吐：帧填充95.0542%–99.7292%、中位98.4979%；token填充91.9778%–98.6444%、中位95.5347%；global samples318–417。step范围2.004859–2.296896s、中位2.127734s；音频秒/墙钟秒823.964–945.782、中位887.031；data_wait范围0.0002253–0.0005118s、中位0.0002746s。无>3s慢步，与上轮2.118143s/884.230音频秒每秒/等待0.0002691s相近，供数稳定。rank0训练peak allocated最高56.9690GiB；以上为稀疏当步记录，不是含评估的窗口平均或全部rank峰值。
+- Checkpoint/val：latest=step-00013000，COMPLETE时间04:49:11.050575 UTC；progress={step:13000,epoch:0,next_batch:13000}、world_size4、scheduler.last_epoch13000、LR7.915187570e-5/2.374556271e-4。12500/13000签名相等，每份四distributed分片约2.093GB、.metadata1424887字节、四rng各14613字节齐全；仅结构核查，未实际试加载。12000由训练器keep_checkpoints=2轮转，本轮未清理或编辑metadata。13000 val first/residual CE1.325073/5.939527，较12500的1.330940/5.950863下降，15码本CE有限（3.755999–6.706539）。
+
+|最近完整12500步，每模式EN4/ZH4，greedy/min_new_frames=2|EN基础WER/CER|EN英语规范化WER/CER|ZH WER/CER|截断/零帧|
+|---|---|---|---|---|
+|speaker_only|0.305556/0.174825|0.305556/0.174825|1/0.547619|0/8、0/8|
+|icl|0.166667/0.062937|0.166667/0.062937|1/0.273810|0/8、0/8|
+
+- 评估核验：实读12500两summary、16条metrics/16WAV，均24kHz单声道、有限、时长与metrics匹配；目标ID/文本/speaker_reference_id/reference_text与12000一致，policy相同。本轮英语两口径相同。12000→12500 EN WER speaker_only0.388889→0.305556、ICL0.166667不变；ZH CER0.428571→0.547619、0.547619→0.273810。只有8条诊断，不能据汇总推断全验证质量或调整超参；未试听。
+- 长ZH ICL sample03连续10500–12500五次不截断：86帧/6.88s、目标6.28s、比1.09554、EOS；RMS0.0377514、peak0.311584、零比例12.5164%，最长连续零段开头[0,0.514208]秒，与12000的0.510042秒相近；前4秒/后2.88秒RMS0.037054/0.038699。ASR“又起了半小小时,现在是下午两点五时,起了大概十公里,现在剩余的电量是百分之八十。”，CER0.111111，较上轮0.527778降低，既有简体/汉字数字口径改善，也有实际少量起/骑、小字重复、五时/五十差异。历史多秒零段未复发，但不据此声称根因消失。
+- speaker_only同目标82帧/6.56s/比1.04459、EOS、不截断，RMS0.0376958、零比例8.8097%、最长零段0.009667s，前4秒/后2.56秒RMS0.038545/0.036329。ASR“就起了半小時限時下午2點50,起了大概10公里,現在剩餘的電量是80%”，CER0.611111，仍有替换/缺失和繁简/数字差异，时长及连续能量正常不等于内容正确。
+- SO EN sample05本次部分改善：25帧/2s、目标1.62s、比1.23457，较12000的2.32s缩短；ASR“Tita pay Flanders uni.”、WER0.75/CER0.538462，较上轮2.25/1.307692改善，RMS0.0698573、零比例0.1271%、最长零段0.000125s。没有上一轮长串错误，但仍明显偏离W.A. Flinders Uni.，不能称完全恢复。ICL同目标20帧/1.6s、ASR“WF Flanders, uni”、WER0.75/CER0.153846，含首字母和专名/分词差异。配对保持一致，本轮未确认需修改输入或生成实现的直接证据。
+- 短ZH SO sample01为14帧/1.12s/CER0.833333，最长零段0.000792s；ICL同句12帧/0.96s/CER0.333333（阻止/煮至），最长尾部零段0.166083s。旧超长未复发。SO sample00/02/06 WER0.5/0.1875/0.25，sample02末尾yeah you know变为Yay；SO sample04/12 CER0.615385/0.379310，sample12缩至46帧/3.68s/比0.69697，末段仍缺失。ICL sample00为18帧/1.44s/WER0.25；sample04为24帧/1.92s/CER0.461538（先迟/坚持及繁简），未立即EOS；sample12为43帧/3.44s/比0.65152、ASR“相信你跟师父都看过我寄给你们的绝位 videos”、CER0.379310，较上轮0.655172降低但仍缩短且缺尾部。ICL sample02/06 WER0/0.166667。
+- 额外波形边界核验：12500 SO sample02峰值恰为1，进一步用int16计数：111360个采样中仅1个为-32768、无32767、最长连续边界点1个（1/24000秒）。该点不足以证明持续削波或解释末尾内容缺失；未改幅度或重新写WAV，保留现有产物。
+- 13000评估进展：04:52:59 SO四条metrics、ICL零条、两summary尚无；SO00/01/02/03分别于04:50:25、04:50:55、04:51:38、04:52:32落盘，24kHz、有限、时长匹配、EOS、不截断。依次为27帧/2.16s/WER0.75、14帧/1.12s/CER0.5、53帧/4.24s/WER0、82帧/6.56s/CER0.583333。新文件证明生成持续推进；未拼接部分结果构造summary或等待整轮结束。
+- 资源（04:52:36附近）：GPU0–3占用77519/77211/76025/77861 MiB（各81920），利用率72/26/52/57%，compute-apps仅本run四rank。主机已用238GiB、available1.7TiB、无swap；磁盘可用583047.69GiB，无新OOM或资源短缺证据。
+- 判断/处理/未解决：保持训练代码、配置、预算6000/9000、workers16/prefetch2、LR及两个epoch38539步目标。训练供数、保存验证正常，部分生成异常改善，未证实需启停或修复实现的运行故障。继续跟踪SO05反复、ICL12末段缺失与长ICL历史近静音；主会话9000官方贪心生成复现PCM16前近静音的证据仍有效，本轮未重复加载模型或自行改解码策略。当前13000/38539，退出及final-verification文件不存在；未执行最终冻结检查、未写passed=true，最终仍需38539 COMPLETE、最终val/双summary和include-speaker冻结检查实际通过。
+- 命令/修改/结果：cat/tail读约定、manual、快照、最近review/status；Python解析日志统计finite/min/median/max/慢步及恢复后错误，核对/proc身份、checkpoint分片/metadata/signature、datetime/shutil.disk_usage；nvidia-smi GPU/compute-apps、free -h；soundfile/numpy核验12500的16条metrics/WAV、配对/时长/长ZH短ZH和EN05零段、SO02 int16边界点，并复核13000四条metrics/WAV与manual/latest/退出验收文件。全部成功；唯一人工写入为本段追加。未改代码/配置/数据、启停恢复或发信号、启动timer/Codex/subagent、提交推送发消息或删除清理。本次巡检结束。
+
+
+## 2026-09-10 05:24 UTC 单次巡检：13500步运行正常，13000步出现短英文重复与ICL最短长度后EOS
+
+- 依据/进度：已读故障处置表、本文、manual、快照`supervision/20260910T052129Z.json`、最近巡检`20260910T045129Z.md`及status（上轮退出码0、固定session不变）。manual.active=false、交接观察至10170。上一现场/快照13000→本轮05:21:30快照13500→05:23:07现场13500；05:23:57仍13500但SO评估已新增到六条。13000双summary完整，13500 checkpoint/val完成、生成评估进行中，不判停滞。
+- 进程/退出：training-process.json PID5005/start_ticks84647923与/proc匹配，cmdline为项目torchrun、4 ranks、原config、--resume latest。launcher5004/start84647921/PPID1、四rank5030–5033/start84648072/PPID5005均存活，launcher/torchrun为S、rank为R。training-exit.json不存在；以10000恢复初始化为界扫描后续日志，无新Traceback/OOM/Non-finite/Error/Aborted。快照旧Traceback是此前主动TERM记录，不是本次故障。
+- 近半小时13010–13500共50个每10步当步值全部有限：first_ce范围1.185244–1.325296、中位1.252684、末1.244649；residual_ce范围5.871644–5.949180、中位5.914920、末5.903801；grad_norm范围0.371320–0.526097、中位0.434343、末0.434240（clip前）。主干LR7.912009100e-5→7.754238549e-5、新参数2.373602730e-4→2.326271565e-4，既定cosine连续下降。
+- 动态batch/吞吐：帧填充94.4417%–99.9208%、中位98.1438%；token填充91.1861%–97.8361%、中位95.3833%；global samples305–403。step范围1.951762–2.235470s、中位2.116134s；音频秒/墙钟秒818.867–958.560、中位890.643；data_wait范围0.0002453–0.0005308s、中位0.0002751s。无>3s慢步，与上轮2.127734s/887.031音频秒每秒/等待0.0002746s相近，无持续供数恶化。rank0训练peak allocated最高57.0376GiB；以上是稀疏当步值，不是含评估的窗口平均或全部rank峰值。
+- Checkpoint/val：latest=step-00013500，COMPLETE时间05:18:41.171224 UTC；progress={step:13500,epoch:0,next_batch:13500}、world_size4、scheduler.last_epoch13500、LR7.754238549e-5/2.326271565e-4。13000/13500签名相等，各自四distributed分片约2.093GB、.metadata1424887字节、四rng各14613字节齐全；仅结构核查，未实际试加载。12500由训练器keep_checkpoints=2轮转，本巡检未清理或编辑metadata。13500 val first/residual CE1.316129/5.922186，较13000的1.325073/5.939527下降，15码本CE有限（3.742644–6.687010）。
+
+|最近完整13000步，每模式EN4/ZH4，greedy/min_new_frames=2|EN基础WER/CER|EN英语规范化WER/CER|ZH WER/CER|截断/零帧/仅2帧|
+|---|---|---|---|---|
+|speaker_only|0.805556/0.706294|0.833333/0.706294|1.125/0.523810|0/8、0/8、0/8|
+|icl|0.083333/0.048951|0.083333/0.048951|1/0.595238|0/8、0/8、1/8|
+
+- 评估核验：实读13000两summary、16条metrics/16WAV，全部24kHz单声道、有限、时长匹配；目标ID/文本/speaker_reference_id/reference_text与12500一致、policy相同。SO英语规范化WER较基础值多1/36，来自sample00基础WER0.75→规范化1（ASR含didn't）；SO sample05两口径相同。12500→13000 SO EN规范化WER0.305556→0.833333，主要受单条大量插词拖累；ICL EN WER0.166667→0.083333，ZH CER0.273810→0.595238。每模式8条不足以判断整体退化，不能由汇总直接改训练超参；未试听。
+- SO EN sample05显著复发：108帧/8.64s、目标1.62s、比5.33333，最终EOS、不截断；ASR“Ti da brutte tā EMBUM dadi dadi … da ליis shetime”，大量重复，WER5.75/CER6.538462（23词错误、85字符错误）。RMS0.0620383、peak0.337646、零比例0.07282%、最长零段0.0000833s，前4秒/次4秒/末0.64秒RMS0.066125/0.059038/0.053345，属于有能量的长重复，不能解释成近静音或正常停止。12500刚缩短到2秒，本次再次增长，说明恢复有反复。同目标ICL为22帧/1.76s、ASR“W.A. Flinders-Uni”、WER/CER0，配对一致。未保存本次预测codec序列，现有波形/ASR尚不足以确认重复预测的具体机制。
+- ICL ZH sample04过早结束复发：仅2帧/0.16s、目标2.3s、比0.069565，随后EOS、不截断，RMS3.0374e-5、peak0.0001831、零比例73.0469%，是近静音短输出。ASR“字幕by索兰娅”、WER/CER1，不能将其视为生成了有效目标语音。该输出满足min_new_frames=2的下界，却没有有效完成内容；零帧计数为0不能掩盖异常。与修复前立即EOS不同，当前证据不指向EOS屏蔽规则失效，不自行继续提高最短长度。12500同句24帧/1.92s，本次明显退化；13500 ICL尚未开始，后续必须跟踪该目标。
+- 为上述两异常扩展输入核验：实读当前val清单并按目标ID定位，speaker.py确认tar参考走decode_emilia_audio，本轮CPU解码实际参考源而非只检查名义缓存路径。EN05目标emilia2:4318cc5dac2cbeca_599_000为24kHz/1.62s、RMS0.0773468、peak0.624962；参考_429_001为4.16s、RMS0.0694285、peak0.729818。ZH04目标emilia2:8fa50bd7ff55f0d6_2827_000为24kHz/2.3s、RMS0.0771031、peak0.494960；参考_2543_000为1.49s、RMS0.1042421、peak0.450368。四音频均有限且非空，两参考精确零比例0；未materialize或改写缓存。EN05原目标reference_asr为“W.A. Flinders-Uni”、WER/CER0，ZH04原目标ASR内容与文本对应、CER0.384615仅繁简差异。没有支持输入损坏、空参考或错误目标配对的证据；这不等于已复现模型生成根因。
+- 长ZH ICL sample03连续10500–13000六次不截断：82帧/6.56s、目标6.28s、比1.04459、EOS，RMS0.0345933、零比例11.4914%、最长开头零段0.53075s（上轮0.514208s），前4秒/后2.56秒RMS0.033642/0.036029。CER0.527778，较12500的0.111111升高含繁简及数字口径变化，也有起/骑等替换；多秒零段未复发。SO同句82帧/6.56s，RMS0.0385873、零比例8.4057%、最长零段0.017167s，CER0.583333；时长与能量正常不等于内容正确。
+- 其余样本：SO00 27帧/2.16s、ASR“I didn't know the liquid spears.”，有多余词；SO02 WER0，SO06 WER0.25，短ZH01 14帧/1.12s/CER0.5、旧超长未复发；SO04 CER0.307692、SO12 62帧/4.96s/比0.93939/CER0.551724，时长接近目标但末段仍错。ICL00 19帧/1.52s/WER0.25、01 13帧/1.04s/CER0.333333、02 WER0、06 WER0.166667；ICL12 42帧/3.36s/比0.63636/CER0.551724，仍有尾部缺失和替换。
+- 13500现场进展：05:23:57 SO六条metrics、ICL零条、两summary尚无。SO00/01/02/03/04/05落盘时间分别05:19:59、05:20:28、05:21:12、05:22:08、05:22:42、05:23:16，证明生成持续推进。SO05已缩至24帧/1.92s，ASR“Too bad you find us uni.”、WER1.25/CER0.846154，长重复本次未出现，但仍错；SO00为31帧/2.48s/WER2（多词），短ZH01仍14帧/1.12s/CER1.166667（内容错但未超长）；SO02 WER0，03/04 CER0.527778/0.615385。此处为metrics检查，未重新读取13500六WAV或构造不完整summary，不等待整轮结束。
+- 资源（05:23:07附近）：GPU0–3占用77519/77211/76025/77861 MiB（各81920），利用率0/100/100/100%，compute-apps仅本run四rank；rank0瞬时低利用率与生成阶段相符且文件持续新增，不判卡死。主机已用238GiB、available1.7TiB、无swap；磁盘可用582963.59GiB，无新OOM或资源短缺证据。
+- 判断/处理/未解决：保持训练代码、配置、预算6000/9000、workers16/prefetch2、LR与两个epoch38539步目标。训练供数、保存验证正常，质量异常已逐项记录并扩展到实际输入读取，尚未证实可直接修复的实现/数据故障；不靠增加最短生成长度或改LR掩盖问题。后续优先核对13500 ICL04是否仍只生成下界帧数，并继续跟踪SO05/00重复、ICL12尾部缺失。原始生成codec/logits尚缺，若这些异常持续，需要同checkpoint生成诊断才能选择干预；本轮未另载GPU模型或打断训练。当前13500/38539，退出及final-verification文件不存在，未执行最终冻结检查、未写passed=true；最终仍须38539 COMPLETE、最终val/双summary和include-speaker冻结检查实际通过。
+- 命令/修改/结果：cat/tail读约定、manual、快照/最近review/status；Python解析完整日志统计finite/min/median/max/慢步及恢复后错误，核对/proc身份、checkpoint分片/metadata/signature、datetime/shutil.disk_usage；nvidia-smi/free；soundfile/numpy读13000的16metrics/WAV，比较配对/时长与长ZH/短ZH/EN05零段；rg/sed读sources.py/speaker.py及config，CPU decode_emilia_audio核验EN05/ZH04实际tar参考与目标音频；最后读13500六metrics、manual/退出验收文件。全部成功；唯一人工写入为本段追加。未改代码/配置/数据、启停恢复或发信号、启动timer/Codex/subagent、提交推送发消息或删除清理。本次巡检结束。
+
+
+## 2026-09-10 05:53 UTC 单次巡检：14000步保存验证完成，13500步两帧近静音从ICL中文转到英文目标
+
+- 依据/进度：已读故障处置表、本文、manual、快照`supervision/20260910T055129Z.json`、最近巡检`20260910T052129Z.md`及status（上轮退出码0、固定session不变）。manual.active=false，交接观察至10170。上一现场/快照13500→本轮05:51:30快照14000→05:52:35现场及05:52:54复核14000，当前生成评估持续落盘。13500双summary完整；14000 checkpoint/val完成，生成阶段step不变不是停滞。
+- 进程/退出：training-process.json PID5005/start_ticks84647923与/proc匹配，cmdline为项目torchrun、4 ranks、原config、--resume latest；launcher5004/start84647921/PPID1、四rank5030–5033/start84648072/PPID5005均存活，launcher/torchrun为S、rank为R。training-exit.json不存在；以10000恢复初始化为界扫描日志，无新Traceback/OOM/Non-finite/Error/Aborted；快照旧Traceback仍为已记录的主动TERM历史。
+- 近半小时13510–14000共50个每10步当步值全部有限：first_ce范围1.197799–1.310238、中位1.260540、末1.233182；residual_ce范围5.860354–5.941077、中位5.910566、末5.908734；grad_norm范围0.365358–0.525468、中位0.426228、末0.413514（clip前）。主干LR7.750978363e-5→7.589343039e-5、新参数2.325293509e-4→2.276802912e-4，既定cosine连续下降。
+- 动态batch/吞吐：帧填充95.5583%–99.6583%、中位98.4042%；token填充91.9472%–98.1750%、中位95.4194%；global samples301–408。step范围2.023065–2.512952s、中位2.128165s；音频秒/墙钟秒760.444–927.662、中位885.795；data_wait范围0.0002227–0.0005073s、中位0.0002745s。无>3s慢步，较上轮2.116134s/890.643音频秒每秒/等待0.0002751s相近，无持续供数下降。rank0训练peak allocated最高56.9478GiB；以上是稀疏当步值，不是含评估的窗口平均或全部rank峰值。
+- Checkpoint/val：latest=step-00014000，COMPLETE时间05:47:32.226801 UTC；progress={step:14000,epoch:0,next_batch:14000}、world_size4、scheduler.last_epoch14000、LR7.589343039e-5/2.276802912e-4。13500/14000签名相等，各自四distributed分片约2.093GB、.metadata1424887字节、四rng各14613字节齐全；仅结构核查，未实际试加载。13000由训练器keep_checkpoints=2轮转，本巡检未清理或编辑metadata。14000 val first/residual CE1.310338/5.909446，较13500的1.316129/5.922186下降，15码本CE有限（3.731853–6.671785）。
+
+|最近完整13500步，每模式EN4/ZH4，greedy/min_new_frames=2|EN基础WER/CER|EN英语规范化WER/CER|ZH WER/CER|截断/零帧/仅2帧|
+|---|---|---|---|---|
+|speaker_only|0.388889/0.251748|0.388889/0.251748|1.125/0.5|0/8、0/8、0/8|
+|icl|0.138889/0.146853|0.138889/0.146853|1/0.523810|0/8、0/8、1/8|
+
+- 评估核验：实读13500两summary、16条metrics/16WAV，均24kHz单声道、有限、时长与metrics匹配；目标ID/文本/speaker_reference_id/reference_text与13000一致、policy相同。本轮两种英语口径相同。13000→13500 SO EN规范化WER0.833333→0.388889，主要来自sample05长重复缩短；ICL EN WER0.083333→0.138889，包含sample00本轮失去有效输出。只有8条诊断，不能把汇总变化当成全验证集趋势或据此调超参；未试听。
+- ICL两帧近静音目标互换：上轮中文sample04本轮恢复24帧/1.92s/比0.83478，RMS0.0931227、peak0.415131、最长尾部零段0.051667s，ASR“其實人家畢竟堅持了這麼多年”、CER0.384615主要为繁简差异。但EN sample00从13000的19帧/1.52s变为仅2帧/0.16s、目标1.81s、比0.088398，随后EOS，RMS6.7381e-5、peak0.0003357、零比例34.1667%，ASR空、WER/CER1。两帧计数总数仍1/8不能掩盖目标变换；零帧0且不截断也不能称内容正常。该样本同样满足min2下界而没有生成有效内容，不能声称EOS规则修复解决了所有过早结束。上轮EN05/ZH04实际输入核验未发现损坏；本轮配对仍一致，未重复读取已验证输入或臆测新的数据故障。
+- SO短英文sample05本轮24帧/1.92s/目标1.62s、比1.18519，RMS0.0714580、零比例0.5946%、最长零段0.000333s，ASR“Too bad you find us uni.”、WER1.25/CER0.846154。13000的108帧/8.64s长重复未复发，但内容仍错。同目标ICL为21帧/1.68s、ASR“W.A. Flinders-Uni.”、WER/CER0；两模式差异和输入配对证据不支持为单句改训练目标。SO sample00本轮31帧/2.48s/比1.37017、ASR“I know some juror I know in the spears.”、WER2/CER1.166667，成为另一个短句内容异常，不能只盯sample05。
+- 长ZH ICL sample03连续10500–13500七次不截断：82帧/6.56s、目标6.28s、比1.04459、EOS，RMS0.0364976、零比例13.9533%、最长开头零段0.438583s（上轮0.53075s），前4秒/后2.56秒RMS0.036063/0.037167。ASR“月氣了半小時,先是下午2點50,氣了大概10公里,現在升去的電量是80%”，CER0.611111，仍有错词、缺词与繁简/数字口径差异。SO同目标82帧/6.56s，RMS0.0383373、零比例12.1875%、最长零段0.184s（5.52425–5.70825秒），前后能量相近，CER0.527778；均未复发历史多秒零段，但不宣称根因消失。
+- 其余内容：SO短ZH01仍14帧/1.12s但CER1.166667（“咱们就先来一杯色后”），时长正常不能掩盖错词；SO02 WER0、SO06 WER0.083333（Enter/In差异），SO04 CER0.615385，SO12 50帧/4s/比0.75758/CER0.275862，仍有替换/语气缺失。ICL01 12帧/0.96s/CER0.333333（组织/煮至）、02 WER0、06 WER0.083333（Jeffreeze）；ICL12 44帧/3.52s/比0.66667、ASR“相信你跟舒服都看过我寄给你们的卷微调”、CER0.517241，尾部仍错/缺。
+- 14000评估进展：05:52:54 SO七条metrics、ICL零条、两summary尚无。SO00至06分别于05:48:36、05:49:04、05:49:48、05:50:44、05:51:18、05:51:50、05:52:32落盘，持续推进。SO05为24帧/1.92s、ASR“TWA, Flanders, UNI.”、WER0.75/CER0.153846，比13500改善但未完全正确；SO00 24帧/1.92s/WER0.75，SO01 13帧/1.04s/CER0.666667，SO02 WER0.0625，SO03/04 CER0.5/0.538462，SO06 WER0.25。这里只检查新metrics，未重新读取14000七WAV；未拼接部分结果构造summary，不等待整轮结束。
+- 资源（05:52:35附近）：GPU0–3占用77519/77211/76025/77861 MiB（各81920），利用率70/31/40/32%，compute-apps仅本run四rank。主机已用238GiB、available1.7TiB、无swap；磁盘可用582838.86GiB，无新OOM或资源短缺证据。
+- 判断/处理/未解决：保持训练代码、配置、预算6000/9000、workers16/prefetch2、LR及两个epoch38539步目标。训练供数、保存验证正常；生成异常有实际恢复也有目标间反复，尚无证实可直接修复的实现/数据故障，不自行加大最短长度或改LR。下一轮优先核对14000 ICL00/04是否仍仅两帧，以及SO00/05和ICL12内容；若最低帧输出反复持续，同checkpoint的原始codec/EOS logits诊断是选择干预所需证据，不能用0零帧汇总宣布解决。本轮未另载模型或打断训练。当前14000/38539，退出及final-verification文件不存在；未执行最终冻结检查、未写passed=true，最终仍需38539 COMPLETE、最终val/双summary及include-speaker冻结检查实际通过。
+- 命令/修改/结果：cat/tail读约定、manual、快照/最近review/status；Python解析完整日志统计finite/min/median/max/慢步及恢复后错误，核对/proc身份、checkpoint分片/metadata/signature、datetime/shutil.disk_usage；nvidia-smi/free；soundfile/numpy实读13500的16metrics/WAV、比较配对/时长及長ZH/ICL04/EN05零段；最后核对14000七metrics和manual/退出验收文件。全部成功；唯一人工写入为本段追加。未改代码/配置/数据、启停恢复或发信号、启动timer/Codex/subagent、提交推送发消息或删除清理。本次巡检结束。
+
+
+## 2026-09-10 06:17 UTC 主会话进度核查与评估规模说明
+
+- 当前已到14500步，checkpoint和验证loss完成；first/residual CE为1.298761/5.895098，双模式音频评估正在进行。14000步双summary完整；英语规范化WER为speaker_only 0.305556、ICL 0.083333，中文CER为0.488095、0.428571。
+- 全部512条验证数据（中英各256）参与验证loss；其中511条有合格的同speaker、同语言、不同文本训练参考。当前eval.num_samples=8，每个模式固定生成8条（中英各4），两种模式共16条音频；生成WER/CER并非全验证集统计。
+- 用户提到一个epoch后停止，随后明确先不停止当前训练。本轮只核查既有停止/恢复逻辑，未修改max_steps=38539或schedule_steps=38539，未停止、重启或发送训练信号，也未安排未来自动重启。第一epoch为19270步，但该停止点尚未应用。当前训练进程及原巡检继续运行。
+- 按用户明确的commit/push请求提交当前巡检文档；无训练代码、配置或checkpoint元数据变更。
