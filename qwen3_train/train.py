@@ -83,7 +83,8 @@ def generate_sample(model, dataset, device, settings, output, step, writer, inde
     stopped = False
     start = time.perf_counter()
     for _ in range(settings["max_frames"]):
-        frame, stop = model(batch, mode="next_frame")
+        # Match Qwen's min_new_tokens=2; reference frames are not new output.
+        frame, stop = model(batch, mode="next_frame", suppress_eos=len(generated) < 2)
         # All ranks use the same fixed text and greedy decode, and execute the
         # same FSDP collectives, including at EOS.
         stop_flag = stop.to(torch.int32)
@@ -98,7 +99,8 @@ def generate_sample(model, dataset, device, settings, output, step, writer, inde
     result = {"id": row["id"], "text": row["text"], 'language': row.get('language', 'en'), "frames": len(generated),
               "eos_reached": stopped, "truncated": not stopped,
               "generation_seconds": time.perf_counter() - start, 'conditioning': conditioning,
-              'reference_frames': len(prefix_codes)}
+              'reference_frames': len(prefix_codes),
+              'generation_policy': {'decoding': 'greedy', 'min_new_frames': 2}}
     if reference is not None:
         result['speaker_reference_audio'] = reference['audio']
         result['speaker_reference_id'] = reference['id']
@@ -217,6 +219,7 @@ def evaluate_audio(model, val_data, device, eval_settings, output, step, writer,
                 if dist.get_rank() == 0:
                     mode_tag = f'{tag}/{conditioning}'
                     summary = {'conditioning': conditioning, 'samples': len(samples),
+                               'generation_policy': samples[0]['generation_policy'],
                                'truncation_rate': sum(s['truncated'] for s in samples) / len(samples)}
                     writer.add_scalar(f'{mode_tag}/truncation_rate', summary['truncation_rate'], step)
                     if all('content' in sample for sample in samples):

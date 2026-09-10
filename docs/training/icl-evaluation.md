@@ -39,6 +39,12 @@ ICL 按当前安装的 `qwen-tts==0.1.1` 非流式实现构造上下文：
 
 生成时长、长度比、ASR WER/CER 只针对裁剪后的目标音频；ASR 的比较文本仍是目标文本。每条 `metrics.json` 记录 `conditioning`、参考样本 ID、来源、参考 codec 帧数，以及 ICL 使用的参考文本。
 
+生成采用贪心解码，并与官方 `min_new_tokens=2` 一致：在前两帧新增音频的首码本选择前屏蔽 EOS，之后恢复正常 EOS 判断。参考 codec 不计入新增帧数；`max_frames` 仍是生成上限。此规则同时适用于 speaker-only 和 ICL，避免参考音频结束后立即返回零帧。不能先选出 EOS 再忽略停止标志，否则会把 EOS 占位值当作音频码反馈。
+
+`scripts/inspect_checkpoint.py --generate` 的独立诊断也使用相同的最小生成长度。
+
+`metrics.json` 和 `summary.json` 中的 `generation_policy` 标明 `decoding=greedy`、`min_new_frames=2`。2026-09-10 修复前的结果没有该字段，并允许第一步 EOS；前后空输出率与 WER/CER 应结合生成规则比较。本规则不改变训练 loss 或 checkpoint 张量，也不引入官方默认采样和重复惩罚；长静音问题仍需分别诊断。
+
 ## 配对与结果隔离
 
 目前从训练清单选择同 speaker、同语言、ID 和规范化文本均不同的另一条录音。两种模式复用同一对目标/参考，按语言选择固定数量的目标样本。当前选择用于在线诊断；它不等于正式的未见说话人 ICL 测试集。

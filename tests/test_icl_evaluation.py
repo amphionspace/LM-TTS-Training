@@ -10,9 +10,10 @@ import numpy as np
 import soundfile as sf
 import torch
 
-from qwen3_train.data import CodeDataset
+from qwen3_train.data import CodeDataset, collate
 from qwen3_train.metrics import content_metrics
-from qwen3_train.train import evaluate_audio
+from qwen3_train.train import evaluate_audio, generate_sample
+from qwen3_train.model import TTSModel, make_config
 
 
 class IclEvaluationTests(unittest.TestCase):
@@ -50,7 +51,7 @@ class IclEvaluationTests(unittest.TestCase):
                 def train(self):
                     pass
 
-                def __call__(self, batch, mode):
+                def __call__(self, batch, mode, suppress_eos=False):
                     calls.append({key: value.clone() for key, value in batch.items()})
                     return torch.full((1, 16), 100 + len(calls) % 3), torch.tensor([len(calls) % 3 == 0])
 
@@ -103,6 +104,57 @@ class IclEvaluationTests(unittest.TestCase):
                 self.assertEqual(result['speaker_reference_id'], 'reference')
                 self.assertEqual((result['frames'], result['eos_reached'], result['duration_seconds']), (2, True, 0.16))
                 self.assertEqual((summary['conditioning'], summary['wer']), (mode, 0))
+
+    def test_eos_is_suppressed_before_selection_for_two_new_frames(self):
+        torch.set_num_threads(1)
+        model = TTSModel(make_config(tiny=True)).eval()
+
+        class PreferEos(torch.nn.Module):
+            def forward(self, hidden):
+                logits = hidden.new_zeros(*hidden.shape[:-1], model.config.vocab_size)
+                logits[..., model.eos] = 20
+                logits[..., 7] = 10
+                return logits
+
+        model.talker.codec_head = PreferEos()
+        with tempfile.TemporaryDirectory() as folder, ExitStack() as patches:
+            root = Path(folder)
+            audio = root / 'target.wav'
+            sf.write(audio, np.zeros(24000, dtype=np.float32), 24000)
+            target = {'id': 'target', 'text': 'Target.', 'text_ids': [18, 4, 19],
+                      'codes': torch.full((7, 16), 999), 'duration': 1, 'audio': str(audio)}
+            reference = {**target, 'id': 'reference', 'text': 'Reference.',
+                         'text_ids': [18, 5, 19], 'codes': torch.full((5, 16), 77),
+                         'speaker_mels': torch.zeros(32, 8)}
+            decoded = []
+            codec = MagicMock()
+
+            def decode(batch):
+                codes = batch['audio_codes'][0]
+                decoded.append(codes.clone())
+                return [np.zeros(len(codes) * 1920, dtype=np.float32)], 24000
+
+            codec.decode.side_effect = decode
+            patches.enter_context(patch('qwen3_train.sources.evaluation_audio', return_value=audio))
+            patches.enter_context(patch('qwen3_train.train.dist.get_rank', return_value=0))
+            patches.enter_context(patch('qwen3_train.train.dist.broadcast'))
+            patches.enter_context(patch('qwen3_train.train.dist.barrier'))
+            for conditioning in ['speaker_only', 'icl']:
+                with self.subTest(conditioning=conditioning):
+                    result = generate_sample(model, [target], torch.device('cpu'),
+                                             {'max_frames': 4, 'asr': False}, root, 10, MagicMock(),
+                                             codec=codec, reference=reference, conditioning=conditioning)
+                    self.assertEqual((result['frames'], result['eos_reached'], result['truncated']),
+                                     (2, True, False))
+                    self.assertEqual(result['duration_seconds'], .16)
+                    # EOS must be masked before argmax, rather than ignored after
+                    # it selected the EOS placeholder/clamped audio code.
+                    torch.testing.assert_close(decoded[-1][-2:, 0], torch.tensor([7, 7]))
+                    self.assertEqual(len(decoded[-1]), 2 + (5 if conditioning == 'icl' else 0))
+            from scripts.inspect_checkpoint import generate
+            codes, stopped = generate(model, collate([target]), max_frames=4)
+            self.assertTrue(stopped)
+            np.testing.assert_array_equal(codes[:, 0], [7, 7])
 
 
 if __name__ == '__main__':

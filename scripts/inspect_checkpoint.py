@@ -16,8 +16,8 @@ from qwen3_train.speaker import audio_mel
 def generate(model, batch, max_frames):
     prefix = {**batch, 'codes': batch['codes'][:0], 'frame_lengths': torch.zeros_like(batch['frame_lengths'])}
     stopped = False
-    for _ in range(max_frames):
-        frame, stop = model(prefix, mode='next_frame')
+    for frame_index in range(max_frames):
+        frame, stop = model(prefix, mode='next_frame', suppress_eos=frame_index < 2)
         if stop.item():
             stopped = True
             break

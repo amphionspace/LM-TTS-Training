@@ -138,7 +138,7 @@ class TTSModel(nn.Module):
         outputs = self.talker.model(**inputs, use_cache=False)
         return outputs.last_hidden_state[0, audio_positions]
 
-    def forward(self, batch, mode="loss"):
+    def forward(self, batch, mode="loss", suppress_eos=False):
         hidden = self.hidden(batch)
         last_positions = (batch['frame_lengths'] + 1).cumsum(0) - 1
         if mode == "next_frame":
@@ -146,6 +146,8 @@ class TTSModel(nn.Module):
             h = hidden[last_positions]
             logits = self.talker.codec_head(h).float()
             allowed = torch.cat([logits[:, :self.code_size], logits[:, self.eos:self.eos + 1]], dim=-1)
+            if suppress_eos:
+                allowed[:, -1] = -torch.inf
             first = allowed.argmax(-1)
             stop = first == self.code_size
             codes = [first.clamp_max(self.code_size - 1)]
