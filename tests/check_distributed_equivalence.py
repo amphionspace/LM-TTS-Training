@@ -12,7 +12,8 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
 
 from qwen3_train.data import collate
-from qwen3_train.model import TTSModel, make_config
+from qwen3_train.model import TTSModel, loss_normalizers, make_config
+from qwen3_train.train import validate
 
 
 def main():
@@ -22,6 +23,7 @@ def main():
     parser.add_argument("--qwen-protocol", action="store_true")
     parser.add_argument("--frozen-frontend", action="store_true")
     parser.add_argument("--bf16", action="store_true")
+    parser.add_argument("--loss-reduction", choices=["token", "sample", "sqrt"], default="token")
     args = parser.parse_args()
     rank = int(os.environ["LOCAL_RANK"])
     torch.use_deterministic_algorithms(True)
@@ -82,16 +84,28 @@ def main():
             if args.bf16 and args.speaker:
                 result['speaker_mels'] = result['speaker_mels'].bfloat16()
             return result
-        total_first = sum(len(r["codes"]) + 1 for r in rows)
-        total_residual = sum(len(r["codes"]) * 15 for r in rows)
-        out = reference(batch(rows))
-        (out["first_sum"] / total_first + 0.3 * out["residual_sum"] / total_residual).backward()
+        exponent = {"token": 1, "sample": 0, "sqrt": .5}[args.loss_reduction]
+        total_first = sum((len(r["codes"]) + 1) ** exponent for r in rows)
+        total_residual = sum((len(r["codes"]) * 15) ** exponent for r in rows)
+        out = reference(batch(rows), loss_reduction=args.loss_reduction)
+        expected_metrics = {"first_ce": out['first_sum'].item() / sum(len(r['codes']) + 1 for r in rows),
+                            "residual_ce": out['residual_sum'].item() / sum(15 * len(r['codes']) for r in rows)}
+        if args.loss_reduction != 'token':
+            expected_metrics.update({f'first_{args.loss_reduction}_ce': out['first_reduced_sum'].item() / total_first,
+                                     f'residual_{args.loss_reduction}_ce': out['residual_reduced_sum'].item() / total_residual})
+        (out["first_reduced_sum"] / total_first + 0.3 * out["residual_reduced_sum"] / total_residual).backward()
+        batches = []
         for micro in range(2):
-            model.set_requires_gradient_sync(micro == 1)
             batch_index = micro * world + rank
             start = sum(batch_sizes[:batch_index])
-            out = model(batch(rows[start:start + batch_sizes[batch_index]]))
-            (world * (out["first_sum"] / total_first + 0.3 * out["residual_sum"] / total_residual)).backward()
+            batches.append(batch(rows[start:start + batch_sizes[batch_index]]))
+        normalizers = sum(loss_normalizers(b['frame_lengths'], args.loss_reduction) for b in batches)
+        dist.all_reduce(normalizers)
+        for micro, local_batch in enumerate(batches):
+            model.set_requires_gradient_sync(micro == 1)
+            out = model(local_batch, loss_reduction=args.loss_reduction)
+            (world * (out["first_reduced_sum"] / normalizers[0]
+                      + 0.3 * out["residual_reduced_sum"] / normalizers[1])).backward()
         largest = 0.0
         squared_error, squared_target = 0.0, 0.0
         expected = dict(reference.named_parameters())
@@ -109,10 +123,14 @@ def main():
             largest = max(largest, (actual - target).abs().max().item())
         relative_error = (squared_error / squared_target) ** .5
         assert relative_error < .03
+        metrics = validate(model, rows, 3, torch.device('cuda', rank), args.loss_reduction)
+        for key, expected_value in expected_metrics.items():
+            torch.testing.assert_close(metrics[key], expected_value, atol=2e-3 if args.bf16 else 2e-6, rtol=1e-5)
         if rank == 0:
             print(json.dumps({"status": "passed", "world_size": world, "accumulation": 2,
                               "variable_lengths": True, "variable_batch_sizes": True, "bf16": args.bf16, "speaker": args.speaker, "qwen_protocol": args.qwen_protocol, "frozen_frontend": args.frozen_frontend, "frozen_speaker": args.frozen_speaker, "max_gradient_absolute_error": largest,
-                              "relative_gradient_error": relative_error}), flush=True)
+                              "relative_gradient_error": relative_error, "loss_reduction": args.loss_reduction,
+                              "validation_metrics": metrics}), flush=True)
     finally:
         dist.destroy_process_group()
 

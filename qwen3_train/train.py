@@ -24,7 +24,7 @@ from transformers import AutoConfig
 from .checkpoint import load_checkpoint, save_checkpoint
 from .data import CodeDataset, DistributedTokenBatchSampler, collate, val_batches
 from .metrics import ASRScorer, aggregate_content, english_metrics, normalize
-from .model import TTSModel, make_config
+from .model import LOSS_REDUCTION_EXPONENTS, TTSModel, loss_normalizers, make_config
 
 
 def move(batch, device):
@@ -42,21 +42,27 @@ def configure_fsdp(model, device):
 
 
 @torch.no_grad()
-def validate(model, dataset, batch_size, device):
+def validate(model, dataset, batch_size, device, loss_reduction="token"):
     model.eval()
-    totals = torch.zeros(19, dtype=torch.float64, device=device)
+    totals = torch.zeros(23, dtype=torch.float64, device=device)
     for indices, real in val_batches(dataset, batch_size, dist.get_world_size(), dist.get_rank()):
-        out = model(move(collate([dataset[i] for i in indices]), device))
+        batch = move(collate([dataset[i] for i in indices]), device)
+        out = model(batch, loss_reduction=loss_reduction)
         if real:
             totals[0] += out["first_sum"]
             totals[1] += out["first_count"]
             totals[2] += out["residual_sum"]
             totals[3] += out["frame_count"]
-            totals[4:] += out["group_sums"]
+            totals[4:19] += out["group_sums"]
+            totals[19:21] += torch.stack([out["first_reduced_sum"], out["residual_reduced_sum"]])
+            totals[21:23] += loss_normalizers(batch['frame_lengths'], loss_reduction)
     dist.all_reduce(totals)
     metrics = {"first_ce": (totals[0] / totals[1]).item(),
                "residual_ce": (totals[2] / (totals[3] * 15)).item()}
     metrics.update({f"codebook_{i + 1}_ce": (totals[4 + i] / totals[3]).item() for i in range(15)})
+    if loss_reduction != "token":
+        metrics.update({f"first_{loss_reduction}_ce": (totals[19] / totals[21]).item(),
+                        f"residual_{loss_reduction}_ce": (totals[20] / totals[22]).item()})
     model.train()
     return metrics
 
@@ -259,6 +265,9 @@ def main():
         p.error("--eval-samples requires --eval-only and a positive count")
     config = yaml.safe_load(Path(args.config).read_text())
     settings = config["train"]
+    loss_reduction = settings.get("loss_reduction", "token")
+    if loss_reduction not in LOSS_REDUCTION_EXPONENTS:
+        raise ValueError("train.loss_reduction must be token, sample, or sqrt")
     settings.setdefault("keep_checkpoints", 2)
     settings.setdefault("num_workers", 4)
     settings.setdefault("prefetch_factor", 2)
@@ -376,7 +385,7 @@ def main():
             print(json.dumps({"initialized": True, "world_size": world, "progress": progress, "parameters": sum(p.numel() for p in model.parameters())}), flush=True)
         model.train()
         if args.eval_only:
-            val = validate(model, val_data, config['eval']['batch_size'], device)
+            val = validate(model, val_data, config['eval']['batch_size'], device, loss_reduction)
             eval_settings = dict(config["eval"])
             if args.eval_samples is not None:
                 eval_settings["num_samples"] = args.eval_samples
@@ -433,16 +442,22 @@ def main():
                                        + prefix_tokens * len(b['frame_lengths'])
                                        for b in batches)], dtype=torch.float64, device=device)
             dist.all_reduce(counts)
+            normalizers = counts[:2]
+            if loss_reduction != "token":
+                normalizers = sum(loss_normalizers(b['frame_lengths'], loss_reduction) for b in batches).to(device)
+                dist.all_reduce(normalizers)
             optimizer.zero_grad(set_to_none=True)
-            sums = torch.zeros(2, dtype=torch.float64, device=device)
+            sums = torch.zeros(4, dtype=torch.float64, device=device)
             for i, batch in enumerate(batches):
                 model.set_requires_gradient_sync(i == len(batches) - 1)
-                out = model(move(batch, device))
-                loss = world * (out["first_sum"] / counts[0] + settings["residual_weight"] * out["residual_sum"] / counts[1])
+                out = model(move(batch, device), loss_reduction=loss_reduction)
+                loss = world * (out["first_reduced_sum"] / normalizers[0]
+                                + settings["residual_weight"] * out["residual_reduced_sum"] / normalizers[1])
                 if not torch.isfinite(loss).item():
                     raise FloatingPointError("Non-finite loss")
                 loss.backward()
-                sums += torch.stack([out["first_sum"].detach(), out["residual_sum"].detach()])
+                sums += torch.stack([out[key].detach() for key in
+                                     ["first_sum", "residual_sum", "first_reduced_sum", "residual_reduced_sum"]])
             speaker_grad_norm = None
             if model.speaker_encoder is not None and any(p.requires_grad for p in model.speaker_encoder.parameters()):
                 squared = torch.zeros((), device=device)
@@ -470,6 +485,9 @@ def main():
                        "frame_budget_fill": counts[1].item() / (15 * world * len(batches) * settings['max_batch_frames']),
                        "token_budget_fill": counts[3].item() / (world * len(batches) * settings['max_batch_tokens']),
                        "lr_backbone": optimizer.param_groups[0]["lr"], "lr_new": optimizer.param_groups[1]["lr"]}
+            if loss_reduction != "token":
+                metrics.update({f"first_{loss_reduction}_ce": (sums[2] / normalizers[0]).item(),
+                                f"residual_{loss_reduction}_ce": (sums[3] / normalizers[1]).item()})
             if speaker_grad_norm is not None:
                 metrics["speaker_grad_norm"] = speaker_grad_norm
             if rank == 0 and step % settings["log_every"] == 0:
@@ -482,7 +500,7 @@ def main():
                     writer.flush()
                     print(f"Saved {saved}", flush=True)
             if step % settings["eval_every"] == 0 or step == settings["max_steps"]:
-                val = validate(model, val_data, config['eval']['batch_size'], device)
+                val = validate(model, val_data, config['eval']['batch_size'], device, loss_reduction)
                 if rank == 0:
                     for key, value in val.items():
                         writer.add_scalar(f"val/{key}", value, step)

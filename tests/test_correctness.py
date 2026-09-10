@@ -4,7 +4,7 @@ import torch
 
 from qwen3_train.data import collate
 from qwen3_train.metrics import content_metrics, aggregate_content
-from qwen3_train.model import TTSModel, make_config
+from qwen3_train.model import TTSModel, loss_normalizers, make_config
 
 
 def row(length, text=(12, 34, 56)):
@@ -67,6 +67,40 @@ class Correctness(unittest.TestCase):
         self.assertEqual(codes.shape, (1, 16))
         self.assertTrue(((codes >= 0) & (codes < 2048)).all())
         self.assertEqual(stop.shape, (1,))
+
+    def test_loss_reductions_match_individual_utterance_means_and_gradients(self):
+        rows = [row(1, (4,)), row(7, tuple(range(10))), row(3, (5, 6))]
+        batches = [collate(rows[:1]), collate(rows[1:])]
+        for reduction, exponent in [("token", 1), ("sample", 0), ("sqrt", 0.5)]:
+            with self.subTest(reduction=reduction):
+                self.model.zero_grad(set_to_none=True)
+                first_denominator = sum((len(r['codes']) + 1) ** exponent for r in rows)
+                residual_denominator = sum((15 * len(r['codes'])) ** exponent for r in rows)
+                expected = 0
+                expected_sums = torch.zeros(2)
+                for r in rows:
+                    out = self.model(collate([r]))
+                    expected_sums += torch.stack([out['first_sum'].detach(), out['residual_sum'].detach()])
+                    first_count, residual_count = len(r['codes']) + 1, 15 * len(r['codes'])
+                    expected = expected + out['first_sum'] / first_count * first_count ** exponent / first_denominator
+                    expected = expected + 0.3 * out['residual_sum'] / residual_count * residual_count ** exponent / residual_denominator
+                expected.backward()
+                expected_grads = {n: p.grad.clone() for n, p in self.model.named_parameters() if p.requires_grad}
+                self.model.zero_grad(set_to_none=True)
+                normalizers = sum(loss_normalizers(b['frame_lengths'], reduction) for b in batches)
+                actual = 0
+                actual_sums = torch.zeros(2)
+                for batch in batches:
+                    out = self.model(batch, loss_reduction=reduction)
+                    actual_sums += torch.stack([out['first_sum'].detach(), out['residual_sum'].detach()])
+                    loss = out['first_reduced_sum'] / normalizers[0] + 0.3 * out['residual_reduced_sum'] / normalizers[1]
+                    actual = actual + loss.detach()
+                    loss.backward()
+                torch.testing.assert_close(actual.float(), expected.detach(), atol=2e-6, rtol=1e-6)
+                torch.testing.assert_close(actual_sums, expected_sums, atol=1e-3, rtol=1e-6)
+                for name, parameter in self.model.named_parameters():
+                    if parameter.requires_grad:
+                        torch.testing.assert_close(parameter.grad, expected_grads[name], atol=2e-6, rtol=2e-4)
 
     def test_all_trainable_modules_receive_gradients(self):
         self.model.zero_grad(set_to_none=True)

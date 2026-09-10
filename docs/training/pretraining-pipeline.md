@@ -196,6 +196,8 @@ N_residual = 15 × Σ_i T_i
 
 ### 9.1 全局目标
 
+当前正式训练使用默认的 `train.loss_reduction: token`，下文公式对应此模式。代码也支持每条样本等权的 `sample` 和按有效目标数平方根加权的 `sqrt`，配置、公式和指标定义见[Loss 聚合](dynamic-batching.md#loss-聚合)。
+
 本轮 `residual_weight=0.3`：
 
 ```text

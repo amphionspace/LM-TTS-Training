@@ -10,6 +10,14 @@ from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSTalkerForConditional
 from transformers import AutoModel
 
 
+LOSS_REDUCTION_EXPONENTS = {"token": 1.0, "sample": 0.0, "sqrt": 0.5}
+
+
+def loss_normalizers(frame_lengths, reduction, residual_groups=15):
+    lengths = torch.stack([frame_lengths + 1, frame_lengths * residual_groups]).double()
+    return lengths.pow(LOSS_REDUCTION_EXPONENTS[reduction]).sum(dim=1)
+
+
 class TTSModel(nn.Module):
     def __init__(self, config, speaker_config=None):
         super().__init__()
@@ -138,7 +146,7 @@ class TTSModel(nn.Module):
         outputs = self.talker.model(**inputs, use_cache=False)
         return outputs.last_hidden_state[0, audio_positions]
 
-    def forward(self, batch, mode="loss", suppress_eos=False):
+    def forward(self, batch, mode="loss", suppress_eos=False, loss_reduction="token"):
         hidden = self.hidden(batch)
         last_positions = (batch['frame_lengths'] + 1).cumsum(0) - 1
         if mode == "next_frame":
@@ -169,18 +177,31 @@ class TTSModel(nn.Module):
         first_labels[valid] = codes[:, 0]
         h, target = hidden[valid], codes
         logits = self.talker.codec_head(hidden).float()
-        first_loss = F.cross_entropy(logits, first_labels, reduction="sum")
+        reduction = "sum" if loss_reduction == "token" else "none"
+        first_losses = F.cross_entropy(logits, first_labels, reduction=reduction)
         # h_t precedes frame_t. No target-frame leakage into the Talker.
         inputs = [h.unsqueeze(1), self.talker.model.codec_embedding(target[:, 0]).unsqueeze(1)]
         predictor = self.talker.code_predictor
         for g in range(1, self.groups - 1):
             inputs.append(predictor.get_input_embeddings()[g - 1](target[:, g]).unsqueeze(1))
         out = predictor.model(inputs_embeds=predictor.small_to_mtp_projection(torch.cat(inputs, dim=1)), use_cache=False)
-        group_sums = torch.stack([
-            F.cross_entropy(predictor.lm_head[g - 1](out.last_hidden_state[:, g]).float(), target[:, g], reduction="sum")
+        group_losses = torch.stack([
+            F.cross_entropy(predictor.lm_head[g - 1](out.last_hidden_state[:, g]).float(), target[:, g], reduction=reduction)
             for g in range(1, self.groups)
         ])
+        if loss_reduction == "token":
+            first_loss, group_sums = first_losses, group_losses
+            first_reduced, residual_reduced = first_loss, group_sums.sum()
+        else:
+            lengths = batch['frame_lengths']
+            exponent = LOSS_REDUCTION_EXPONENTS[loss_reduction] - 1
+            first_weights = (lengths + 1).float().pow(exponent).repeat_interleave(lengths + 1)
+            residual_weights = (lengths * (self.groups - 1)).float().pow(exponent).repeat_interleave(lengths)
+            first_reduced = (first_losses * first_weights).sum()
+            residual_reduced = (group_losses.sum(dim=0) * residual_weights).sum()
+            first_loss, group_sums = first_losses.sum(), group_losses.sum(dim=1)
         return {"first_sum": first_loss, "residual_sum": group_sums.sum(),
+                "first_reduced_sum": first_reduced, "residual_reduced_sum": residual_reduced,
                 "group_sums": group_sums.detach(), "first_count": codes.new_tensor(len(first_labels)),
                 "frame_count": codes.new_tensor(len(target))}
 
