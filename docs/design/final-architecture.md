@@ -2,7 +2,7 @@
 
 ## 决定与验证顺序
 
-先尽量对齐 Qwen3-TTS-12Hz-0.6B 的公开结构，在 **Emilia2 英语、中文各约 500 小时 short 数据**上进行预训练，再讨论删掉 projector、解冻或重新初始化。LJSpeech 上的直接连接实验仅是诊断，不作为最终选择的依据。
+当前采用 Qwen3-TTS-12Hz-0.6B 的公开结构，在 **Emilia2 英语、中文各约5000小时**数据上预训练。此前同结构的中英1kh实验已完成。
 
 官方完整结构、0.6B / 1.7B 维度对照及尚未公开的初始化细节见 [官方结构与证据](official-qwen3-tts.md)。数据读取、模型输入、loss 和四卡更新详见 [完整预训练 pipeline](../training/pretraining-pipeline.md)。
 
@@ -31,8 +31,6 @@
 
 当前先把已共同训练的 embedding 和 MLP 成套加载并冻结，避免初始化试验和数据规模变化同时混入主线。冻结保证这两组参数不被优化器改动，**不保证它们和 Qwen3-0.6B Base 主干天然匹配**：后者仍须适应这个输入。这个风险要靠基线的训练／验证结果判断。
 
-若以后采用同一个 0.6B text Base 的 embedding 和 decoder，则 `1024→1024` 可以直接连接，无需为了 shape 额外加 MLP。这是另外一种初始化方案，保留在 [直连诊断记录](text-base-ablation.md)，不与当前基线混淆。
-
 ## 输入与预测编排
 
 采用官方 `non_streaming_mode=True`、`language=Auto` 的 Base speaker 路径。设 `E_t` 为冻结的文本 embedding **加 projector**，`E_c` 为首码本 embedding，`E_g` 为残余码本 embedding，`s` 为在线 ECAPA 输出。
@@ -58,9 +56,9 @@
 
 每条训练样本为文本加整段目标 codec。训练和验证 loss 的 ECAPA 条件来自完整目标录音；变长 mel 按真实长度分组计算，避免 padding 影响池化。ECAPA 输出在线计算，但权重冻结。训练保留 singleton speaker；生成评估则使用同 speaker 的另一条训练录音，并跳过没有其他参考的样本。
 
-不显式构造独立的 ICL reference/target 训练对。已有 codec 历史的编排经过官方 ICL 函数对照；当前评估从空音频前缀生成，不能据此宣称完成 zero-shot 验证。基线先评价未见文本内容准确率，而非未见说话人能力。
+不显式构造独立的 ICL reference/target 训练对。已有 codec 历史的编排经过官方 ICL 函数对照；当前评估同时包含speaker-only与ICL，使用已见说话人的未见文本，不能据此宣称完成未见说话人的zero-shot验证。基线先评价未见文本内容准确率，而非未见说话人能力。
 
-Emilia 仅接收 JSON 顶层 `type=short`，不从 long/dialogue 提取 short 切片。原始 m4a 保留在源 tar 中；中间 manifest 记录 locator；codec 离线缓存；speaker 音频在线解码，评估原音频按需落盘。
+当前10kh接收独立 `type=short` 和 `type=long` 的标注短句，不提取dialogue。原始 m4a 保留在源 tar 中；中间 manifest 记录 locator；codec 离线缓存；speaker 音频在线解码，评估原音频按需落盘。
 
 ## 保存、恢复与验证要求
 
@@ -72,4 +70,4 @@ DCP 保存模型、optimizer、scheduler、训练进度及每 rank RNG。组装�
 
 验证包含：初始化逐张量来源核对；冻结前端更新前后严格相等；官方非流式／ICL embedding 对照；teacher forcing 与逐帧生成 logits 对齐；变长 padding 与 EOS；FSDP 梯度；真实 Emilia 小样本训练、保存及恢复；正式基线的验证 CE、固定样本音频、原音频 ASR 对照和生成 WER/CER。通过工程检查不等于语音质量达标。
 
-文本 tokenizer 固定 checkpoint 原生 Qwen 规则，显式关闭 Mistral regex 补丁；与当前官方 wrapper 开关的差异及实测见 [分词策略](../training/emilia-baseline.md#固定文本分词规则)。
+文本 tokenizer 固定 checkpoint 原生 Qwen 规则，显式关闭 Mistral regex 补丁；规则由 `qwen3_train/prepare.py` 和 `qwen3_train/assembly.py` 固定。

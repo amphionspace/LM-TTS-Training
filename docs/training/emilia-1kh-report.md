@@ -118,7 +118,7 @@ loss        = first_ce + 0.3 × residual_ce
 | checkpoint / 音频生成 | 每 500 步；8 条验证、2 条训练固定文本 |
 | checkpoint 保留策略 | 运行期间只保留最近 2 个完整 checkpoint |
 
-本轮前 1,000 步之后迁移为 padding-free，完成恢复检查后继续训练；迁移证据见 [`padding-free-resume.json`](../../runs/emilia-en-zh-pretrain-1000h/padding-free-resume.json) 和 [迁移验证记录](padding-free.md)。最终进度为 `step=5000, epoch=1, next_batch=619`。
+本轮前 1,000 步之后迁移为 padding-free，完成恢复检查后继续训练；迁移证据见 [`padding-free-resume.json`](../../runs/emilia-en-zh-pretrain-1000h/padding-free-resume.json)。最终进度为 `step=5000, epoch=1, next_batch=619`。
 
 本轮采样使用当时的自写长度分桶：seed+epoch 打乱索引，随机丢弃不足全局 microbatch 的尾部，桶内按文本与音频长度排序后组 batch、分配各 rank。CPU 使用 4 个线程并发读取当前 microbatch。**后续新增的 PyTorch DistributedSampler/DataLoader 预取未用于这次已完成的 1kh 实验。**
 
@@ -204,4 +204,4 @@ runs/emilia-en-zh-pretrain-1000h/
 
 `pipeline-status.json` 仍可能显示历史启动阶段 `train`；判断是否完成应以第 5,000 步完整 checkpoint 和评估产物为依据。此前的暂停/恢复文档是历史记录，不代表本轮当前仍处于暂停状态。
 
-10kh 使用独立 run，从原始组装模型重新开始，采用主干 1e-4、新音频模块 3e-4、warmup 1,000 步，以及新的 PyTorch DataLoader。它不接续本轮的音频权重或优化器状态。正式 ICL 评估集将在 10kh 全部准备完成后重新划分，明确参考文本、参考音频 codec 和目标文本；其结果需与本轮 speaker-only 设置区分。未完成数据的固定快照试训只用于验证读取、显存和吞吐。
+10kh已使用独立run从原始组装模型重新训练，采用主干1e-4、新音频模块3e-4、warmup1000步，以及动态组批的PyTorch DataLoader。它不接续本轮的音频权重或优化器状态。完整数据包含512条验证目标，其中511条有合格ICL参考，在线固定评估中英各4条；范围和进度见[10kh正式训练记录](emilia-10kh-supervision.md)。

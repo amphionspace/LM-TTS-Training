@@ -1,6 +1,6 @@
 # 从头训练时是否需要 reference
 
-这里讨论从文本 LLM、冻结 codec 和可训练 speaker encoder 出发，重新训练 TTS；不是对现成 TTS 的微调。
+这里讨论从文本 LLM、冻结 codec 和 speaker encoder 出发，重新训练 TTS；不是对现成 TTS 的微调。
 
 结论：对于完整文本前缀的自回归 TTS，整段音频 teacher forcing 已训练音频续写，不必另外制作 ICL reference-target 配对。
 但这不是保留了文本 LLM 原有的语音 ICL 能力：语音能力必须通过训练学到，效果需要 unseen-speaker 测试验证。
@@ -34,12 +34,12 @@ Nar 默认还计算文本 token loss；本工程只监督音频预测，不能�
 ## 对当前框架的建议
 
 1. 保留整条文本和完整 codec 的 AR teacher forcing 作为基础训练，不强制所有数据提供单独 ref_text/ref_wav 配对。
-2. ECAPA 路径训练时必须获得音频条件，但可从当前录音裁剪，也可取同 speaker 的另一条。两者都不要求另存 WAV；当前原型选择另一条，是防止内容泄漏的策略，不是理论必要条件。
+2. ECAPA 路径训练时必须获得音频条件，但可从当前录音裁剪，也可取同 speaker 的另一条。两者都不要求另存 WAV；当前训练使用完整目标录音，生成评估使用同speaker的另一条录音。
 3. 可把同 speaker 的两段拼成一段作为增强：文本合并，codec 合并，中间不插音频 EOS。它有助于覆盖跨句、跨录音边界；是否提升效果应做消融，不能称为 ICL 的必需步骤。
 4. 正式 zero-shot 评估使用训练未见的 speaker，reference 与目标录音分离。先比较 speaker-only 与 speaker+ICL；若要测试 ICL-only，还应让训练覆盖无 speaker 向量的条件，避免测试条件突变。
 5. ICL 参考音频与 reference text 必须匹配。最初可用一整条较短录音，避免按秒裁剪后仍使用全文。ECAPA 参考不需要 reference text。
 
-以上是设计建议；本版本尚未新增 ICL 推理入口、两段拼接增强或 speaker 条件丢弃。
+当前已实现speaker-only与ICL生成评估；两段拼接增强和speaker条件丢弃仍是未采用的设计建议。
 
 ## Qwen 的分隔符能否证明训练做了 reference 配对
 

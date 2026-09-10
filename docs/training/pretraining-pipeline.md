@@ -1,189 +1,31 @@
-# Emilia2 中英预训练：从原始录音到四卡 loss
+# Emilia2 中英预训练：从数据到四卡 loss
 
-本文对应当前实现和 [`configs/emilia-pretrain.yaml`](../../configs/emilia-pretrain.yaml)。目标数据是 **约 500 小时英语 + 500 小时中文**，模型采用 Qwen3-TTS 的非流式输入结构，使用 Qwen3-0.6B-Base 初始化 Talker 主干，训练音频预测能力。
+本文对应当前实现和 [`configs/emilia-10kh-pretrain.yaml`](../../configs/emilia-10kh-pretrain.yaml)。当前正式实验使用完整中英10kh数据、padding-free布局和动态组批，从Qwen3-0.6B-Base初始化Talker主干，训练新音频模块。此前固定batch的1kh实验已完成，见[1kh报告](emilia-1kh-report.md)。
 
-实现已统一采用 padding-free 布局和按帧/token 预算动态组批。此前固定 batch 的 1kh 训练已完成 5,000 步，结果见 [1kh 报告](emilia-1kh-report.md)，产物按 [保留清单](run-retention.md) 归档。当前配置输出到新的动态组批 run；试训与验证见 [动态组批说明](dynamic-batching.md)。
+训练输入包含目标文本、完整目标录音的speaker向量和teacher forcing历史codec；生成使用另一条训练录音作为参考，分别运行speaker-only和ICL。优化目标只有首码本（含EOS）与15个残余码本的交叉熵，没有文本、ASR或speaker loss。
 
-先明确三个容易混淆的地方：
+## 1. 当前入口与数据位置
 
-- **训练输入**是目标文本、目标录音提取的 speaker 向量，以及 teacher forcing 的历史 codec 帧。speaker encoder 冻结，但当前每次训练在线计算其输出。
-- **生成评估输入**是目标文本和同说话人的另一条训练录音。开始时没有目标 codec 帧，之后逐帧生成。
-- **优化目标**只有离散音频 token 的交叉熵：首码本和 EOS 一项，剩余 15 个码本一项。没有文本 LM loss、波形重建 loss、ASR loss 或 speaker 对比 loss。
-
-旧英语基线用另一条录音提供训练 speaker 条件，并删除 singleton speaker；当前预训练已经改为完整目标录音提供该条件，因此保留 singleton 训练样本。旧缓存中的 codec 标签仍可在音频和 codec 配方一致时复用；训练语义发生变化，正式训练使用新的 run 目录。
-
-## 1. 全流程与入口
-
-```mermaid
-flowchart TD
-    A[Emilia2 tar 与 tar.idx] --> B[读取 JSON 元数据并筛选独立 short]
-    B --> C[英语和中文 raw JSONL]
-    C --> D[文本分词、训练与验证划分]
-    D --> E[按 offset 读取 m4a 并解码为 24 kHz 单声道]
-    E --> F[冻结 codec 编码为 T × 16 个整数]
-    F --> G[NPZ 缓存与 prepared JSONL]
-    G --> H[合并中英清单、按帧和 token 预算动态组批、分配四卡]
-    H --> I[文本 embedding 与 projector]
-    H --> J[完整目标音频 mel 与冻结 ECAPA]
-    H --> K[历史帧的 16 个码本 embedding 求和]
-    I --> L[角色、控制、speaker、完整文本、音频 BOS、历史帧]
-    J --> L
-    K --> L
-    L --> M[28 层因果 Talker]
-    M --> N[首码本与 EOS 交叉熵]
-    M --> O[帧内 5 层 Code Predictor]
-    O --> P[15 个残余码本交叉熵]
-    N --> Q[全局 token 数归一化与反向传播]
-    P --> Q
-    Q --> R[FSDP2 梯度归约、裁剪、AdamW 更新]
-```
-
-当前控制入口：
-
-```bash
-PYTHONPATH=. .venv/bin/python scripts/run_emilia_baseline.py --nproc-per-node 4
-```
-
-尽管脚本名称保留 `baseline`，默认配置已指向中英预训练。它依次准备两个 raw manifest、合并 prepared 清单、做最长样本显存测试、写出实际 batch 配置、启动训练。若中文 exporter 尚在运行，可传 `--export-pid <实际 Python PID>`；控制进程会先处理已存在的英语清单，再等待中文清单原子发布。
+数据准备流程见[10kh数据准备](emilia-10kh.md)，正式启动和恢复使用当前run的 `launch.py`，具体进程核查与运行约定见[训练记录](emilia-10kh-supervision.md)和[故障处置](training-incident-playbook.md)。已有训练进程时不要重复启动。
 
 | 位置 | 内容 |
 |---|---|
-| `/ai_sds_wuzz/DATA_TTS/Emilia2_TTS_m4a/` | 只读原始 tar 与索引 |
-| `/ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/` | raw manifest、codec 缓存、prepared manifest、按需音频 |
-| 上述目录下 `emilia-short-en-zh-1000h/part-0/` | 英语 prepared 数据 |
-| 上述目录下 `emilia-short-en-zh-1000h/part-1/` | 中文 prepared 数据 |
-| 上述目录下 `emilia-short-en-zh-1000h/train.jsonl`、`val.jsonl` | 合并后的训练入口 |
-| `runs/emilia-en-zh-dynamic-1000h/` | 当前配置的新运行输出：流程状态、日志、配置、checkpoint、TensorBoard、生成评估 |
+| `/ai_sds_wuzz/DATA_TTS/Emilia2_TTS_m4a/` | 原始tar与索引 |
+| `/ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-en-zh-10000h/` | 原始/编码分片、最终train/val清单与准备报告 |
+| `runs/emilia-en-zh-dynamic-10000h/` | 当前正式实验、预检、checkpoint、评估和巡检 |
+| 当前run的 `provenance/data-preparation/` | 已完成的数据准备日志与核查记录 |
 
-阶段状态写入 `pipeline-status.json`，控制脚本持有 `pipeline.lock` 防止重复启动。数据完成以 `PREPARATION_COMPLETE` 和 `preparation.json` 为准；约 1,000 小时是筛选目标，实际条数和时长应读取报告。
+## 2. 数据选择和划分
 
-2026-09-09 全量 raw 清单与文本/划分检查的实测结果如下。这些是编码前检查结果，不表示全部 codec 缓存或正式训练已经完成：
+接收独立short与long载体中的标注短句，不提取dialogue。保留原始短句ID、文本、语言、speaker、tar成员offset/size和long片段的原采样点边界；按ID去重，不把完整long录音当作一个训练样本。
 
-| 语言 | 通过文本筛选的条数 | 原始时长 | 计划验证条数 |
-|---|---:|---:|---:|
-| 英语 | 415,515 | 500.0002 小时 | 256 |
-| 中文 | 426,316 | 500.0009 小时 | 256 |
-| 合计 | 841,831 | 1,000.0011 小时 | 512 |
+完整训练集6,869,742条、约9,999.19小时；验证集512条、中英各256。划分检查ID及规范化文本的train/val隔离。511条验证目标有同speaker、同语言、不同ID和文本的训练参考；剩余1条仍参与验证loss，排除于ICL配对。在线固定选择8条生成目标，不等于未见说话人的zero-shot测试。
 
-本轮没有样本因文本 token 长度被剔除；全量 ID 和跨语言 train/val 规范化文本交集检查均通过。2026-09-09 全量 codec 编码和清单合并已完成，实际训练 **841,319 条、999.3763 小时**，验证 **512 条**；合并目录的 `PREPARATION_COMPLETE` 和 `preparation.json` 已写出。
+## 3. 文本、codec与在线波形
 
-## 2. 原始数据如何读取和筛选
+文本使用组装模型的固定tokenizer规则，prepared清单保存原始 `text_ids`，加载时加入文本BOS/EOS。离线codec输出 `[T,16]` 的整数NPZ，清单记录 `codes`、`codes_sha256`、`num_frames` 和 `audio_source`。复用缓存可能直接引用其他prepared目录，需一起保留。
 
-实现：[`export_manifest.py`](../../scripts/export_manifest.py)、[`sources.py`](../../qwen3_train/sources.py)。
-
-### 2.1 tar 不整体解包
-
-每个 `.tar.idx` 记录 member 名称、字节 offset、字节 size。导出器先读取索引，再直接 `seek(offset)` 读取 JSON member。它根据 JSON 找到对应 `.m4a` member，将其位置记入清单；**导出元数据阶段不进行 codec 编码，也不把整库音频解压到目录**。
-
-索引文件按路径排序，8 个 shard 并行读取，每批结果按原始顺序返回。数据选择是确定性的 shard 顺序截取，不是全库随机抽样。英语当前从已经导出的英语 1,000 小时 raw 清单按原顺序取前约 500 小时，中文单独导出约 500 小时。
-
-### 2.2 接收什么录音
-
-本轮要求语言为 `en` 或 `zh`，原始标注时长 2–10 秒，只接收 JSON **顶层 `type=short`** 的独立完整录音。`short` 列表必须只有一个元素，而且其起止采样点必须覆盖整个载体。不会从 long/dialogue 的嵌套 short 描述中截取片段，也不依据文件名猜类型。
-
-speaker 和文本必须存在，样本 ID 不得重复。`dnsmos` 会记录在元数据中；当前没有基于该分数的筛选阈值。
-
-### 2.3 raw JSONL 的一行
-
-以下是字段结构示意，数值和文本仅作解释：
-
-```json
-{
-  "schema_version": 1,
-  "id": "emilia2:sample_id",
-  "text": "今天我们开始训练。",
-  "speaker": "emilia2:speaker_id",
-  "language": "zh",
-  "duration": 4.8,
-  "audio": {
-    "kind": "tar_member",
-    "archive": "/path/to/shard.tar",
-    "member": "sample_id.m4a",
-    "offset": 123456,
-    "size": 65432,
-    "frames": 211680,
-    "sample_rate": 44100
-  },
-  "source": {
-    "dataset": "emilia2",
-    "type": "short",
-    "recording_id": "recording_id",
-    "dnsmos": null
-  }
-}
-```
-
-此时 `audio` 是读取位置描述，不是落盘 WAV 路径。`duration` 来自标注采样点数除以采样率。导出先写 `.incomplete`，成功后 rename 为 `.jsonl`，下游不会读取正在增长的半份清单。
-
-## 3. 预处理：文本、划分、波形与 codec
-
-实现：[`prepare_manifest.py`](../../scripts/prepare_manifest.py)。
-
-### 3.1 文本分词
-
-使用组装模型目录的 Qwen tokenizer：
-
-```python
-tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, fix_mistral_regex=False)
-text_ids = tokenizer.encode(text, add_special_tokens=False)
-```
-
-保留 `1 <= len(text_ids) <= 256` 的样本；超限样本删除，不截断文本。此处不加入 TTS 文本 BOS/EOD，训练进程加载清单后才加。关闭 Mistral regex 修补是为了保留本地 Qwen tokenizer 原生分词规则。
-
-用于 train/val 去重的文本规范化与分词是两回事。去重采用 NFKC、转小写、统一撇号、按 Unicode 字词提取并统一空白；它不重写送入 tokenizer 的训练文本。
-
-### 3.2 训练和验证划分
-
-每份语言清单先按 seed 42 确定性打乱，再选择验证样本。本轮每种语言留出 256 条，共计划 512 条。
-
-验证候选需要满足：该规范化文本在当前语言清单中唯一，而且移出这条后，该 speaker 仍至少有两条训练录音。这样生成评估能从训练池找到同说话人的另一条录音。训练池本身保留 singleton speaker，它们可参加目标音频条件下的预训练，只是不作为需要另一条参考录音的生成样本。
-
-两个语言的 prepared 清单合并时，还会检查全局 ID 重复和规范化文本的 train/val 交集；若发现交集，流程失败，不带泄漏启动训练。当前验证主要测同说话人的未见文本，不是未见说话人的 zero-shot 验证。
-
-### 3.3 m4a 解码和长度处理
-
-`decode_emilia_audio()` 根据 locator 从 tar 读取确切字节，交给 PyAV/FFmpeg 的 MP4 解复用器处理，包括 edit list。随后：
-
-1. 在标注采样率下解码成 float32 单声道。
-2. 核对解码采样点数与标注 `frames`。
-3. 允许最多 1,023 个额外采样点，裁去 AAC 尾部 padding；若尾部缺口不超过约 1 毫秒，则补零并记录警告；偏差更大直接报错。
-4. 用 `scipy.signal.resample_poly` 重采样为 24 kHz，保留 float32 波形。
-
-这不会拉伸音频来迎合标注。codec 路径和训练时的目标 speaker 音频路径复用同一个 Emilia 解码函数。
-
-### 3.4 离线 codec 编码
-
-使用冻结的 `Qwen3-TTS-Tokenizer-12Hz`，实际 codec 帧率为约 **12.5 帧/秒**。每帧 16 个码本，每个码本 2,048 类。一个样本的结果为：
-
-```text
-24 kHz 波形 [samples]
-    → 冻结 codec encoder
-    → 整数 codes [T, 16]，取值 0…2047
-```
-
-`T` 以 codec 实际输出为准，不通过 `duration × 12.5` 强行生成标签长度。缓存使用 `uint16` NPZ；训练读取时转为 `int64`。每份 NPZ 检查二维形状、16 个码本、非空和取值范围，并保存 SHA256。
-
-四卡预处理使用 `torchrun` 启动四个独立进程，每个进程持有本卡的 codec 实例。rank `r` 处理从 `r × 16` 开始、间隔 `world_size × 16` 的 batch；每卡 codec batch 为 16。每个 rank 使用 16 个 spawn CPU 解码进程、16 个 I/O 线程，GPU 编码与 CPU 解码配合。初始运行使用每 rank 4 个解码进程，定位随机读取等待后，先测 8 个，再提高到一个完整 batch 的并发度 16；解码进程数和 I/O 线程数属于执行参数，不改变缓存 recipe。各 rank 最后写临时行清单，由 rank 0 按确定性样本顺序合并发布。
-
-英语旧 codec 缓存可通过 `--reuse-codes-from` 复用。复用前要求 codec 配置/权重哈希、音频尾部处理策略、codec batch size 一致；对应 NPZ 以硬链接接入新目录，读取时继续验证其内容。不复用旧训练/验证划分，不复用旧 speaker 条件分配。
-
-### 3.5 prepared 清单是什么
-
-prepared 行保留原始文本、speaker、language、source，并增加：
-
-| 字段 | 含义 |
-|---|---|
-| `text_ids` | 原生 tokenizer 输出，尚无 TTS BOS/EOD |
-| `codes` | NPZ 路径；语言子目录中为相对路径，合并入口中为绝对路径 |
-| `num_frames` | NPZ 的实际时间维 `T` |
-| `codes_sha256` | 当前 NPZ 文件内容哈希 |
-| `audio_source` | 原始 tar locator |
-| `audio` | 按需生成 WAV 的目标路径，不保证该文件已经存在 |
-| `duration` | 24 kHz 重采样后的预计波形长度对应时长 |
-
-默认不保存所有训练 WAV；训练 speaker 条件会重新从 tar 解码。生成评估的目标原音频需要播放或 ASR 时，通过 `evaluation_audio()` 按需落盘。
-
-当前预处理 recipe 为 v4，包含 `speaker_conditioning=full_target_audio`，避免和旧的删除 singleton、指定参考录音的 recipe 混用。codec 编码完成不等于模型已训练。
+离线准备按long载体分组，一次解码后切出所选短句。在线训练为完整目标短句计算speaker mel：通过tar成员边界和时间seek，只解码目标前约1秒及目标片段，再按原采样率精确裁剪、重采样到24kHz。避免每条短句重复解码几十分钟的载体。AAC随机seek与从头解码有很小数值差异；相应验证及 `audio_decoder=emilia_native_seek_v1` 恢复签名见[训练记录](emilia-10kh-supervision.md)。
 
 ## 4. 一个 batch 如何进入模型
 
@@ -199,7 +41,7 @@ prepared 行保留原始文本、speaker、language、source，并增加：
 
 每次取样本时读取 NPZ，核对 SHA256，检查 codec 形状和范围。设置 `target_speaker=True` 后，还会解码该样本的**完整目标录音**，转换为 speaker mel。
 
-训练使用 PyTorch `DataLoader`，每个 rank 默认 4 个 worker 进程，每个 worker 提前准备 2 个 microbatch，由 `train.num_workers` 和 `train.prefetch_factor` 调整。worker 使用 `spawn` 启动并跨 epoch 复用，在 CPU 上完成 NPZ 读取、音频解码、mel 和 `collate()`；主进程通过 pinned memory 将 batch 传到 GPU。worker 根据字节索引读取 manifest，不复制主进程的完整样本字典列表。
+训练使用 PyTorch `DataLoader`，当前正式配置每个 rank 使用16个worker进程（代码默认4个），每个 worker 提前准备 2 个 microbatch，由 `train.num_workers` 和 `train.prefetch_factor` 调整。worker 使用 `spawn` 启动并跨 epoch 复用，在 CPU 上完成 NPZ 读取、音频解码、mel 和 `collate()`；主进程通过 pinned memory 将 batch 传到 GPU。worker 根据字节索引读取 manifest，不复制主进程的完整样本字典列表。
 
 没有提前缓存 speaker embedding，因此 codec 已缓存仍会发生原始音频读取、解码、mel 和 ECAPA 计算。预取使 CPU 准备数据与 GPU 训练重叠，`train/data_wait_seconds` 记录每步获取 microbatch 的等待时间。验证 loss 目前仍按样本顺序读取。
 
@@ -217,7 +59,7 @@ ECAPA 输出 `[B, 1024]`，每条录音一个音色向量。它保持 `eval()` �
 
 checkpoint 保存已消费的 `epoch / next_batch`，不计入 worker 提前读取的 batch。恢复时由 Accelerate 的 `skip_first_batches()` 跳过已消费索引，避免重新解码这些样本。动态 batch 边界由相同数据、seed、epoch 和预算重建。每步样本数可变，loss 分母仍是所有 rank、全部累积 microbatch 的实际目标数。TensorBoard 记录 `global_samples`、`global_audio_frames`、`global_talker_tokens` 和两种 `*_budget_fill`；验证组批大小单独由 `eval.batch_size` 控制（默认 8）。
 
-中英数据按合并清单自然参与采样。500:500 小时不是每个 batch 强制 1:1 的样本数；两种语言平均录音长度不同时，样本数也可能不同。
+中英数据按合并清单自然参与采样。中英各约5000小时不是每个batch强制1:1的样本数；两种语言平均录音长度不同时，样本数也可能不同。
 
 ### 4.4 batch 张量
 
@@ -385,41 +227,39 @@ accumulation 的分母已包含当前更新全部 microbatch，所以不再额�
 
 每个 Talker decoder block 和 Code Predictor block 分别 FSDP2 分片，最后包住整个模型。计算使用 BF16 mixed precision，梯度归约 FP32；CE logits 显式转 float32，优化器更新使用 FP32 参数分片。当前关闭 activation checkpointing。正式配置通过 `model.attn_implementation: flash_attention_2` 为 Talker 和 Code Predictor 启用 Flash Attention 2；未指定时使用 SDPA。训练与压测均设置 `FLASH_ATTENTION_DETERMINISTIC=1`，启用确定性反向计算。
 
-当前环境使用官方预编译 `flash-attn 2.8.3.post1` wheel，匹配 Linux x86_64、Python 3.10、PyTorch 2.8、CUDA 12、CXX11 ABI=true，没有本地编译。依赖文件固定了 wheel URL 和 SHA256。FA2 的 NVIDIA CUDA 实现支持 BF16/FP16 attention，不接受 FP32 Q/K/V；模型初始构造时的 dtype 提示发生在 FSDP mixed precision 包装之前。安装来源和 SHA256 记录在 `runs/model-audit-20260909/flash-wheel-installed.json`。其他环境需安装与其 Python、Torch、CUDA 和 ABI 匹配的 wheel。
+当前环境使用官方预编译 `flash-attn 2.8.3.post1` wheel，匹配 Linux x86_64、Python 3.10、PyTorch 2.8、CUDA 12、CXX11 ABI=true，没有本地编译。依赖文件固定了 wheel URL 和 SHA256。FA2 的 NVIDIA CUDA 实现支持 BF16/FP16 attention，不接受 FP32 Q/K/V；模型初始构造时的 dtype 提示发生在 FSDP mixed precision 包装之前。安装版本与wheel SHA256固定在 `requirements.txt`。其他环境需安装与其 Python、Torch、CUDA 和 ABI 匹配的 wheel。
 
 优化器只接收 `requires_grad=True` 的参数，使用 AdamW：
 
 | 设置 | 当前值 |
 |---|---:|
-| Talker 预训练 layers/norm 基础学习率 | `2e-5` |
-| 新音频模块基础学习率 | `1e-4` |
+| Talker 预训练 layers/norm 基础学习率 | `1e-4` |
+| 新音频模块基础学习率 | `3e-4` |
 | weight decay | `0.01` |
 | 全模型 gradient clipping norm | `1.0` |
-| warmup | 200 updates |
-| 总训练与调度长度 | 5,000 updates |
+| warmup | 1000 updates |
+| 总训练与调度长度 | 38,539 updates（两个epoch） |
 
 warmup 线性增长，之后 cosine 衰减至基础学习率的 10%。loss 和裁剪前梯度 norm 必须有限，否则直接停止。更新顺序是 `backward → clip_grad_norm_ → optimizer.step → scheduler.step`；日志中的学习率是在 scheduler 前进一步后记录的，对应下一次更新将使用的值。
 
 ### 9.4 动态预算如何确定
 
-正式训练前，在实际合并清单中分别找最长文本和最长 codec 音频，把二者组合成压力样本。这项压测覆盖最长单条输入，实际混合长度和更多短句的批次仍需试训确认显存。从配置的帧和 token 预算开始，计算压力样本能容纳的条数；OOM 时依次尝试原预算的 80%、60%、40%。每档跑两次真实 FSDP 优化更新，覆盖 AdamW 状态分配；只有 CUDA OOM 才降档，其他错误直接停止。
-
-通过的配置写入 run 下 `baseline-config.yaml`。2026-09-09 四张 A100 80GB、BF16、FA2、关闭 activation checkpointing，使用 88 个文本 token 和 125 个 codec 帧的组合压力样本：每卡 64 在第一次反向计算时 OOM；每卡 48 完成两次优化更新，峰值 allocated 60.39 GiB，reserved 67.76 GiB。该历史 1kh 运行每卡固定 batch 为 48，全局一次更新 `48 × 4 × 1 = 192` 条录音。压测日志为 `runs/emilia-en-zh-pretrain-1000h/memory-flash-batch{64,48}.log`。
+当前每卡预算6000音频帧/9000 Talker token，累积1次。完整数据预检按相同seed和四卡规划，两个epoch分别19270和19269步，总计38539步；预算不应在恢复时随意修改。最长音频与最长文本的组合压力样本已完成四卡实际优化更新；证据在当前run的 `memory-probe.log`，实际长期吞吐和显存见巡检记录。
 
 ## 10. 验证 loss 与生成评估
 
 验证 loss 使用与训练相同的文本、目标 codec 和完整目标音频 speaker 条件，但 `no_grad()`。各卡统计 CE 总和和有效 token 数，归约后计算首 CE、平均残余 CE、15 个码本各自的 CE。最后不足一个全局 batch 时，没有真实样本的 rank 用标记为零权重的占位样本维持 FSDP 调用次数，统计时不计它。
 
-当前每 100 updates 验证 loss；每 500 updates 从固定样本生成 8 条验证音频和 2 条训练音频，选择过程尽量平衡英语与中文。
+当前每500 updates和最后一步验证loss并生成音频。两种模式各使用8条固定验证目标，中英各4条；不额外生成训练文本样本。
 
 生成与训练的区别：
 
 1. speaker 条件换成同说话人的另一条**训练录音**，不用目标录音作为生成参考。
-2. 目标 codec 清空，从音频 BOS 开始。
-3. 首 head 仅允许 0…2047 和 EOS，使用 argmax；不是随机采样。
+2. 目标codec清空；speaker-only从audio BOS开始，ICL在参考文本+目标文本条件下从参考codec前缀续写。
+3. 首head在0…2047和EOS中贪心选择，前两帧新增音频屏蔽EOS，参考帧不计数。
 4. 若不是 EOS，帧内依次生成 15 个残余码本，使用已生成的前置码本。
-5. 将完整 16 码本帧加入历史，继续下一帧，直到 EOS 或 `max_frames=160`。
-6. rank 0 用冻结 codec decoder 还原 24 kHz 波形并写入文件/TensorBoard。
+5. 将完整 16 码本帧加入历史，继续下一帧，直到 EOS 或 `max_frames=400`。
+6. rank 0用冻结codec decoder还原24kHz波形；ICL先连同参考codec解码，再裁去参考波形。指标只比较目标音频，完整边界见[ICL评估](icl-evaluation.md)。
 
 所有 rank 参与相同的生成前向以满足 FSDP 通信；保存音频和 ASR 在 rank 0 进行。当前生成未使用 KV cache，长音频生成会重复计算历史，评估期间的训练暂停时间应单独看待。
 
@@ -433,11 +273,11 @@ ASR、生成时长比例、EOS、截断率都只是评估指标，不进入训�
 
 每 500 updates 保存一次，也在最后一步保存；保留最近两个完整 checkpoint。每份包含 DCP 模型和优化器状态、scheduler、`step / epoch / next_batch`、每个 rank 的 Python/NumPy/PyTorch/CUDA RNG 状态，以及恢复签名。
 
-先写 `.incomplete`，全部 rank 保存完成后写 `COMPLETE`、rename，再更新 `latest`。只有新 checkpoint 完成后才清理旧的完整 checkpoint。恢复要求相同 world size、模型与冻结设置、manifest 哈希、动态组批算法与预算、accumulation、优化器和调度关键设置。当前签名还记录 `speaker_conditioning=full_target_audio` 与 `generation_conditioning=other_training_utterance`。
+先写 `.incomplete`，全部 rank 保存完成后写 `COMPLETE`、rename，再更新 `latest`。只有新 checkpoint 完成后才清理旧的完整 checkpoint。恢复要求相同 world size、模型与冻结设置、manifest 哈希、动态组批算法与预算、accumulation、优化器和调度关键设置。当前签名还记录音频解码版本、`speaker_conditioning=full_target_audio` 与 `generation_conditioning=other_training_utterance`。
 
 ```bash
 NPROC_PER_NODE=4 bash scripts/run_train.sh \
-  --config runs/emilia-en-zh-dynamic-1000h/baseline-config.yaml \
+  --config configs/emilia-10kh-pretrain.yaml \
   --resume latest
 ```
 
@@ -447,17 +287,7 @@ NPROC_PER_NODE=4 bash scripts/run_train.sh \
 
 ## 12. 训练前已验证什么
 
-2026-09-09 当前输入改动后的检查包括：
-
-- 31 项单元测试，包括 loss/生成对齐、EOS/padding、冻结前端和 checkpoint 保留规则；padding 测试包含不同 speaker mel 长度。新增 CUDA 测试对照 BF16 下 SDPA/FA2 的变长 padding loss 与梯度，并验证 FA2 两次前向/反向逐值一致。
-- 实际组装模型的输入 embedding 与安装的官方非流式实现对照，最大绝对误差约 `1.2e-7`。
-- 实际模型的 padding loss、文本/speaker 条件响应和目标 codec 帧因果性检查。
-- 四卡、变长样本、变长 speaker mel、两次 accumulation 与单模型全局 batch 的梯度对照，最大绝对误差约 `6.0e-8`。
-- 1,024 条真实中英数据的四进程预处理，得到 1,008 train / 16 val；实际四卡训练、验证、生成和 checkpoint 保存，再从 step 2 恢复继续更新。
-- 保存后的 81 个冻结张量、共 326,313,792 个参数与初始化逐值一致。
-- 训练取样改为每卡 4 线程后，64 条中英样本的全部 batch 张量与串行读取逐值相同；同 seed 的两次实际四卡优化更新，其首/残余 CE 和 gradient norm 也与串行版本完全一致。
-
-运行证据位于 `runs/model-audit-20260909/` 和 `runs/emilia-pretrain-integration/`。上述结果证明已覆盖的工程行为可运行，不能替代正式中英训练后的语音质量、收敛与泛化评估。正式数据完成、选定 batch 和训练进度以当前 run 的日志为准。
+当前覆盖官方非流式/ICL输入对照、teacher forcing与生成时序、变长样本隔离、全局token归一化、冻结参数、动态组批预算和精确恢复。EOS修复的47项完整测试及实际四卡复评记录在当前run的 `eos-minimum-fix/`。历史小规模验证原始产物已按清理要求删除，当前正式运行的预检、恢复和冻结检查证据仍完整保留。
 
 可重复运行的基础检查：
 

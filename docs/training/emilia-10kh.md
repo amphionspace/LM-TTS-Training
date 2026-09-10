@@ -22,7 +22,7 @@
 
 导出时排除越界、空文本或缺少 speaker 的 long 片段，具体记录写入导出日志。解码保留既有 AAC 尾部处理规则；先在原始采样率下按标注切片，再重采样到 24 kHz。同一 long 的选中片段由一个 CPU 任务共同处理，避免为每条短句重新读取、解码载体。
 
-训练和评估读取沿用相同的切片函数。在线 speaker 条件目前会按样本重新解码载体；离线 codec 的整组解码优化不代表在线训练吞吐已验证。
+训练和评估在线读取long短句时，使用FFmpeg subfile限定tar成员，再seek到目标前约1秒、按原采样率精确裁剪，避免每条短句重复完整解码载体。AAC随机seek不承诺与从头解码逐样本相同；波形、speaker embedding和吞吐验证见[正式训练记录](emilia-10kh-supervision.md)。
 
 ## 并发和恢复
 
@@ -47,12 +47,12 @@ PYTHONPATH=. OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 TOKENIZE
   --output /ai_sds_wuzz/DATA_TTS/Emilia2_TTS_prepared/LM-TTS-Training/emilia-short-en-zh-10000h
 ```
 
-启动前先查看 `runs/emilia-en-zh-10000h-data/` 的 PID、进程和状态，避免重复启动。恢复编码会跳过已发布分片，重新处理未完成分片。配方变化会被拒绝。
+启动前先查看 `runs/emilia-en-zh-dynamic-10000h/provenance/data-preparation/` 的 PID、进程和状态，避免重复启动。恢复编码会跳过已发布分片，重新处理未完成分片。配方变化会被拒绝。
 
 最终划分在全体数据上检查 ID 唯一性；每种语言留出 256 条规范化文本唯一的验证样本，保留同说话人的至少两条训练录音。这是已见说话人的未见文本验证。
 
 ## 验证证据
 
-`tests/test_sources.py` 覆盖原始采样点切片、整组与单条解码相等、只解码一次载体及越界标注；`tests/test_streaming_preparation.py` 覆盖导出恢复、ID 去重、载体分片边界、短缺报告及全局划分。
+`tests/test_sources.py` 覆盖原始采样点切片、seek目标边界与误差、整组解码复用及越界标注；`tests/test_streaming_preparation.py` 覆盖导出恢复、ID 去重、载体分片边界、短缺报告及全局划分。
 
-真实中英 long 试跑共 679 条、约 1.182 小时，完成双卡编码及 675 train / 4 val 发布。报告位于公共数据目录的 `emilia-long-codec-check/preparation.json`；运行日志、性能压测和本次切换记录位于 `runs/emilia-en-zh-10000h-data/`。
+真实中英 long 试跑共 679 条、约 1.182 小时，完成双卡编码及 675 train / 4 val 发布。报告位于公共数据目录的 `emilia-long-codec-check/preparation.json`；运行日志、性能压测和本次切换记录位于 `runs/emilia-en-zh-dynamic-10000h/provenance/data-preparation/`。

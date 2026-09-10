@@ -4,6 +4,7 @@ __pycache__/
 .cache/
 data/
 checkpoints/
-runs/
+runs/*
+!runs/README.md
 pretrained/
 .ipynb_checkpoints/

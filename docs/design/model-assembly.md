@@ -43,16 +43,14 @@ embedding 已有 151936 行，因此无需增大矩阵，当前基线加载公�
 依据：[Qwen 实现](https://github.com/QwenLM/Qwen3-TTS/blob/main/qwen_tts/core/models/modeling_qwen3_tts.py)、[SpeechBrain 配置](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb/blob/main/hyperparams.yaml)。两者不能直接互载，仅加输出投影也无法解决内部结构差异。
 当前采用 Qwen 公开 ECAPA 权重并冻结，不进入优化器，保持 eval 模式。这是当前基线的选择，与官方报告中的联合训练不同。
 
-训练和验证均从训练 manifest 中选同 speaker 的另一条录音，需要可靠的 speaker 标签，每个训练 speaker 至少两条不同录音。
-固定中心裁剪 3 秒，短录音重复至该长度，按官方参数计算 mel。只缓存输入 mel，speaker embedding 在线计算并保留梯度。
-固定长度避免官方 pooling 不支持变长 padding mask 所造成的偏差。参考分配及音频 SHA256 纳入续训校验；大规模数据应把这些校验和特征预处理移入分片数据生产流程。
+训练和验证loss使用完整目标录音提供speaker条件，变长mel按真实长度分组送入冻结ECAPA，不裁成固定3秒，也不重复短音频。生成评估使用同speaker、同语言、不同ID和文本的另一条训练录音。参考配对与两种生成模式见[ICL评估](../training/icl-evaluation.md)。
 
 ## ICL 与 speaker 参考不同
 
 完整文本条件下的整段音频 teacher forcing 已在学习条件分布 p(audio_t | text, 历史 audio)。
 推理时拼接 reference text 与 target text，再以 reference codec 前缀续写，在原理上不要求训练时另存一个 ICL reference WAV；reference codec 后不能插入结束整段音频的 EOS。
 这不意味着文本 Base 自动保留了语音 ICL 能力：能力仍需通过语音训练学到，并通过 zero-shot 评估验证。
-新增参考录音是 speaker encoder 的训练条件。当前评估从空 codec 前缀生成，尚未提供 ICL 拼接推理入口。
+当前评估同时运行speaker-only与ICL；后者拼接参考文本和参考codec前缀，参考帧不计入新增帧数。
 LJSpeech 只能验证工程和内容准确性，不能验证跨说话人 zero-shot 泛化。
 
 ## 保存与校验
