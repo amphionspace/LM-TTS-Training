@@ -132,23 +132,55 @@ def main():
         completion = finished['training_exit']
         verification_path = run / 'final-verification.json'
         verification = json.loads(verification_path.read_text()) if verification_path.exists() else {}
-        complete = bool(returncode == 0 and completion and finished['process'] and
-                        completion['pid'] == finished['process']['pid'] and completion['exit_code'] == 0
-                        and verification.get('passed') is True
-                        and verification.get('pid') == finished['process']['pid'])
+        training_complete = bool(returncode == 0 and completion and finished['process'] and
+                                 completion['pid'] == finished['process']['pid'] and completion['exit_code'] == 0
+                                 and verification.get('passed') is True
+                                 and verification.get('pid') == finished['process']['pid'])
+        next_path = run / 'next-run.json'
+        next_run = json.loads(next_path.read_text()) if next_path.exists() else None
+        handoff_verified = False
+        if training_complete and next_run:
+            ack_path = run / 'next-run-ack.json'
+            ack = json.loads(ack_path.read_text()) if ack_path.exists() else {}
+            next_process_path = Path(next_run['run_dir']) / 'training-process.json'
+            next_process = json.loads(next_process_path.read_text()) if next_process_path.exists() else {}
+            handoff_verified = bool(ack.get('status') == 'verified' and next_process
+                                    and ack.get('run_dir') == next_run['run_dir']
+                                    and ack.get('pid') == next_process['pid']
+                                    and ack.get('start_ticks') == next_process['start_ticks'])
+        complete = training_complete and (next_run is None or handoff_verified)
         status = {'last_check': data['time'], 'last_step': previous, 'review_exit_code': returncode,
                   'latest_snapshot': str(record), 'latest_review': str(folder / f'{stamp}.md'),
-                  'status': 'completed' if complete else ('monitoring' if returncode == 0 else 'review_failed'),
+                  'status': 'completed' if complete else ('handoff_pending' if training_complete else
+                            ('monitoring' if returncode == 0 else 'review_failed')),
                   'interval_seconds': args.interval_seconds, 'session_id': session_id}
         state_path.write_text(json.dumps(status, indent=2))
         print(json.dumps(status), flush=True)
-        if args.once or complete:
+        if args.once:
             break
+        if complete:
+            if next_run is None:
+                break
+            run = Path(next_run['run_dir']).resolve()
+            folder = run / 'supervision'
+            folder.mkdir(parents=True, exist_ok=True)
+            next_lock = (folder / 'monitor.lock').open('w')
+            fcntl.flock(next_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock.close()
+            lock = next_lock
+            (folder / 'monitor.pid').write_text(str(os.getpid()))
+            state_path = folder / 'status.json'
+            session_path = folder / 'session-id'
+            session_path.write_text(session_id + '\n')
+            previous = 0
+            deadline = time.monotonic()
+            continue
         deadline += args.interval_seconds
         while deadline <= time.monotonic():
             deadline += args.interval_seconds
         while time.monotonic() < deadline and not (folder / 'STOP').exists():
             time.sleep(min(30, deadline - time.monotonic()))
+    lock.close()
 
 
 if __name__ == '__main__':
