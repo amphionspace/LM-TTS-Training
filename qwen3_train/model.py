@@ -21,6 +21,8 @@ def loss_normalizers(frame_lengths, reduction, residual_groups=15):
 class TTSModel(nn.Module):
     def __init__(self, config, speaker_config=None):
         super().__init__()
+        if any(c._attn_implementation != "flash_attention_2" for c in (config, config.code_predictor_config)):
+            raise ValueError("TTSModel requires flash_attention_2 for Talker and Code Predictor")
         self.config = config
         self.talker = Qwen3TTSTalkerForConditionalGeneration(config)
         self.speaker_encoder = Qwen3TTSSpeakerEncoder(speaker_config) if speaker_config else None
@@ -48,7 +50,9 @@ class TTSModel(nn.Module):
         return self
 
     @classmethod
-    def from_assembled(cls, directory, load_weights=True, attn_implementation="sdpa"):
+    def from_assembled(cls, directory, load_weights=True, attn_implementation="flash_attention_2"):
+        if attn_implementation != "flash_attention_2":
+            raise ValueError("TTSModel requires flash_attention_2")
         from .assembly import load_prefix, sha256
         directory = Path(directory)
         if not (directory / "ASSEMBLY_COMPLETE").exists():
@@ -137,12 +141,9 @@ class TTSModel(nn.Module):
         return inputs, torch.cat(audio_positions)
 
     def hidden(self, batch):
+        if any(c._attn_implementation != "flash_attention_2" for c in (self.config, self.config.code_predictor_config)):
+            raise ValueError("TTSModel requires flash_attention_2 for Talker and Code Predictor")
         inputs, audio_positions = self.input_embeddings(batch)
-        if self.config._attn_implementation != 'flash_attention_2':
-            positions = inputs['position_ids'][0]
-            segments = (positions == 0).cumsum(0)
-            inputs['attention_mask'] = ((segments[:, None] == segments[None, :]) &
-                                        (positions[:, None] >= positions[None, :]))[None, None]
         outputs = self.talker.model(**inputs, use_cache=False)
         return outputs.last_hidden_state[0, audio_positions]
 
@@ -229,6 +230,6 @@ def make_config(backbone_config=None, tiny=False):
         rope_scaling={"rope_type": "default", "mrope_section": sections, "interleaved": True},
         code_predictor_config={**depth, "vocab_size": 2048, "num_code_groups": 16, "use_cache": False},
         use_cache=False)
-    config._attn_implementation = "sdpa"
-    config.code_predictor_config._attn_implementation = "sdpa"
+    config._attn_implementation = "flash_attention_2"
+    config.code_predictor_config._attn_implementation = "flash_attention_2"
     return config

@@ -222,6 +222,8 @@ def validate_saved(directory, dtype=torch.bfloat16):
     if getattr(config.talker_config, "lm_tts_text_projection", "mlp") == "identity":
         from .model import TTSModel
         from qwen_tts import Qwen3TTSTokenizer
+        config.talker_config._attn_implementation = "flash_attention_2"
+        config.talker_config.code_predictor_config._attn_implementation = "flash_attention_2"
         loaded = TTSModel(config.talker_config, config.speaker_encoder_config)
         loaded.talker.load_state_dict(load_prefix(directory, "talker."), strict=True)
         loaded.speaker_encoder.load_state_dict(load_prefix(directory, "speaker_encoder."), strict=True)

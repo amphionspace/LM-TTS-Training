@@ -128,7 +128,7 @@ def main():
                 'scripts/probe_batch_memory.py', '--assembled', config['model']['assembled_model'],
                 '--manifest', config['data']['train'], '--max-batch-frames', str(frames),
                 '--max-batch-tokens', str(tokens),
-                '--attn-implementation', config['model'].get('attn_implementation', 'sdpa')]
+                '--attn-implementation', config['model'].get('attn_implementation', 'flash_attention_2')]
             code = run(stage, command)
             if code == 0:
                 config['train']['max_batch_frames'] = frames

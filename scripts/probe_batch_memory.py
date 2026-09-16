@@ -18,7 +18,7 @@ def main():
     p.add_argument('--manifest', required=True)
     p.add_argument('--max-batch-frames', type=int, required=True)
     p.add_argument('--max-batch-tokens', type=int, required=True)
-    p.add_argument('--attn-implementation', default='sdpa', choices=['sdpa', 'flash_attention_2'])
+    p.add_argument('--attn-implementation', default='flash_attention_2', choices=['flash_attention_2'])
     args = p.parse_args()
     rank = int(os.environ['LOCAL_RANK'])
     device = torch.device('cuda', rank)

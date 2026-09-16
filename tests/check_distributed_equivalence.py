@@ -12,6 +12,7 @@ from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
 
 from qwen3_train.data import collate
+from reference_model import ReferenceTTSModel
 from qwen3_train.model import TTSModel, loss_normalizers, make_config
 from qwen3_train.train import validate
 
@@ -56,10 +57,8 @@ def main():
             config.lm_tts_text_projection = "mlp"
             config.lm_tts_freeze_text_frontend = True
         config.lm_tts_freeze_speaker_encoder = args.frozen_speaker
-        model = TTSModel(config, speaker_config).cuda()
-        if args.bf16:
-            config._attn_implementation = 'flash_attention_2'
-            config.code_predictor_config._attn_implementation = 'flash_attention_2'
+        model_class = TTSModel if args.bf16 else ReferenceTTSModel
+        model = model_class(config, speaker_config).cuda()
         frozen = {name: p.detach().clone() for name, p in model.named_parameters() if not p.requires_grad}
         reference = copy.deepcopy(model)
         if args.bf16:

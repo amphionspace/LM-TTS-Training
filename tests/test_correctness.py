@@ -4,7 +4,8 @@ import torch
 
 from qwen3_train.data import collate
 from qwen3_train.metrics import content_metrics, aggregate_content
-from qwen3_train.model import TTSModel, loss_normalizers, make_config
+from reference_model import ReferenceTTSModel
+from qwen3_train.model import loss_normalizers, make_config
 
 
 def row(length, text=(12, 34, 56)):
@@ -16,7 +17,7 @@ class Correctness(unittest.TestCase):
     def setUpClass(cls):
         torch.set_num_threads(2)
         torch.manual_seed(123)
-        cls.model = TTSModel(make_config(tiny=True)).eval()
+        cls.model = ReferenceTTSModel(make_config(tiny=True)).eval()
 
     def test_text_backbone_mapping_preserves_hidden_states(self):
         from transformers import Qwen3Config, Qwen3Model
@@ -26,7 +27,7 @@ class Correctness(unittest.TestCase):
                                 vocab_size=256, rope_theta=cfg.rope_theta, rms_norm_eps=cfg.rms_norm_eps)
         source_cfg._attn_implementation = "sdpa"
         source = Qwen3Model(source_cfg).eval()
-        target = TTSModel(cfg).eval()
+        target = ReferenceTTSModel(cfg).eval()
         with tempfile.TemporaryDirectory() as folder:
             source.save_pretrained(folder)
             report = target.initialize_backbone(folder)

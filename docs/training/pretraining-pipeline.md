@@ -227,7 +227,7 @@ accumulation 的分母已包含当前更新全部 microbatch，所以不再额�
 
 ### 9.3 参数、精度和学习率
 
-每个 Talker decoder block 和 Code Predictor block 分别 FSDP2 分片，最后包住整个模型。计算使用 BF16 mixed precision，梯度归约 FP32；CE logits 显式转 float32，优化器更新使用 FP32 参数分片。当前关闭 activation checkpointing。正式配置通过 `model.attn_implementation: flash_attention_2` 为 Talker 和 Code Predictor 启用 Flash Attention 2；未指定时使用 SDPA。训练与压测均设置 `FLASH_ATTENTION_DETERMINISTIC=1`，启用确定性反向计算。
+每个 Talker decoder block 和 Code Predictor block 分别 FSDP2 分片，最后包住整个模型。计算使用 BF16 mixed precision，梯度归约 FP32；CE logits 显式转 float32，优化器更新使用 FP32 参数分片。当前关闭 activation checkpointing。训练、评估与压测仅支持 `flash_attention_2`，未指定时也默认使用 FA2；显式选择 `eager` 或 `sdpa` 会在入口报错，模型运行时同样拒绝切换至这些后端。Talker 和 Code Predictor 均使用 FA2。CPU FP32 的 dense SDPA 对照实现仅位于测试目录；权重组装时使用的官方 CPU 加载器不执行本项目的打包训练。训练与压测均设置 `FLASH_ATTENTION_DETERMINISTIC=1`，启用确定性反向计算。
 
 当前环境使用官方预编译 `flash-attn 2.8.3.post1` wheel，匹配 Linux x86_64、Python 3.10、PyTorch 2.8、CUDA 12、CXX11 ABI=true，没有本地编译。依赖文件固定了 wheel URL 和 SHA256。FA2 的 NVIDIA CUDA 实现支持 BF16/FP16 attention，不接受 FP32 Q/K/V；模型初始构造时的 dtype 提示发生在 FSDP mixed precision 包装之前。安装版本与wheel SHA256固定在 `requirements.txt`。其他环境需安装与其 Python、Torch、CUDA 和 ABI 匹配的 wheel。
 

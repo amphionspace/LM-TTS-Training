@@ -64,7 +64,7 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
 class FrozenFrontendProtocolTests(QwenProtocolTests):
     def setUp(self):
         super().setUp()
-        from qwen3_train.model import TTSModel
+        from reference_model import ReferenceTTSModel
         from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
         config = self.model.config
         config.text_hidden_size = 128
@@ -72,7 +72,7 @@ class FrozenFrontendProtocolTests(QwenProtocolTests):
         config.lm_tts_freeze_text_frontend = True
         config.lm_tts_freeze_speaker_encoder = True
         speaker = Qwen3TTSSpeakerEncoderConfig(enc_dim=64, mel_dim=8, enc_channels=[16, 16, 16, 16, 48])
-        self.model = TTSModel(config, speaker).eval()
+        self.model = ReferenceTTSModel(config, speaker).eval()
 
     def test_frozen_frontend_survives_optimizer_step(self):
         self.model.train()

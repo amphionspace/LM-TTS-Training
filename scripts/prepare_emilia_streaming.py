@@ -155,7 +155,10 @@ def encode(args):
     cache = {}
     for directory in args.reuse_codes_from:
         directory = Path(directory).resolve()
-        recipe = json.loads((directory / 'recipe.json').read_text())
+        recipe_path = directory / 'recipe.json'
+        if not recipe_path.exists():
+            recipe_path = directory / 'codec-recipe-rank-0.json'
+        recipe = json.loads(recipe_path.read_text())
         if recipe['codec_sha256'] != codec_hashes or recipe['audio_length_policy'] != policy or recipe['batch_size'] != 16:
             raise ValueError(f'Incompatible codec cache: {directory}')
         for split in ('train', 'val'):
@@ -186,10 +189,8 @@ def encode(args):
 
     def load(row):
         entry = cache.get(row['id'])
-        if entry is not None and ('start_frame' not in row['audio'] or row['audio'] == entry[3]):
+        if entry is not None and row['audio'] == entry[3]:
             path, checksum, frames, locator = entry
-            if locator != row['audio']:
-                raise ValueError(f'Cached audio locator changed: {row["id"]}')
             payload = Path(path).read_bytes()
             if hashlib.sha256(payload).hexdigest() != checksum:
                 raise ValueError(f'Cached codes changed: {path}')
@@ -250,8 +251,9 @@ def encode(args):
                     raise ValueError(f'Empty tokenized text: {row["id"]}')
                 row['text_ids'] = text_ids
             groups, group_futures = {}, {}
+            cached_ids = {row['id'] for row in rows if row['id'] in cache and row['audio'] == cache[row['id']][3]}
             for row in rows:
-                if 'start_frame' in row['audio']:
+                if 'start_frame' in row['audio'] and row['id'] not in cached_ids:
                     key = row['audio']['archive'], row['audio']['offset']
                     groups.setdefault(key, []).append(row)
             ordered = sorted(rows, key=lambda r: r['duration'])
@@ -259,7 +261,7 @@ def encode(args):
             # Reader threads must not occupy all slots waiting on the same long.
             if decoders:
                 for row in ordered:
-                    if 'start_frame' in row['audio']:
+                    if 'start_frame' in row['audio'] and row['id'] not in cached_ids:
                         key = row['audio']['archive'], row['audio']['offset']
                         if key not in group_futures:
                             group_futures[key] = decoders.submit(decode_emilia_group, groups[key])
@@ -273,7 +275,7 @@ def encode(args):
                 if batch is not None:
                     futures = []
                     for row in batch:
-                        grouped = bool(decoders and 'start_frame' in row['audio'])
+                        grouped = bool(decoders and 'start_frame' in row['audio'] and row['id'] not in cached_ids)
                         future = group_futures[(row['audio']['archive'], row['audio']['offset'])] if grouped else readers.submit(load, row)
                         futures.append((row, future, grouped))
                     pending.append(futures)
@@ -325,7 +327,7 @@ def encode(args):
                     counts[row['language']] += 1
                     stream.write(json.dumps(row, ensure_ascii=False) + '\n')
             temporary.replace(destination)
-            counts['long_carriers_decoded'] += len(group_futures)
+            counts['grouped_carriers_decoded'] += len(group_futures)
             status = {'rank': args.rank, 'last_chunk': chunk_index, 'counts': dict(counts),
                       'hours': {k: v / 3600 for k, v in seconds.items()}, 'timings': dict(timings),
                       'work_hours': {k: v / 3600 for k, v in work_seconds.items()},

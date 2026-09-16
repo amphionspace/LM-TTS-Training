@@ -265,6 +265,8 @@ def main():
     if args.eval_samples is not None and (not args.eval_only or args.eval_samples < 1):
         p.error("--eval-samples requires --eval-only and a positive count")
     config = yaml.safe_load(Path(args.config).read_text())
+    if config["model"].get("attn_implementation", "flash_attention_2") != "flash_attention_2":
+        raise ValueError("model.attn_implementation must be flash_attention_2")
     settings = config["train"]
     loss_reduction = settings.get("loss_reduction", "token")
     if loss_reduction not in LOSS_REDUCTION_EXPONENTS:
@@ -316,7 +318,7 @@ def main():
             assembled = Path(model_cfg["assembled_model"])
             assembly_fingerprint = hashlib.sha256((assembled / "assembly_report.json").read_bytes()).hexdigest()
             model = TTSModel.from_assembled(assembled, load_weights=not args.resume,
-                                          attn_implementation=model_cfg.get("attn_implementation", "sdpa"))
+                                          attn_implementation=model_cfg.get("attn_implementation", "flash_attention_2"))
             model_config = model.config
             initialization = {"source": str(assembled), "assembly_report_sha256": assembly_fingerprint,
                               "speaker_encoder": "pretrained Qwen ECAPA-TDNN, " + ("frozen" if getattr(model.config, "lm_tts_freeze_speaker_encoder", False) else "jointly trained")}
@@ -368,6 +370,8 @@ def main():
                      "eval": config["eval"], "torch": torch.__version__}
         signature['batch_layout'] = 'packed'
         signature['batch_sampler'] = 'distributed_token_budget_v1'
+        if config['data'].get('balance_languages', False):
+            signature['language_balance'] = 'equal_audio_duration_v1'
         if assembly_fingerprint:
             signature.update(assembly_report_sha256=assembly_fingerprint,
                              speaker_conditioning='full_target_audio', generation_conditioning='other_training_utterance')
@@ -403,7 +407,9 @@ def main():
         sampler = DistributedTokenBatchSampler(
             [r['num_frames'] for r in train_data.rows],
             [r['num_frames'] + len(r['text_ids']) + text_special_tokens + prefix_tokens for r in train_data.rows],
-            settings['max_batch_frames'], settings['max_batch_tokens'], world_size=world, rank=rank, seed=seed)
+            settings['max_batch_frames'], settings['max_batch_tokens'], world_size=world, rank=rank, seed=seed,
+            languages=[r['language'] for r in train_data.rows] if config['data'].get('balance_languages', False) else None,
+            durations=[r['duration'] for r in train_data.rows] if config['data'].get('balance_languages', False) else None)
         # Bound the index stream so workers finish their last batch before exit,
         # instead of decoding prefetched audio beyond the requested stopping step.
         sampler.set_epoch(progress['epoch'], max_batches=progress['next_batch']

@@ -71,7 +71,8 @@ class DistributedTokenBatchSampler(Sampler):
     samples are dropped when they cannot seed a nonempty batch on every rank.
     """
 
-    def __init__(self, frame_lengths, token_lengths, max_frames, max_tokens, *, world_size, rank, seed):
+    def __init__(self, frame_lengths, token_lengths, max_frames, max_tokens, *, world_size, rank, seed,
+                 languages=None, durations=None):
         self.costs = list(zip(frame_lengths, token_lengths, strict=True))
         if max_frames < 1 or max_tokens < 1 or world_size < 1 or not 0 <= rank < world_size:
             raise ValueError('Batch budgets and world_size must be positive; rank must be in range')
@@ -83,6 +84,11 @@ class DistributedTokenBatchSampler(Sampler):
                                  f'{frames} frames / {tokens} tokens; limits {max_frames} / {max_tokens}')
         self.max_frames, self.max_tokens = max_frames, max_tokens
         self.world_size, self.rank, self.seed = world_size, rank, seed
+        self.languages, self.durations = languages, durations
+        if languages is not None:
+            if (len(languages) != len(self.costs) or durations is None or len(durations) != len(self.costs)
+                    or set(languages) != {'en', 'zh'} or any(not math.isfinite(d) or d <= 0 for d in durations)):
+                raise ValueError('Language balancing requires English/Chinese labels and positive audio durations for every sample')
         self.epoch = 0
         self.max_batches = None
         self._batches = None
@@ -97,6 +103,25 @@ class DistributedTokenBatchSampler(Sampler):
         if self._batches is not None:
             return self._batches
         order = torch.randperm(len(self.costs), generator=torch.Generator().manual_seed(self.seed + self.epoch)).tolist()
+        if self.languages is not None:
+            queues = {language: [i for i in order if self.languages[i] == language] for language in ('en', 'zh')}
+            target = max(sum(self.durations[i] for i in queue) for queue in queues.values())
+            elapsed = dict.fromkeys(queues, 0.)
+            cursors = dict.fromkeys(queues, 0)
+            generator = torch.Generator().manual_seed(self.seed + self.epoch)
+            order = []
+            # Cover the larger language once and repeat the smaller language to
+            # equalize audio exposure without discarding its counterpart's data.
+            while min(elapsed.values()) < target:
+                language = min(elapsed, key=elapsed.get)
+                queue = queues[language]
+                if cursors[language] == len(queue):
+                    queues[language] = queue = [queue[i] for i in torch.randperm(len(queue), generator=generator).tolist()]
+                    cursors[language] = 0
+                index = queue[cursors[language]]
+                order.append(index)
+                cursors[language] += 1
+                elapsed[language] += self.durations[index]
         batches, cursor = [], 0
         while len(order) - cursor >= self.world_size:
             group = [[i] for i in order[cursor:cursor + self.world_size]]

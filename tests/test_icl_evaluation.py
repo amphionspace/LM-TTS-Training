@@ -13,7 +13,8 @@ import torch
 from qwen3_train.data import CodeDataset, collate
 from qwen3_train.metrics import content_metrics
 from qwen3_train.train import evaluate_audio, generate_sample
-from qwen3_train.model import TTSModel, make_config
+from reference_model import ReferenceTTSModel
+from qwen3_train.model import make_config
 
 
 class IclEvaluationTests(unittest.TestCase):
@@ -107,7 +108,7 @@ class IclEvaluationTests(unittest.TestCase):
 
     def test_eos_is_suppressed_before_selection_for_two_new_frames(self):
         torch.set_num_threads(1)
-        model = TTSModel(make_config(tiny=True)).eval()
+        model = ReferenceTTSModel(make_config(tiny=True)).eval()
 
         class PreferEos(torch.nn.Module):
             def forward(self, hidden):

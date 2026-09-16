@@ -5,7 +5,8 @@ from torch.nn import functional as F
 from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
 
 from qwen3_train.data import collate
-from qwen3_train.model import TTSModel, make_config
+from reference_model import ReferenceTTSModel
+from qwen3_train.model import make_config
 
 
 class ProtocolTests(unittest.TestCase):
@@ -14,7 +15,7 @@ class ProtocolTests(unittest.TestCase):
         torch.manual_seed(91)
         speaker = Qwen3TTSSpeakerEncoderConfig(
             enc_dim=64, mel_dim=8, enc_channels=[16, 16, 16, 16, 48])
-        self.model = TTSModel(make_config(tiny=True), speaker).eval()
+        self.model = ReferenceTTSModel(make_config(tiny=True), speaker).eval()
         self.row = {'text_ids': [3, 7, 11], 'codes': torch.randint(0, 2048, (3, 16)),
                     'speaker_mels': torch.randn(32, 8)}
 

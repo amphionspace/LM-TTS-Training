@@ -11,6 +11,7 @@ from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
 from qwen3_train.assembly import initialize_model, vocabulary_plan, sha256, save_model
 from qwen3_train.model import make_config, TTSModel
+from reference_model import ReferenceTTSModel
 
 
 class AssemblyTests(unittest.TestCase):
@@ -127,7 +128,7 @@ class AssemblyTests(unittest.TestCase):
         from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
         from qwen3_train.data import collate
         cfg = Qwen3TTSSpeakerEncoderConfig(enc_dim=64, mel_dim=8, enc_channels=[16, 16, 16, 16, 48])
-        model = TTSModel(make_config(tiny=True), cfg).eval()
+        model = ReferenceTTSModel(make_config(tiny=True), cfg).eval()
         batch = collate([{"text_ids": [3, 5], "codes": torch.randint(0, 2048, (2, 16)),
                           "speaker_mels": torch.randn(32, 8)}])
         with torch.no_grad():
