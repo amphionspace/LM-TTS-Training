@@ -7,13 +7,14 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
 
+from ..config import read_yaml
 from ..data.build import file_hash
 from .audio import load_audio
 from .metrics import ASRScorer, aggregate_content
 from .quality import DNSMOS
 from .similarity import WavLMSimilarity, model_identity
+from .telemetry import write_evaluation
 
 
 def read_pairs(path):
@@ -38,7 +39,20 @@ def read_pairs(path):
 
 
 def evaluate(config_path, pairs_path, output, *, tensorboard=None, step=None):
-    config = yaml.safe_load(Path(config_path).read_text())
+    config = read_yaml(
+        config_path,
+        keys=(
+            "metrics",
+            "asr_model",
+            "dnsmos_model",
+            "speaker_model",
+            "speaker_device",
+            "speaker_chunk_seconds",
+            "max_audio_seconds",
+            "cpu_threads",
+            "tensorboard",
+        ),
+    )
     enabled = config["metrics"]
     if not enabled or not set(enabled) <= {"content", "quality", "similarity"}:
         raise ValueError("metrics must select content, quality and/or similarity")
@@ -132,11 +146,12 @@ def evaluate(config_path, pairs_path, output, *, tensorboard=None, step=None):
         from torch.utils.tensorboard import SummaryWriter
 
         with SummaryWriter(str(tensorboard)) as writer:
-            for key in ("dnsmos_ovrl", "speaker_similarity"):
-                if key in summary["overall"]:
-                    writer.add_scalar("eval/" + key, summary["overall"][key], step)
-            if asr:
-                for language, value in summary["languages"].items():
-                    key = "cer" if language in {"zh", "ja", "ko"} else "wer"
-                    writer.add_scalar(f"eval/{key}/{language}", value[key], step)
+            write_evaluation(
+                writer,
+                summary,
+                results,
+                step,
+                config.get("tensorboard", {}),
+                max_audio_seconds=config.get("max_audio_seconds", 180),
+            )
     return summary

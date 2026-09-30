@@ -10,6 +10,28 @@ export TOKENIZERS_PARALLELISM=false
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 # Variable packed batches can fragment cached CUDA allocations after resume.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+RUN_OUTPUT="$("$PYTHON_BIN" - "$@" <<'PY'
+import argparse
+from pathlib import Path
+from qwen3_train.config import read_yaml
+
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--config")
+parser.add_argument("--output")
+args, _ = parser.parse_known_args()
+if args.config:
+    settings = read_yaml(args.config)["train"]
+    output = args.output or settings.get("output")
+    if output is None:
+        output = Path(settings["runs_root"]) / settings["run_name"]
+    print(Path(output).resolve())
+PY
+)"
+if [[ -n "$RUN_OUTPUT" ]]; then
+    mkdir -p "$RUN_OUTPUT/logs"
+    LOG_PATH="$RUN_OUTPUT/logs/node-${NODE_RANK:-0}-$(date -u +%Y%m%dT%H%M%SZ)-$$.log"
+    exec > >(tee -a "$LOG_PATH") 2>&1
+fi
 NNODES="${NNODES:-1}"
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 if (( NNODES == 1 )); then

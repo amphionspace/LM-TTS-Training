@@ -1,102 +1,142 @@
 # LM-TTS-Training
 
-基于 Qwen3-TTS 的非流式预训练框架。从 Qwen3 text Base 初始化 Talker，默认冻结官方 text frontend 和 speaker encoder，训练音频预测模块。当前训练数据入口是 `tts-data-pipeline` 发布的 unified Lance features；旧 JSONL / NPZ 训练入口和实验专用脚本已移除。
+基于 Qwen3-TTS 的非流式训练框架，接入 `tts-data-pipeline` 发布的 unified Lance features。默认冻结官方 text frontend 和 speaker encoder，训练 Talker 和音频预测模块。训练使用 FSDP2，支持单机、多机、BF16 和 FP32；旧 JSONL / NPZ 训练入口已移除。
 
-| 目录 | 职责 |
+## 目录与资源
+
+| 位置 | 用途 |
 | --- | --- |
-| `qwen3_train/data/` | 发布检查、固定版本 build、批量读取、动态组批 |
-| `qwen3_train/models/` | 权重组装、输入协议、模型前向 |
-| `qwen3_train/objectives/` | EOS 与 residual codebook 目标、loss 归一化 |
-| `qwen3_train/training/` | 精度、FSDP2、优化器、调度器、checkpoint / resume |
-| `qwen3_train/evaluation/` | 验证 loss、ASR、DNSMOS、WavLM、报告 |
-| `configs/` | 数据配方、BF16 / FP32 训练、生成与评分配置 |
-| `scripts/` | 少量独立入口 |
+| `qwen3_train/data/` | feature 检查、训练 build、读取和组批 |
+| `qwen3_train/models/`、`objectives/` | 模型与输入协议、训练目标 |
+| `qwen3_train/training/`、`evaluation/` | 分布式训练、恢复、独立生成评分 |
+| `scripts/acp/` | ACP 提交和平台变量适配；训练模块不依赖 ACP |
+| `assets/base/` | 从 `/workspace/model` 复制的基础模型 |
+| `assets/evaluation/` | Whisper、DNSMOS、WavLM 评分模型 |
+| `assets/assembled/` | 本地预先组装好的训练模型 |
+| `data/builds/` | 训练侧的固定版本索引与 shallow clone |
+| `../acp/` | 平台 CLI 下载、凭据、配置和密钥 |
+| `../envs/lm-tts/` | 训练 Conda 环境 |
+| `/workspace/LM-TTS-Training-Runs/<run_name>/` | checkpoint、TensorBoard、日志和配置快照 |
 
-ACP CLI 位于 `/workspace/workspace/yanglin/acp`；Conda 环境位于 `/workspace/workspace/yanglin/envs/lm-tts`。训练代码只读取标准 PyTorch 分布式变量，不依赖 ACP。凭据不进入本仓库。
+`assets/`、`data/` 和运行产物均已 gitignore。基础、评估、assembled 模型相互独立；训练只加载已有 assembled 模型，缺少完成标记会失败，不会启动后组装或下载。
 
-## 环境与模型
+## 配置怎么改
+
+所有配置直接继承同一个 `base.yaml`，没有多级继承。ACP 参数放在同一个训练配置的 `acp` 区块；数据绑定、生成和评分分别使用各自配置。所有入口使用相同的 YAML 继承规则：`extends` 相对于当前文件，字典合并，列表整体替换；`${paths.project}` 等引用在合并后解析。
+
+| 配置 | 通常需要改什么 |
+| --- | --- |
+| `configs/base.yaml` | 唯一共享默认配置，按路径、通信、模型、数据、训练、ACP 分块 |
+| `configs/data.yaml` | 各数据集明确的 codec / speaker manifest，selection 和数据策略 |
+| `configs/train-bf16.yaml`、`train-fp32.yaml` | 实验名称、精度；需要时覆盖训练参数和 `acp.nodes` / `acp.image` |
+| `configs/synthesis.yaml`、`evaluation.yaml` | 生成参数、评分模型和音频预览数量 |
+
+新实验复制一份实验 YAML，继承 `base.yaml`，更换 `train.run_name`。恢复保持同名 run。`runs_root` 定义一次，checkpoint / TensorBoard / 日志从 run 目录派生，不需要在多个 YAML 重复写路径。修改训练精度、数据、batch 或优化器语义需要新实验；恢复要求相同 world size。
+
+## 准备环境和模型
 
 ```bash
 export ENV_PREFIX=/workspace/workspace/yanglin/envs/lm-tts
 export CONDA_BIN=/home/yanglin/miniforge3/bin/conda
 bash scripts/setup_env.sh
-export PYTHONPATH="$PWD"
-export HF_HOME=/workspace/workspace/yanglin/.cache/huggingface
-export NUMBA_CACHE_DIR=/workspace/workspace/yanglin/.cache/numba
 PY=$ENV_PREFIX/bin/python
-$PY -m scripts.assemble_qwen3_tts --output pretrained/assembled-qwen3-tts-frozen-conditioning
+# 本地复制基础权重、校验复制结果，然后组装并重新加载检查；不下载训练权重
+$PY -m scripts.prepare_models --config configs/train-bf16.yaml
+# 只有评分模型缺失时才需要下载
 $PY -m scripts.download_eval_models
 ```
 
-Python 3.11、torch 2.8.0 CUDA 12.6、FlashAttention 2.8.3.post1、transformers 4.57.3、pylance 12.0.0。已安装环境的完整快照在 `../envs/lm-tts.freeze.txt`；`requirements.lock.txt` 固定项目直接依赖。
+准备步骤在提交训练之前单独执行。已完成的模型可重复使用。环境为 Python 3.11、torch 2.8.0 / CUDA 12.6、transformers 4.57.3、FlashAttention 2.8.3.post1、pylance 12.0.0；直接依赖在 `requirements.lock.txt`，已安装环境快照在 `../envs/lm-tts.freeze.txt`。
 
-## Unified 数据
+## 数据到训练
 
-当前 selection：`tts-selection-supervised-tts-20260929T151539bjt-01`，128,220,178 条、约 357,507 小时。数据还在处理：codec 的 `.incomplete` 分片已能核对 K=16、词表 2048、12.5 frames/s、24kHz；最终文本列在 feature 发布时补齐。训练必须等待对应 codec 和 speaker manifest 的 `status=complete`。
-
-在 `configs/data_recipe.yaml` 填入**明确发布版本**的绑定，例如：
-
-```yaml
-bindings:
-  - codec_manifest: datasets/ljspeech/v0.1/features/codec/<published-run>/manifest.json
-    speaker_manifest: datasets/ljspeech/v0.1/features/speaker_embedding/<published-run>/manifest.json
-```
+当前正式 feature 尚未全部发布。`configs/data.yaml` 已列出计划发布路径，只有 codec 和 speaker 两份 manifest 均 `status=complete` 的绑定才能 build。先训练部分数据时保留已就绪的数据集绑定；不要指向 `.incomplete`。text / language 来自发布后的 codec 表，文本源于固定 selection 的 `selected_text` 或原始 samples 的 `text`，训练侧不生成转写。speaker embedding 是官方冻结 encoder 的 1024 维向量。
 
 ```bash
-$PY -m scripts.build_unified --recipe configs/data_recipe.yaml --output /workspace/data/DATA-TTS-UNIFIED/builds/tts-build-lmtts-20260930T140000bjt-01
+# 从实验配置派生数据配置和 build 输出路径
+$PY -m scripts.build_unified --config configs/train-bf16.yaml
+# 本地训练
+NPROC_PER_NODE=8 bash scripts/run_train.sh --config configs/train-bf16.yaml
+# FP32：使用独立样本 SDPA；BF16：使用变长 FlashAttention
+NPROC_PER_NODE=8 bash scripts/run_train.sh --config configs/train-fp32.yaml
+# 断点恢复
+NPROC_PER_NODE=8 bash scripts/run_train.sh --config configs/train-bf16.yaml --resume latest
 ```
 
-Build 对源 feature 创建新 Lance branch，添加 speaker 行定位符、可训练状态、token 缓存；不复制 codec、文本、原音频或 embedding。源 main 快照不变。manifest 固定 branch / version / profile / selection / tokenizer 哈希，未绑定数据集也记入未就绪覆盖；行定位符是该快照的逻辑行偏移，不是 `_rowid`。本阶段需要统一数据根目录的写权限以创建 branch。
+更换 selection、feature 版本或 tokenizer 时，修改 `data.build_id` 生成新 build；同一份 build 可以供 BF16 和 FP32 训练复用。
 
-一次性构建使用本地 SQLite 校验 target ID、音频哈希、原生采样率和区间一致性；训练阶段只按批次投影读取 codec 与 speaker，不做全量 join 或重算 embedding。当前 plan 按所有就绪 utterance 均匀采样，不做语言 / 质量加权；这些采样策略与 feature 构建分离。抽样元数据使用 mmap，shuffle 和 rank 分配使用有界窗口；不把亿级样本列表或整 epoch 批次放入 Python 内存。缺失 / 失败 feature 有独立覆盖计数，身份冲突直接失败。中断 build 不发布完整 manifest，使用新 build ID 重建；无需重算已有 feature。
+Build 只写训练 repo 内的 `data/builds/`，不修改 unified 源表或 branch。Lance shallow clone 引用固定版源 payload，训练侧添加 speaker 定位符和 token 缓存；源文件必须保留。未绑定、缺失或失败的 feature 都有覆盖计数，身份冲突直接失败。训练按就绪 utterance 均匀无放回采样，使用 mmap 索引与有界 shuffle，读取时批量投影 codec / speaker，不在线重算 embedding。
 
-当前 selection 未隔离评估集，配置明确声明 `no_holdout`。不会从训练集复制一份冒充验证集；验证 loss 需要另行发布隔离后的训练 / 验证 build。新框架不继续旧格式 run 的 checkpoint，历史实验及其数据、音频和源码归档仍按 [保留规则](runs/README.md) 保留。
+`base.yaml` 的 `environment` 统一定义通信默认值：`NCCL_IB_TIMEOUT=22`、`NCCL_IB_RETRY_CNT=13`、`NCCL_IB_AR_THRESHOLD=0`，按当前 [商汤 ACP 建议](https://www.sensecore.cn/help/docs/cloud-foundation/compute/acp/acpUserGuide/acpEnvironmentVariable) 设置。本地训练保留显式 shell 环境覆盖，ACP 提交将这些值注入所有节点；更换网络环境时需按对应 NCCL / 驱动要求调整。
 
-## 训练与恢复
+多机在各节点运行同一入口，设置 `NNODES`、不同的 `NODE_RANK`、相同的 `MASTER_ADDR` / `MASTER_PORT`、`NPROC_PER_NODE`。两种精度都保留 FP32 master weights、梯度归约和 cross entropy，关闭 TF32。feature 提取精度与训练精度分别记录。
+
+## ACP 提交
 
 ```bash
-NPROC_PER_NODE=8 bash scripts/run_train.sh --config configs/unified.yaml
-# 原生 FP32，自动选择 SDPA
-NPROC_PER_NODE=8 bash scripts/run_train.sh --config configs/unified-fp32.yaml
-# 相同 world size、数据、精度、batch、优化器与 schedule 下恢复
-NPROC_PER_NODE=8 bash scripts/run_train.sh --config configs/unified.yaml --resume latest
+# 查看实际请求，不创建任务
+$PY -m scripts.acp.submit --config configs/train-bf16.yaml --nodes 4
+# 创建 4 节点任务；当前规格每节点 8 张 A800
+$PY -m scripts.acp.submit --config configs/train-bf16.yaml --nodes 4 --submit
+# 恢复同一个 run
+$PY -m scripts.acp.submit --config configs/train-bf16.yaml --nodes 4 --resume latest --submit
+# 验证启动、BF16 / FP32、断点恢复和评分接口，使用微型模型
+$PY -m scripts.acp.submit --validate --nodes 4 --run-name check-32gpu --submit
 ```
 
-多机时每台运行同一入口，设置 `NNODES`、各自的 `NODE_RANK`、相同的 `MASTER_ADDR` / `MASTER_PORT`、`NPROC_PER_NODE`。支持跨节点 FSDP2。ACP 变量转换由外部 `../acp/launch.sh` 完成。BF16 使用变长 FlashAttention，FP32 使用独立样本的 SDPA padding；两者 master weights、梯度归约和 cross entropy 保持 FP32。TF32 关闭。离线 feature 的提取精度属于 feature profile，与训练精度分别记录。
+SSH 免密和平台 TensorBoard 默认开启。同一个实验 YAML 中的 `acp` 区块只由提交器读取，训练核心收到的配置不包含它。每次提交保存代码快照、解析后的实验配置、请求与返回的 job ID 到 `submissions/<timestamp>/`，任务使用该代码快照。凭据只从 `../acp/.credentials.json` 读取。
 
-按全体 rank 与所有累积 microbatch 的真实分母归一化 loss，支持 token / sample / sqrt。checkpoint 保存优化器、scheduler、各 rank RNG、epoch 和下一批位置；只有完整写入后才更新 latest。操作参数允许调整，改变数据或训练语义会拒绝恢复。当前要求恢复时保持 world size。
+所有 run 直接保存在 `/workspace/LM-TTS-Training-Runs/<run_name>`。ACP 将这个统一 Runs 目录挂载给 TensorBoard，不再创建 `/workspace/lmtts-<run_name>`；页面中按 run 名选择实验。平台只扫描本项目 Runs，训练、数据、模型目录不作为 TensorBoard 根目录。
+
+也可以在开发机用下方命令启动独立仪表盘，只读取一个 run。若不需要平台页面，将 `acp.tensorboard` 改成 `local`。平台模式要求 `paths.runs` 是 AFS 一级目录；选择其他嵌套路径时使用独立仪表盘即可。历史 Runs 旧路径保留链接以维护已发布 build 的绝对引用，新配置统一使用新路径。
+
+## 日志与 TensorBoard
+
+每个 run 包含 `checkpoints/`、`tensorboard/`、`logs/`、`metrics.jsonl`、有效 `config.json` 和源 `config.yaml`。`checkpoints/latest` 指向最后一个完整 checkpoint；恢复会继续同名 run。每节点启动输出分别保存到 `logs/`。
+
+默认写入三组训练指标，在 `train.tensorboard.groups` 中选择；空列表关闭 scalar 组。
+
+| 组 | 内容 |
+| --- | --- |
+| `optimization` | 总 loss、首码本 / residual CE、两组学习率、梯度范数 |
+| `performance` | 音频秒吞吐、每步耗时、数据等待、rank 0 每步峰值显存 |
+| `batch` | 全局有效样本数、音频秒数、codec token 数；包含梯度累积 |
+
+`Custom Scalars` 提供 loss、学习率、耗时组合图；`Scalars` 查看单曲线，`Text` 查看训练配置。真正隔离的 validation build 可写入 validation loss 和两项 CE。当前 selection 未划分 holdout，默认 `no_holdout`，不会伪造验证曲线。
+
+评估写入 WER / CER、DNSMOS SIG / BAK / OVRL 和 speaker cosine；多语言额外显示适合该语言的误差。`Audio` 对照参考 / 生成音频，`Text` 显示目标文本和 ASR 转写。默认预览前两对音频的前 20 秒，可在 `evaluation.yaml` 的 `tensorboard` 中调整；预览裁剪不影响完整音频评分。DNSMOS 是预测音质分，不等于人工 MOS。
+
+```bash
+# 在开发机打开指定 run，打印地址；远程访问需转发 6006 端口
+$PY -m scripts.tensorboard --run unified-bf16
+# 旧 run 曲线较少时，从日志恢复；不重新训练
+$PY -m scripts.tensorboard --run acp-20260930-32gpu --rebuild-only
+```
+
+恢复日志写在 `tensorboard/restored/`，保留原始事件。选择 restored 对应的 run 查看。历史日志没有记录的指标不会被补造。
 
 ## 生成与评分
 
-训练中的验证 loss 与生成评分分开。ASR / 音质 / 相似度模型独立加载，避免阻塞 FSDP 的更新和集合通信。可以在保存 checkpoint 后另行调度评估。
-
-`prompts.json` 是固定评估集合的 JSON 数组，每条包含 `id`、`text`、ISO `language` 和 `reference_audio`。引用同说话人的另一条录音；目标文本不作为 ICL 参考文本。评估集应与训练数据隔离，当前 `no_holdout` 的训练本身不作泛化声明。
+生成评分独立于训练进程，在 checkpoint 保存后单独执行，避免评分模型阻塞分布式更新。`prompts.json` 是固定集合的数组，每条包含 `id`、`text`、ISO `language`、`reference_audio`；reference 使用同说话人的另一条录音。评估集应与训练隔离。
 
 ```bash
-$PY -m scripts.export_checkpoint --checkpoint runs/unified-bf16/checkpoints/step-00000500 \
-  --assembled-model pretrained/assembled-qwen3-tts-frozen-conditioning --output artifacts/export-500
-$PY -m scripts.synthesize --model artifacts/export-500 --config configs/synthesis.yaml \
-  --prompts prompts.json --output artifacts/generated-500
-$PY -m scripts.evaluate --config configs/evaluation.yaml --pairs artifacts/generated-500/pairs.json \
-  --output artifacts/scores-500 --tensorboard runs/unified-bf16/tensorboard --step 500
+RUN=/workspace/LM-TTS-Training-Runs/unified-bf16
+$PY -m scripts.export_checkpoint --checkpoint "$RUN/checkpoints/step-00000500" \
+  --assembled-model assets/assembled/qwen3-tts-frozen-conditioning --output "$RUN/export-500"
+$PY -m scripts.synthesize --model "$RUN/export-500" --config configs/synthesis.yaml \
+  --prompts prompts.json --output "$RUN/generated-500"
+$PY -m scripts.evaluate --config configs/evaluation.yaml --pairs "$RUN/generated-500/pairs.json" \
+  --output "$RUN/evaluations/step-500" --tensorboard "$RUN/tensorboard" --step 500
 ```
 
-评分也接受已有生成音频：pairs 数组增加 `audio` 字段即可。报告保留每条结果、各语言 corpus WER / CER、所有计数、权重文件哈希、音频哈希和评分参数。
+Whisper small 用于内容误差，DNSMOS P.835 用于音质，WavLM base-plus-sv 用于归一化 x-vector cosine。评分报告保存每条结果、语言汇总、权重 / 音频哈希及参数。相似度没有通用及格阈值。已有音频也可直接评分：pairs 在 prompts 字段基础上增加 `audio`。
 
-- ASR：固定版本多语言 Whisper small，中文 / 日文 / 韩文重点看 CER，其他语言看 WER。
-- 音质：[Microsoft DNSMOS P.835](https://github.com/microsoft/DNS-Challenge/tree/master/DNSMOS)，保存 SIG / BAK / OVRL，仪表盘只显示 OVRL。16kHz、9.01 秒窗、1 秒 hop、短录音重复、官方非个性化校准；采用整数样本边界。它是模型预测分数，不是人工 MOS。
-- 相似度：[Microsoft WavLM base-plus-sv](https://huggingface.co/microsoft/wavlm-base-plus-sv) 的归一化 x-vector cosine。使用独立参考录音，16kHz、FP32；长录音分均匀段提取后平均归一化向量，不设置通用的相似度及格阈值。该模型的 VoxCeleb 适配分布也应纳入跨语言结果解释。
-
-TensorBoard 只保留 `train/loss`、`train/lr`、`train/audio_seconds_per_second`、可用的 `val/loss`、各语言一个内容误差、`eval/dnsmos_ovrl`、`eval/speaker_similarity`。codebook 明细、梯度、显存、计数和等待时间保存在 JSON 日志。日志目录在 AFS，ACP TensorBoard 可读取同一路径。
-
-## 验证
+## 验证与边界
 
 ```bash
 $PY -m pytest -q
-CUDA_VISIBLE_DEVICES=0,1 PYTHONPATH=.:tests $PY -m torch.distributed.run --standalone --nproc_per_node=2 \
-  tests/check_distributed_equivalence.py --qwen-protocol --speaker --frozen-speaker --frozen-frontend
-CUDA_VISIBLE_DEVICES=0,1 PYTHONPATH=.:tests $PY tests/check_training_resume.py \
-  --output artifacts/resume-check --precision fp32
 ```
 
-[本次验证和限制](docs/training/unified-refactor.md)。`docs/` 中其他 Emilia / JSONL / NPZ 文档记录历史实验，不再作为当前启动说明。
+真实 ACP 4 节点 32 张 A800 作业 `pt-ughagq38` 已成功：BF16 和 FP32 各完成连续训练与 2+2 步恢复，全部权重逐位一致，冻结模块未变，评分接口通过。报告在 `/workspace/LM-TTS-Training-Runs/acp-20260930-32gpu/result.json`。微型模型验证功能，不能代表完整模型吞吐。CSEMOTIONS 的独立完整 feature 用于真实数据读取验证；正式 selection 仍等待处理完成。
+
+更多数值证据见 [验证记录](docs/training/unified-refactor.md)。历史 run 按 [保留规则](runs/README.md) 保存，旧文档不作为当前启动说明。

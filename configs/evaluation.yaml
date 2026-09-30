@@ -1,8 +1,20 @@
+extends: base.yaml
+
+# ---- 评分项目：可移除暂时不需要的项目 ----
 metrics: [content, quality, similarity]
-asr_model: /workspace/workspace/yanglin/assets/evaluation/faster-whisper-small
-dnsmos_model: /workspace/workspace/yanglin/assets/evaluation/DNSMOS/sig_bak_ovr.onnx
-speaker_model: /workspace/workspace/yanglin/assets/evaluation/wavlm-base-plus-sv
+
+# ---- 评分模型：独立于基础模型和 assembled 模型 ----
+asr_model: ${paths.evaluation_models}/faster-whisper-small
+dnsmos_model: ${paths.evaluation_models}/DNSMOS/sig_bak_ovr.onnx
+speaker_model: ${paths.evaluation_models}/wavlm-base-plus-sv
+
+# ---- 资源与音频限制：不占用训练进程中的 GPU ----
 speaker_device: cpu
 speaker_chunk_seconds: 10
 max_audio_seconds: 180
 cpu_threads: 4
+
+# ---- TensorBoard：仅裁剪试听预览，完整音频仍参与评分 ----
+tensorboard:
+  audio_samples: 2              # 0 关闭音频预览
+  audio_seconds: 20

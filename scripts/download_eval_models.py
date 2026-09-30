@@ -1,4 +1,4 @@
-"""Fetch immutable official evaluation weights outside the repository."""
+"""Fetch immutable official evaluation weights into the ignored assets directory."""
 
 import argparse
 import urllib.request
@@ -26,7 +26,7 @@ DNS_REVISION = "591184a9fcb2cbdec02520fed81a32bbbf9d73ff"
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--output", type=Path, default=Path(__file__).resolve().parents[2] / "assets/evaluation"
+        "--output", type=Path, default=Path(__file__).resolve().parents[1] / "assets/evaluation"
     )
     args = parser.parse_args()
     for repo, revision, name, patterns in MODELS:

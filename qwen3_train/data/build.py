@@ -10,8 +10,9 @@ from pathlib import Path
 import lance
 import numpy as np
 import pyarrow as pa
-import yaml
 from transformers import AutoTokenizer
+
+from ..config import read_yaml
 
 INDEX_DTYPE = np.dtype(
     [
@@ -74,7 +75,18 @@ def feature_reference(root, path, kind):
     path = Path(path)
     path = (root / path).resolve() if not path.is_absolute() else path.resolve()
     manifest = read_complete(path, kind)
-    release = root / "datasets" / manifest["dataset_id"] / manifest["release_id"]
+    release = next(
+        (
+            p
+            for p in path.parents
+            if p.name == manifest["release_id"]
+            and p.parent.name == manifest["dataset_id"]
+            and p.parent.parent.name == "datasets"
+        ),
+        None,
+    )
+    if release is None:
+        raise ValueError("Feature manifest must live within datasets/<dataset>/<release>")
     reference = {
         "manifest_path": str(path),
         "manifest_sha256": file_hash(path),
@@ -108,7 +120,18 @@ def tokenizer_identity(directory):
 
 
 def create_build(recipe_path, output):
-    recipe = yaml.safe_load(Path(recipe_path).read_text())
+    recipe = read_yaml(
+        recipe_path,
+        keys=(
+            "root",
+            "selection_manifest",
+            "tokenizer",
+            "reference_policy",
+            "speaker_conditioning_mode",
+            "evaluation",
+            "bindings",
+        ),
+    )
     root = Path(recipe["root"]).resolve()
     selection_path = root / recipe["selection_manifest"]
     selection = read_complete(selection_path)
@@ -152,6 +175,8 @@ def bind_features(
                 root, binding["speaker_manifest"], "speaker_embedding"
             )
             dataset = codec["dataset_id"]
+            if binding.get("dataset_id", dataset) != dataset:
+                raise ValueError("Configured dataset_id differs from the feature manifest")
             if dataset in datasets:
                 raise ValueError("The first build requires one codec/speaker binding per dataset")
             datasets.add(dataset)
@@ -331,8 +356,12 @@ def bind_features(
                         row_offset += len(records)
                         yield pa.RecordBatch.from_pylist(rows, schema=schema)
 
-                branch = codec_table.create_branch(name, codec_ref["lance_version"])
-                branch.add_columns(
+                # A local shallow clone references immutable source payload files.
+                # Training metadata never changes the published feature dataset.
+                build_table = codec_table.shallow_clone(
+                    output / f"codec-{slot:03d}.lance", codec_ref["lance_version"]
+                )
+                build_table.add_columns(
                     pa.RecordBatchReader.from_batches(schema, columns()), batch_size=4096
                 )
                 if db.execute("SELECT COUNT(*) FROM selected WHERE seen=0").fetchone()[0]:
@@ -340,12 +369,17 @@ def bind_features(
                 db.close()
             index.flush()
             index = None
-            branch_ref = {**codec_ref, "branch": name, "lance_version": branch.version}
+            build_ref = {
+                **codec_ref,
+                "table_path": str(output / f"codec-{slot:03d}.lance"),
+                "branch": None,
+                "lance_version": build_table.version,
+            }
             # Re-read added locators, independent of the generator callback order.
             observed = 0
             stored = np.load(index_path, mmap_mode="r")
             offset = 0
-            for batch in branch.scanner(
+            for batch in build_table.scanner(
                 columns=["build_ready", "speaker_row", "num_codec_frames", "num_text_tokens"],
                 scan_in_order=True,
                 batch_size=8192,
@@ -358,7 +392,7 @@ def bind_features(
                             r["num_codec_frames"],
                             r["num_text_tokens"],
                         ) or r["speaker_row"] is None:
-                            raise ValueError("Build branch/index round-trip differs")
+                            raise ValueError("Build table/index round-trip differs")
                         observed += 1
                 offset += batch.num_rows
             if observed != ready or open_snapshot(codec_ref).count_rows() != codec["rows"]:
@@ -369,7 +403,8 @@ def bind_features(
                 {
                     "binding_slot": slot,
                     "dataset_id": dataset,
-                    "codec": branch_ref,
+                    "codec": build_ref,
+                    "source_codec": codec_ref,
                     "speaker": speaker_ref,
                     "speaker_profile": speaker["profile"],
                     "sampling_index": index_path.name,

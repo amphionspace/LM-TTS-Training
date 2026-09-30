@@ -12,8 +12,12 @@ pyarrow==25.0.0
 soundfile==0.13.1
 PyYAML==6.0.3
 safetensors==0.6.2
-tensorboard==2.20.0
+tensorboard==2.21.0
 faster-whisper==1.2.1
 onnxruntime==1.30.0
 av==18.1.0
 scipy==1.15.3
+
+# Validation tools used by the documented checks.
+pytest==8.4.2
+ruff==0.12.12

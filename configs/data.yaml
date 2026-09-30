@@ -1,0 +1,79 @@
+extends: base.yaml
+
+# ---- 固定 selection 与 tokenizer：text/language 已包含在发布后的 codec 表中 ----
+root: ${paths.features}
+selection_manifest: selections/tts-selection-supervised-tts-20260929T151539bjt-01/manifest.json
+tokenizer: ${paths.assembled_model}
+
+# ---- 配对策略：使用缓存 speaker embedding，当前不声明隔离评估集 ----
+reference_policy: self
+speaker_conditioning_mode: frozen_embedding
+evaluation: no_holdout
+
+# ---- 数据集绑定：只使用 status=complete 的 manifest，不指向 .incomplete ----
+# 以下为正式任务的预期发布路径；先训练部分数据时，保留已就绪的绑定即可。
+bindings:
+
+- dataset_id: aishell3
+  codec_manifest: datasets/aishell3/v0.1/features/codec/aishell3-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/aishell3/v0.1/features/speaker_embedding/aishell3-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: csemotions
+  codec_manifest: datasets/csemotions/v0.1/features/codec/csemotions-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/csemotions/v0.1/features/speaker_embedding/csemotions-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: emilia
+  codec_manifest: datasets/emilia/v0.1/features/codec/emilia-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/emilia/v0.1/features/speaker_embedding/emilia-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: emilia_yodas
+  codec_manifest: datasets/emilia_yodas/v0.1/features/codec/emilia_yodas-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/emilia_yodas/v0.1/features/speaker_embedding/emilia_yodas-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: galgame
+  codec_manifest: datasets/galgame/v0.1/features/codec/galgame-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/galgame/v0.1/features/speaker_embedding/galgame-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: genshin_voice
+  codec_manifest: datasets/genshin_voice/v0.1/features/codec/genshin_voice-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/genshin_voice/v0.1/features/speaker_embedding/genshin_voice-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: hifitts
+  codec_manifest: datasets/hifitts/v0.1/features/codec/hifitts-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/hifitts/v0.1/features/speaker_embedding/hifitts-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: hifitts2
+  codec_manifest: datasets/hifitts2/v0.1/features/codec/hifitts2-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/hifitts2/v0.1/features/speaker_embedding/hifitts2-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: libriheavy
+  codec_manifest: datasets/libriheavy/v0.1/features/codec/libriheavy-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/libriheavy/v0.1/features/speaker_embedding/libriheavy-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: libritts_r
+  codec_manifest: datasets/libritts_r/v0.1/features/codec/libritts_r-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/libritts_r/v0.1/features/speaker_embedding/libritts_r-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: ljspeech
+  codec_manifest: datasets/ljspeech/v0.1/features/codec/ljspeech-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/ljspeech/v0.1/features/speaker_embedding/ljspeech-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: mls_sidon
+  codec_manifest: datasets/mls_sidon/v0.1/features/codec/mls_sidon-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/mls_sidon/v0.1/features/speaker_embedding/mls_sidon-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: starrail_voice
+  codec_manifest: datasets/starrail_voice/v0.1/features/codec/starrail_voice-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/starrail_voice/v0.1/features/speaker_embedding/starrail_voice-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: vctk
+  codec_manifest: datasets/vctk/v0.1/features/codec/vctk-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/vctk/v0.1/features/speaker_embedding/vctk-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: wenetspeech4tts
+  codec_manifest: datasets/wenetspeech4tts/v0.1/features/codec/wenetspeech4tts-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/wenetspeech4tts/v0.1/features/speaker_embedding/wenetspeech4tts-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json
+
+- dataset_id: wutheringwaves
+  codec_manifest: datasets/wutheringwaves/v0.1/features/codec/wutheringwaves-codec-qwen3-12hz-24k-k16-fp32-packed-v1-20260930T024146bjt-01/manifest.json
+  speaker_manifest: datasets/wutheringwaves/v0.1/features/speaker_embedding/wutheringwaves-speaker_embedding-qwen3-ecapa-24k-fp32-packed-v1-20260930T130829bjt-01/manifest.json

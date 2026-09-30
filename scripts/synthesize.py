@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 import torch
-import yaml
 
+from qwen3_train.config import read_yaml
 from qwen3_train.data.build import file_hash
 
 
@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--prompts", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    config = yaml.safe_load(args.config.read_text())
+    config = read_yaml(args.config, keys=("precision", "device", "seed", "generation"))
     if config["precision"] not in {"bf16", "fp32"}:
         raise ValueError("precision must be bf16 or fp32")
     dtype = torch.bfloat16 if config["precision"] == "bf16" else torch.float32

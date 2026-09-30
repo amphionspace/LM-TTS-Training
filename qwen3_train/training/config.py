@@ -3,17 +3,37 @@
 import math
 from pathlib import Path
 
-import yaml
-
+from ..config import read_yaml
 from ..objectives.tts import LOSS_REDUCTION_EXPONENTS
 from .precision import training_precision
+from .telemetry import tensorboard_groups
 
 
 def load_config(path):
-    config = yaml.safe_load(Path(path).read_text())
+    config = read_yaml(
+        path, keys=("paths", "environment", "seed", "model", "data", "train", "eval")
+    )
     model, data, train = (config[k] for k in ("model", "data", "train"))
+    if "run_name" in train or "runs_root" in train:
+        name = train.get("run_name")
+        if (
+            not isinstance(name, str)
+            or not name
+            or name in {".", ".."}
+            or Path(name).name != name
+            or not train.get("runs_root")
+        ):
+            raise ValueError("Specify runs_root and a directory-safe run_name")
+        output = Path(train["runs_root"]).resolve() / name
+        if train.get("output") and Path(train["output"]).resolve() != output:
+            raise ValueError("output conflicts with runs_root/run_name")
+        train["output"] = str(output)
+    elif not train.get("output"):
+        raise ValueError("Training requires runs_root/run_name or an explicit output")
+    config["config_path"] = str(Path(path).resolve())
     train.setdefault("precision", "bf16")
     training_precision(train, model)
+    tensorboard_groups(train)
     if train.get("loss_reduction", "token") not in LOSS_REDUCTION_EXPONENTS:
         raise ValueError("train.loss_reduction must be token, sqrt or sample")
     defaults = {

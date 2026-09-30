@@ -23,12 +23,7 @@ from qwen3_train.models.assembly import save_model
 from qwen3_train.models.qwen import make_config
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--precision", choices=["bf16", "fp32"], default="fp32")
-    args = parser.parse_args()
-    root = args.output.resolve()
+def prepare(root, precision, num_rows=8):
     root.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(2)
     torch.manual_seed(123)
@@ -55,7 +50,7 @@ def main():
     save_model(model, assembled)
     tokenizer = Tokenizer(
         WordLevel(
-            {"[PAD]": 0, "[UNK]": 1, "hello": 2, **{str(i): i + 3 for i in range(8)}},
+            {"[PAD]": 0, "[UNK]": 1, "hello": 2, **{str(i): i + 3 for i in range(num_rows)}},
             unk_token="[UNK]",
         )
     )
@@ -86,7 +81,9 @@ def main():
         )
     )
     (assembled / "ASSEMBLY_COMPLETE").write_text("ok\n")
-    recipe, selection, path = fixture(root / "unified", embedding_dim=64, speaker_profile=profile)
+    recipe, selection, path = fixture(
+        root / "unified", embedding_dim=64, speaker_profile=profile, num_rows=num_rows
+    )
     bind_features(
         recipe,
         root / "build",
@@ -101,14 +98,14 @@ def main():
         "model": {"assembled_model": str(assembled), "activation_checkpointing": True},
         "data": {"build": str(root / "build/manifest.json"), "evaluation": "no_holdout"},
         "train": {
-            "precision": args.precision,
+            "precision": precision,
             "max_steps": 4,
             "schedule_steps": 4,
             "warmup_steps": 1,
             "lr": 0.0001,
             "backbone_lr": 0.00001,
-            "max_batch_frames": 12,
-            "max_batch_tokens": 100,
+            "max_batch_frames": max(12, num_rows + 1),
+            "max_batch_tokens": max(100, num_rows + 16),
             "accumulation": 2,
             "num_workers": 1,
             "log_every": 1,
@@ -118,16 +115,104 @@ def main():
         "eval": {"batch_size": 2},
     }
 
-    def train(name, steps, resume=False):
-        experiment["train"]["output"] = str(root / name)
+    for name in ("continuous", "resumed"):
+        experiment["train"]["runs_root"] = str(root)
+        experiment["train"]["run_name"] = name
         cfg = root / (name + ".yaml")
         cfg.write_text(yaml.safe_dump(experiment))
+
+
+def compare(root, precision, world_size):
+    weights = []
+    for name in ["continuous", "resumed"]:
+        destination = root / (name + "-export")
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "scripts.export_checkpoint",
+                "--checkpoint",
+                str(root / name / "checkpoints/step-00000004"),
+                "--assembled-model",
+                str(root / "assembled"),
+                "--output",
+                str(destination),
+            ],
+            check=True,
+            timeout=180,
+        )
+        weights.append(load_file(destination / "model.safetensors"))
+    largest = 0.0
+    for key in weights[0]:
+        torch.testing.assert_close(weights[0][key], weights[1][key], atol=0, rtol=0)
+        largest = max(largest, (weights[0][key] - weights[1][key]).abs().max().item())
+    baseline = load_file(root / "assembled/model.safetensors")
+    frozen = ("speaker_encoder.", "talker.model.text_embedding.", "talker.text_projection.")
+    for key in baseline:
+        if key.startswith(frozen):
+            torch.testing.assert_close(baseline[key], weights[0][key], atol=0, rtol=0)
+    updated = [
+        "talker.model.layers.",
+        "talker.model.codec_embedding.",
+        "talker.codec_head.",
+        "talker.code_predictor.",
+    ]
+    for prefix in updated:
+        if not any(
+            not torch.equal(baseline[key], weights[0][key])
+            for key in baseline
+            if key.startswith(prefix)
+        ):
+            raise AssertionError(f"No optimizer update in {prefix}")
+    result = {
+        "status": "passed",
+        "precision": precision,
+        "max_resume_weight_difference": largest,
+        "world_size": world_size,
+        "updated_modules": updated,
+        "frozen_modules_unchanged": True,
+        "checkpoint_metadata": {
+            name: json.loads((root / name / "checkpoints/step-00000004/metadata.json").read_text())
+            for name in ("continuous", "resumed")
+        },
+    }
+    (root / "comparison.json").write_text(json.dumps(result, indent=2))
+    print(json.dumps({key: value for key, value in result.items() if key != "checkpoint_metadata"}))
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--precision", choices=["bf16", "fp32"], default="fp32")
+    parser.add_argument("--rows", type=int, default=8)
+    parser.add_argument("--world-size", type=int, default=2)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--prepare-only", action="store_true")
+    mode.add_argument("--compare-only", action="store_true")
+    args = parser.parse_args()
+    if (
+        not 8 <= args.rows <= 128
+        or args.world_size < 1
+        or (not args.compare_only and args.world_size > args.rows)
+    ):
+        parser.error("rows must be 8..128 and cover every rank")
+    root = args.output.resolve()
+    if args.compare_only:
+        compare(root, args.precision, args.world_size)
+        return
+    prepare(root, args.precision, args.rows)
+    if args.prepare_only:
+        print(json.dumps({"prepared": str(root), "rows": args.rows}))
+        return
+
+    def train(name, steps, resume=False):
+        cfg = root / (name + ".yaml")
         argv = [
             sys.executable,
             "-m",
             "torch.distributed.run",
             "--standalone",
-            "--nproc_per_node=2",
+            f"--nproc_per_node={args.world_size}",
             "-m",
             "qwen3_train.train",
             "--config",
@@ -143,39 +228,7 @@ def main():
     train("continuous", 4)
     train("resumed", 2)
     train("resumed", 4, resume=True)
-    weights = []
-    for name in ["continuous", "resumed"]:
-        destination = root / (name + "-export")
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "scripts.export_checkpoint",
-                "--checkpoint",
-                str(root / name / "checkpoints/step-00000004"),
-                "--assembled-model",
-                str(assembled),
-                "--output",
-                str(destination),
-            ],
-            check=True,
-            timeout=120,
-        )
-        weights.append(load_file(destination / "model.safetensors"))
-    largest = 0.0
-    for key in weights[0]:
-        torch.testing.assert_close(weights[0][key], weights[1][key], atol=0, rtol=0)
-        largest = max(largest, (weights[0][key] - weights[1][key]).abs().max().item())
-    print(
-        json.dumps(
-            {
-                "status": "passed",
-                "precision": args.precision,
-                "max_resume_weight_difference": largest,
-                "world_size": 2,
-            }
-        )
-    )
+    compare(root, args.precision, args.world_size)
 
 
 if __name__ == "__main__":

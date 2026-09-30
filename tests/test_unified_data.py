@@ -21,12 +21,12 @@ class Tokenizer:
         return {"input_ids": [[ord(c) % 128 for c in text] for text in texts]}
 
 
-def fixture(root, embedding_dim=1024, speaker_profile=None):
+def fixture(root, embedding_dim=1024, speaker_profile=None, num_rows=8):
     release = root / "datasets/test/v0.1"
     release.mkdir(parents=True)
-    ids = [f"{i:064x}" for i in range(8)]
+    ids = [f"{i:064x}" for i in range(num_rows)]
     source = lance.write_dataset(
-        pa.table({"sample_id": ids, "selection_reason": [0] * 8}), release / "samples.lance"
+        pa.table({"sample_id": ids, "selection_reason": [0] * num_rows}), release / "samples.lance"
     )
     selected = source.create_branch("selection", source.version)
     selection = {
@@ -37,7 +37,7 @@ def fixture(root, embedding_dim=1024, speaker_profile=None):
                 "table_path": "datasets/test/v0.1/samples.lance",
                 "branch": "selection",
                 "lance_version": selected.version,
-                "selected_rows": 8,
+                "selected_rows": num_rows,
             }
         ],
     }
@@ -124,7 +124,7 @@ def fixture(root, embedding_dim=1024, speaker_profile=None):
             "target_kind": "sample",
             "dataset_id": "test",
             "release_id": "v0.1",
-            "rows": 8,
+            "rows": num_rows,
             "lance_version": table.version,
             "profile_id": profile,
             "profile": definition,
@@ -152,6 +152,9 @@ class UnifiedDataTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             recipe, selection, path = fixture(root)
+            source_files = {
+                p.relative_to(root): file_hash(p) for p in root.rglob("*") if p.is_file()
+            }
             output = root / "tts-build-test"
             manifest = bind_features(
                 recipe,
@@ -163,6 +166,26 @@ class UnifiedDataTests(unittest.TestCase):
                 Tokenizer(),
             )
             self.assertEqual(manifest["bindings"][0]["coverage"], {"ready": 8})
+            self.assertEqual(
+                {
+                    p.relative_to(root): file_hash(p)
+                    for p in root.rglob("*")
+                    if p.is_file() and not p.is_relative_to(output)
+                },
+                source_files,
+            )
+            binding = manifest["bindings"][0]
+            self.assertTrue(Path(binding["codec"]["table_path"]).is_relative_to(output))
+            source_payloads = {
+                checksum for p, checksum in source_files.items() if p.suffix == ".lance"
+            }
+            self.assertTrue(
+                all(
+                    file_hash(p) not in source_payloads
+                    for p in output.rglob("*.lance")
+                    if p.is_file()
+                )
+            )
             ds = FeatureDataset(output / "manifest.json", (200, 201))
             ds.validate_budgets(8, 100)
             with self.assertRaisesRegex(ValueError, "exceeding"):

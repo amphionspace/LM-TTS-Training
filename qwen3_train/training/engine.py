@@ -23,6 +23,7 @@ from ..objectives.tts import loss_normalizers, tts_loss
 from .checkpoint import load_checkpoint, save_checkpoint
 from .distributed import initialize, move, shard
 from .precision import training_precision
+from .telemetry import setup_dashboard, tensorboard_groups, write_training, write_validation
 
 
 def verify_conditioning(model, dataset):
@@ -124,6 +125,8 @@ def run(config, resume=None, eval_only=False):
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_factor)
         operational = {
             "output",
+            "run_name",
+            "runs_root",
             "max_steps",
             "save_every",
             "eval_every",
@@ -132,6 +135,7 @@ def run(config, resume=None, eval_only=False):
             "num_workers",
             "prefetch_factor",
             "loader_timeout_seconds",
+            "tensorboard",
         }
         signature = {
             "protocol": 4,
@@ -158,7 +162,13 @@ def run(config, resume=None, eval_only=False):
             writer = SummaryWriter(
                 str(output / "tensorboard"), purge_step=progress["step"] + 1 if resume else None
             )
+            groups = tensorboard_groups(settings)
+            setup_dashboard(writer, groups)
+            writer.add_text(
+                "run/config", "```json\n" + json.dumps(config, indent=2) + "\n```", progress["step"]
+            )
             (output / "config.json").write_text(json.dumps(config, ensure_ascii=False, indent=2))
+            (output / "config.yaml").write_text(Path(config["config_path"]).read_text())
             (output / "signature.json").write_text(json.dumps(signature, indent=2))
             plan = {
                 "contract_version": "v0.1",
@@ -315,6 +325,8 @@ def run(config, resume=None, eval_only=False):
                         + settings["residual_weight"] * sums[3] / denominators[1]
                     ).item(),
                     "global_samples": counts[2].item(),
+                    "audio_seconds": counts[3].item(),
+                    "codec_tokens": counts[0].item() + counts[1].item(),
                     "grad_norm": norm.item(),
                     "step_seconds": elapsed,
                     "data_wait_seconds": wait_seconds,
@@ -324,12 +336,7 @@ def run(config, resume=None, eval_only=False):
                     "lr_new": optimizer.param_groups[1]["lr"],
                 }
                 print(json.dumps({"step": step, **metrics}), flush=True)
-                for tag, key in {
-                    "loss": "objective",
-                    "lr": "lr_new",
-                    "audio_seconds_per_second": "audio_seconds_per_second",
-                }.items():
-                    writer.add_scalar("train/" + tag, metrics[key], step)
+                write_training(writer, metrics, step, groups)
                 with (output / "metrics.jsonl").open("a") as journal:
                     journal.write(json.dumps({"step": step, "train": metrics}) + "\n")
             final = step == settings["max_steps"]
@@ -343,7 +350,7 @@ def run(config, resume=None, eval_only=False):
                     settings["residual_weight"],
                 )
                 if rank == 0:
-                    writer.add_scalar("val/loss", metrics["loss"], step)
+                    write_validation(writer, metrics, step)
                     with (output / "metrics.jsonl").open("a") as journal:
                         journal.write(json.dumps({"step": step, "val": metrics}) + "\n")
             if step % settings["save_every"] == 0 or final:
