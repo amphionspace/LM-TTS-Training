@@ -1,0 +1,9 @@
+root: /workspace/data/DATA-TTS-UNIFIED
+selection_manifest: selections/tts-selection-supervised-tts-20260929T151539bjt-01/manifest.json
+tokenizer: /workspace/workspace/yanglin/LM-TTS-Training/pretrained/assembled-qwen3-tts-frozen-conditioning
+reference_policy: self
+speaker_conditioning_mode: frozen_embedding
+evaluation: no_holdout
+# Add explicit completed codec_manifest/speaker_manifest pairs after publication.
+# Paths are relative to root; .incomplete inputs are rejected.
+bindings: []

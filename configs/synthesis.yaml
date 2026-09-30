@@ -1,0 +1,14 @@
+precision: bf16
+device: cuda:0
+seed: 42
+generation:
+  max_new_tokens: 2048
+  do_sample: true
+  top_k: 50
+  top_p: 1.0
+  temperature: 0.9
+  repetition_penalty: 1.05
+  subtalker_dosample: true
+  subtalker_top_k: 50
+  subtalker_top_p: 1.0
+  subtalker_temperature: 0.9

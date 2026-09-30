@@ -1,0 +1,8 @@
+metrics: [content, quality, similarity]
+asr_model: /workspace/workspace/yanglin/assets/evaluation/faster-whisper-small
+dnsmos_model: /workspace/workspace/yanglin/assets/evaluation/DNSMOS/sig_bak_ovr.onnx
+speaker_model: /workspace/workspace/yanglin/assets/evaluation/wavlm-base-plus-sv
+speaker_device: cpu
+speaker_chunk_seconds: 10
+max_audio_seconds: 180
+cpu_threads: 4

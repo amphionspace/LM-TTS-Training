@@ -2,9 +2,10 @@
 __pycache__/
 *.pyc
 .cache/
-data/
-checkpoints/
+/data/
+/checkpoints/
 runs/*
 !runs/README.md
 pretrained/
 .ipynb_checkpoints/
+/artifacts/

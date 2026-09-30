@@ -1,11 +1,13 @@
-import unittest
 import tempfile
-import torch
+import unittest
 
-from qwen3_train.data import collate
-from qwen3_train.metrics import content_metrics, aggregate_content
+import torch
 from reference_model import ReferenceTTSModel
-from qwen3_train.model import loss_normalizers, make_config
+
+from qwen3_train.data.batch import collate
+from qwen3_train.evaluation.metrics import aggregate_content, content_metrics
+from qwen3_train.models.qwen import make_config
+from qwen3_train.objectives.tts import loss_normalizers
 
 
 def row(length, text=(12, 34, 56)):
@@ -21,10 +23,19 @@ class Correctness(unittest.TestCase):
 
     def test_text_backbone_mapping_preserves_hidden_states(self):
         from transformers import Qwen3Config, Qwen3Model
+
         cfg = make_config(tiny=True)
-        source_cfg = Qwen3Config(hidden_size=64, intermediate_size=128, num_hidden_layers=2,
-                                num_attention_heads=4, num_key_value_heads=2, head_dim=16,
-                                vocab_size=256, rope_theta=cfg.rope_theta, rms_norm_eps=cfg.rms_norm_eps)
+        source_cfg = Qwen3Config(
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=16,
+            vocab_size=256,
+            rope_theta=cfg.rope_theta,
+            rms_norm_eps=cfg.rms_norm_eps,
+        )
         source_cfg._attn_implementation = "sdpa"
         source = Qwen3Model(source_cfg).eval()
         target = ReferenceTTSModel(cfg).eval()
@@ -35,7 +46,9 @@ class Correctness(unittest.TestCase):
         ids = torch.tensor([[3, 5, 7, 9]])
         with torch.no_grad():
             expected = source(ids, use_cache=False).last_hidden_state
-            actual = target.talker.model(inputs_embeds=target.talker.model.text_embedding(ids), use_cache=False).last_hidden_state
+            actual = target.talker.model(
+                inputs_embeds=target.talker.model.text_embedding(ids), use_cache=False
+            ).last_hidden_state
         torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-5)
 
     def test_target_frame_cannot_leak_into_its_prediction(self):
@@ -75,43 +88,69 @@ class Correctness(unittest.TestCase):
         for reduction, exponent in [("token", 1), ("sample", 0), ("sqrt", 0.5)]:
             with self.subTest(reduction=reduction):
                 self.model.zero_grad(set_to_none=True)
-                first_denominator = sum((len(r['codes']) + 1) ** exponent for r in rows)
-                residual_denominator = sum((15 * len(r['codes'])) ** exponent for r in rows)
+                first_denominator = sum((len(r["codes"]) + 1) ** exponent for r in rows)
+                residual_denominator = sum((15 * len(r["codes"])) ** exponent for r in rows)
                 expected = 0
                 expected_sums = torch.zeros(2)
                 for r in rows:
                     out = self.model(collate([r]))
-                    expected_sums += torch.stack([out['first_sum'].detach(), out['residual_sum'].detach()])
-                    first_count, residual_count = len(r['codes']) + 1, 15 * len(r['codes'])
-                    expected = expected + out['first_sum'] / first_count * first_count ** exponent / first_denominator
-                    expected = expected + 0.3 * out['residual_sum'] / residual_count * residual_count ** exponent / residual_denominator
+                    expected_sums += torch.stack(
+                        [out["first_sum"].detach(), out["residual_sum"].detach()]
+                    )
+                    first_count, residual_count = len(r["codes"]) + 1, 15 * len(r["codes"])
+                    expected = (
+                        expected
+                        + out["first_sum"] / first_count * first_count**exponent / first_denominator
+                    )
+                    expected = (
+                        expected
+                        + 0.3
+                        * out["residual_sum"]
+                        / residual_count
+                        * residual_count**exponent
+                        / residual_denominator
+                    )
                 expected.backward()
-                expected_grads = {n: p.grad.clone() for n, p in self.model.named_parameters() if p.requires_grad}
+                expected_grads = {
+                    n: p.grad.clone() for n, p in self.model.named_parameters() if p.requires_grad
+                }
                 self.model.zero_grad(set_to_none=True)
-                normalizers = sum(loss_normalizers(b['frame_lengths'], reduction) for b in batches)
+                normalizers = sum(loss_normalizers(b["frame_lengths"], reduction) for b in batches)
                 actual = 0
                 actual_sums = torch.zeros(2)
                 for batch in batches:
                     out = self.model(batch, loss_reduction=reduction)
-                    actual_sums += torch.stack([out['first_sum'].detach(), out['residual_sum'].detach()])
-                    loss = out['first_reduced_sum'] / normalizers[0] + 0.3 * out['residual_reduced_sum'] / normalizers[1]
+                    actual_sums += torch.stack(
+                        [out["first_sum"].detach(), out["residual_sum"].detach()]
+                    )
+                    loss = (
+                        out["first_reduced_sum"] / normalizers[0]
+                        + 0.3 * out["residual_reduced_sum"] / normalizers[1]
+                    )
                     actual = actual + loss.detach()
                     loss.backward()
                 torch.testing.assert_close(actual.float(), expected.detach(), atol=2e-6, rtol=1e-6)
                 torch.testing.assert_close(actual_sums, expected_sums, atol=1e-3, rtol=1e-6)
                 for name, parameter in self.model.named_parameters():
                     if parameter.requires_grad:
-                        torch.testing.assert_close(parameter.grad, expected_grads[name], atol=2e-6, rtol=2e-4)
+                        torch.testing.assert_close(
+                            parameter.grad, expected_grads[name], atol=2e-6, rtol=2e-4
+                        )
 
     def test_all_trainable_modules_receive_gradients(self):
         self.model.zero_grad(set_to_none=True)
         output = self.model(collate([row(2)]))
         (output["first_sum"] + output["residual_sum"]).backward()
-        missing = [n for n, p in self.model.named_parameters() if p.requires_grad and p.grad is None]
+        missing = [
+            n for n, p in self.model.named_parameters() if p.requires_grad and p.grad is None
+        ]
         self.assertEqual(missing, [])
 
     def test_corpus_wer_weights_reference_lengths(self):
-        scores = [content_metrics("one", "wrong"), content_metrics("a b c d e f g h i", "a b c d e f g h i")]
+        scores = [
+            content_metrics("one", "wrong"),
+            content_metrics("a b c d e f g h i", "a b c d e f g h i"),
+        ]
         self.assertAlmostEqual(aggregate_content(scores)["wer"], 0.1)
 
     def test_content_error_accounting(self):

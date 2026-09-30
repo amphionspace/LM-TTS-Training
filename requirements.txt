@@ -1,16 +1,18 @@
-# Install CUDA wheels first; see scripts/setup_env.sh.
+# Python 3.11, Linux x86_64, PyTorch CUDA 12.6 (install torch wheels first).
 torch==2.8.0+cu126
 torchaudio==2.8.0+cu126
 qwen-tts==0.1.1
 transformers==4.57.3
-flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1/flash_attn-2.8.3.post1%2Bcu12torch2.8cxx11abiTRUE-cp310-cp310-linux_x86_64.whl#sha256=93f44772f2d63814086666b30dfa1808b96ca5cbd2efe292a96cafa7e6e7df2e
+flash-attn @ https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3.post1/flash_attn-2.8.3.post1%2Bcu12torch2.8cxx11abiTRUE-cp311-cp311-linux_x86_64.whl#sha256=3807faf34d263ad0c3dff6f07c7ebdd27aef4a2614ef124db2afee4578ef7232
 accelerate==1.12.0
 numpy==1.26.4
+pylance==12.0.0
+pyarrow==25.0.0
 soundfile==0.13.1
-PyYAML==6.0.2
+PyYAML==6.0.3
 safetensors==0.6.2
 tensorboard==2.20.0
 faster-whisper==1.2.1
-onnxruntime==1.23.2
-av==17.1.0
+onnxruntime==1.30.0
+av==18.1.0
 scipy==1.15.3
