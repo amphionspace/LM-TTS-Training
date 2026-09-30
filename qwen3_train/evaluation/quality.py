@@ -4,7 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..data.build import file_hash
+from ..artifacts import file_hash
 
 
 class DNSMOS:

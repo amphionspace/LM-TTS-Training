@@ -18,7 +18,8 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import PreTrainedTokenizerFast
 
-from qwen3_train.data.build import bind_features, file_hash, tokenizer_identity
+from qwen3_train.artifacts import file_hash
+from qwen3_train.data.build import bind_features, tokenizer_identity
 from qwen3_train.models.assembly import save_model
 from qwen3_train.models.qwen import make_config
 

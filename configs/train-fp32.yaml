@@ -1,12 +1,12 @@
 extends: base.yaml
 
-# 原生 FP32 使用 SDPA，默认调低组批预算以控制显存。
+# Native FP32 uses SDPA and smaller default batch budgets to limit memory use.
 train:
   run_name: unified-fp32
   precision: fp32
   max_batch_frames: 3000
   max_batch_tokens: 8000
 
-# ACP 资源也在本文件覆盖，例如取消下面两行注释改为 4 节点：
+# Override ACP resources here; uncomment the following lines to use 4 nodes:
 # acp:
 #   nodes: 4

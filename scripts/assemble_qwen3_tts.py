@@ -18,12 +18,12 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 import torch
 from huggingface_hub import snapshot_download
 
+from qwen3_train.artifacts import file_hash
 from qwen3_train.models.assembly import (
     audit_sources,
     copy_codec,
     initialize_model,
     save_model,
-    sha256,
     validate_saved,
 )
 
@@ -139,7 +139,7 @@ def main():
         marker = paths[name] / "REVISION"
         if marker.exists():
             report["sources"][name]["local_revision_marker"] = marker.read_text().strip()
-        report["sources"][name]["config_sha256"] = sha256(paths[name] / "config.json")
+        report["sources"][name]["config_sha256"] = file_hash(paths[name] / "config.json")
     model = initialize_model(
         config,
         paths["backbone"],
@@ -167,7 +167,7 @@ def main():
     gc.collect()
     report["validation"] = validate_saved(temporary, getattr(torch, args.dtype))
     report["artifact_sha256"] = {
-        str(path.relative_to(temporary)): sha256(path)
+        str(path.relative_to(temporary)): file_hash(path)
         for path in sorted(temporary.rglob("*"))
         if path.is_file()
     }

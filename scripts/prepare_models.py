@@ -7,8 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from qwen3_train.artifacts import file_hash
 from qwen3_train.config import read_yaml
-from qwen3_train.models.assembly import sha256
 
 SOURCES = {
     "backbone": "Qwen3-0.6B-Base",
@@ -38,8 +38,8 @@ def main():
             for path in temporary.rglob("*"):
                 if path.is_file():
                     relative = path.relative_to(temporary)
-                    digest = sha256(path)
-                    if digest != sha256(source / relative):
+                    digest = file_hash(path)
+                    if digest != file_hash(source / relative):
                         raise RuntimeError(f"Copy verification failed: {relative}")
                     hashes[str(relative)] = digest
             (temporary / "LOCAL_COPY.json").write_text(
@@ -49,7 +49,7 @@ def main():
         else:
             marker = json.loads((destination / "LOCAL_COPY.json").read_text())
             for relative, expected in marker["sha256"].items():
-                if sha256(destination / relative) != expected:
+                if file_hash(destination / relative) != expected:
                     raise RuntimeError(f"Local model copy changed: {destination / relative}")
     assembled = Path(config["model"]["assembled_model"])
     if not (assembled / "ASSEMBLY_COMPLETE").exists():

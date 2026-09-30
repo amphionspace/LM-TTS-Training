@@ -11,7 +11,8 @@ from reference_model import ReferenceTTSModel
 from safetensors.torch import save_file
 from transformers import Qwen3Config, Qwen3Model
 
-from qwen3_train.models.assembly import initialize_model, save_model, sha256, vocabulary_plan
+from qwen3_train.artifacts import file_hash
+from qwen3_train.models.assembly import initialize_model, save_model, vocabulary_plan
 from qwen3_train.models.qwen import TTSModel, make_config
 
 
@@ -111,7 +112,7 @@ class AssemblyTests(unittest.TestCase):
                 json.dumps(
                     {
                         "artifact_sha256": {
-                            path.name: sha256(path)
+                            path.name: file_hash(path)
                             for path in direct_saved.iterdir()
                             if path.suffix in [".json", ".safetensors"]
                         }
@@ -154,7 +155,7 @@ class AssemblyTests(unittest.TestCase):
                 json.dumps(
                     {
                         "artifact_sha256": {
-                            path.name: sha256(path)
+                            path.name: file_hash(path)
                             for path in saved.iterdir()
                             if path.suffix in [".json", ".safetensors"]
                         }

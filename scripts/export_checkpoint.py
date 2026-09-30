@@ -9,7 +9,7 @@ import torch
 import torch.distributed.checkpoint as dcp
 from safetensors.torch import save_file
 
-from qwen3_train.data.build import file_hash
+from qwen3_train.artifacts import file_hash
 from qwen3_train.models.qwen import TTSModel
 
 
@@ -22,6 +22,12 @@ def main():
     args = parser.parse_args()
     if not (args.checkpoint / "COMPLETE").is_file():
         raise ValueError("Cannot export an incomplete checkpoint")
+    metadata = json.loads((args.checkpoint / "metadata.json").read_text())
+    if (
+        file_hash(args.assembled_model / "assembly_report.json")
+        != metadata["signature"]["assembly_sha256"]
+    ):
+        raise ValueError("Checkpoint and assembled model have different assembly identities")
     torch.set_num_threads(4)
     model = TTSModel.from_assembled(
         args.assembled_model, load_weights=False, attn_implementation="sdpa"
@@ -47,7 +53,6 @@ def main():
             and source.name not in {"assembly_report.json", "export.json"}
         ):
             shutil.copy2(source, args.output / source.name)
-    metadata = json.loads((args.checkpoint / "metadata.json").read_text())
     report = {
         "checkpoint": str(args.checkpoint.resolve()),
         "precision": args.precision,

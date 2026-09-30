@@ -12,6 +12,8 @@ from qwen_tts.core.models.modeling_qwen3_tts import (
 from torch import nn
 from transformers import AutoModel
 
+from ..artifacts import file_hash
+
 
 class TTSModel(nn.Module):
     def __init__(self, config, speaker_config=None):
@@ -58,7 +60,7 @@ class TTSModel(nn.Module):
     def from_assembled(cls, directory, load_weights=True, attn_implementation="flash_attention_2"):
         if attn_implementation not in {"flash_attention_2", "sdpa"}:
             raise ValueError("TTSModel requires flash_attention_2 or sdpa")
-        from .assembly import load_prefix, sha256
+        from .assembly import load_prefix
 
         directory = Path(directory)
         if not (directory / "ASSEMBLY_COMPLETE").exists():
@@ -68,7 +70,7 @@ class TTSModel(nn.Module):
             if name == "config.json" or (
                 load_weights and name.startswith("model") and name.endswith(".safetensors")
             ):
-                if sha256(directory / name) != expected:
+                if file_hash(directory / name) != expected:
                     raise ValueError(f"Assembled artifact changed: {name}")
         config = Qwen3TTSConfig.from_dict(json.loads((directory / "config.json").read_text()))
         config.talker_config._attn_implementation = attn_implementation

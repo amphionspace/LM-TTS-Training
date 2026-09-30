@@ -1,17 +1,17 @@
 extends: base.yaml
 
-# ---- 固定 selection 与 tokenizer：text/language 已包含在发布后的 codec 表中 ----
+# ---- Pinned selection and tokenizer: published codec tables include text / language ----
 root: ${paths.features}
 selection_manifest: selections/tts-selection-supervised-tts-20260929T151539bjt-01/manifest.json
 tokenizer: ${paths.assembled_model}
 
-# ---- 配对策略：使用缓存 speaker embedding，当前不声明隔离评估集 ----
+# ---- Conditioning: cached speaker embeddings; no isolated holdout is declared ----
 reference_policy: self
 speaker_conditioning_mode: frozen_embedding
 evaluation: no_holdout
 
-# ---- 数据集绑定：只使用 status=complete 的 manifest，不指向 .incomplete ----
-# 以下为正式任务的预期发布路径；先训练部分数据时，保留已就绪的绑定即可。
+# ---- Bindings: require status=complete manifests; never use .incomplete paths ----
+# These are expected production paths. Keep only completed bindings for a partial build.
 bindings:
 
 - dataset_id: aishell3

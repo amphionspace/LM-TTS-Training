@@ -11,8 +11,9 @@ import pyarrow as pa
 import torch
 from torch.utils.data import DataLoader
 
+from qwen3_train.artifacts import digest, file_hash
 from qwen3_train.data.batch import collate
-from qwen3_train.data.build import bind_features, digest, feature_reference, file_hash
+from qwen3_train.data.build import bind_features, feature_reference
 from qwen3_train.data.reader import FeatureDataset
 
 
@@ -287,3 +288,54 @@ class UnifiedDataTests(unittest.TestCase):
                         Tokenizer(),
                     )
                 self.assertFalse((root / "build/manifest.json").exists())
+
+
+def test_build_command_uses_experiment_paths(tmp_path, monkeypatch):
+    import sys
+
+    import yaml
+    from tokenizers import Tokenizer as BackendTokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import PreTrainedTokenizerFast
+
+    from scripts.build_unified import main
+
+    features = tmp_path / "features"
+    recipe, _, _ = fixture(features)
+    tokenizer_path = tmp_path / "assembled"
+    backend = BackendTokenizer(WordLevel({"[UNK]": 0, "hello": 1}, unk_token="[UNK]"))
+    backend.pre_tokenizer = Whitespace()
+    PreTrainedTokenizerFast(tokenizer_object=backend, unk_token="[UNK]").save_pretrained(
+        tokenizer_path
+    )
+    (tmp_path / "base.yaml").write_text(
+        yaml.safe_dump(
+            {"paths": {"features": "/missing/features", "assembled_model": "/missing/model"}}
+        )
+    )
+    recipe.update(
+        extends="base.yaml",
+        root="${paths.features}",
+        tokenizer="${paths.assembled_model}",
+        selection_manifest="selection.json",
+    )
+    recipe_path = tmp_path / "data.yaml"
+    recipe_path.write_text(yaml.safe_dump(recipe))
+    output = tmp_path / "build/manifest.json"
+    experiment = tmp_path / "experiment.yaml"
+    experiment.write_text(
+        yaml.safe_dump(
+            {
+                "extends": "base.yaml",
+                "paths": {"features": str(features), "assembled_model": str(tokenizer_path)},
+                "data": {"config": str(recipe_path), "build": str(output)},
+            }
+        )
+    )
+    monkeypatch.setattr(sys, "argv", ["build_unified", "--config", str(experiment)])
+    main()
+    dataset = FeatureDataset(output, (200, 201))
+    assert len(dataset) == 8
+    assert dataset[0]["text_ids"] == [200, 1, 0, 201]
+    assert dataset.manifest["tokenizer"]["path"] == str(tokenizer_path)

@@ -1,6 +1,6 @@
-# 唯一共享配置。其他 YAML 直接继承本文件，只写用途相关的设置或覆盖项。
+# Shared defaults. Each configuration extends this file directly and overrides only what it needs.
 
-# ---- 路径：搬迁时修改这里；资源和输出路径由这些值派生 ----
+# ---- Paths: update these when relocating; resource and output paths derive from them ----
 paths:
   workspace: /workspace/workspace/yanglin
   project: ${paths.workspace}/LM-TTS-Training
@@ -10,81 +10,81 @@ paths:
   evaluation_models: ${paths.project}/assets/evaluation
   features: /workspace/data/DATA-TTS-UNIFIED
 
-# ---- 通信：按当前商汤集群建议；本地已设置的环境变量优先 ----
+# ---- Communication: current SenseCore defaults; explicit local environment values win ----
 environment:
-  NCCL_IB_TIMEOUT: "22"       # IB 操作超时参数，不是秒数
-  NCCL_IB_RETRY_CNT: "13"     # 当前平台建议的重试设置
-  NCCL_IB_AR_THRESHOLD: "0"   # 降低使用 adaptive routing 的消息大小门槛
+  NCCL_IB_TIMEOUT: "22"       # IB timeout exponent, not seconds
+  NCCL_IB_RETRY_CNT: "13"     # Retry setting recommended by this platform
+  NCCL_IB_AR_THRESHOLD: "0"   # Message-size threshold for adaptive routing
 
 seed: 42
 
-# ---- 模型：提前在本地组装，训练仅加载完成产物 ----
+# ---- Model: assemble locally before training; only completed artifacts can be loaded ----
 model:
   assembled_model: ${paths.assembled_model}
-  activation_checkpointing: true  # 用部分重算换取更低显存
+  activation_checkpointing: true  # Trade recomputation for lower GPU memory use
 
-# ---- 数据：data.yaml 选 feature 版本；build_id 选择训练侧索引 ----
+# ---- Data: data.yaml pins feature versions; build_id selects the training index ----
 data:
   config: ${paths.project}/configs/data.yaml
   build_id: unified-fp32-20260930
   build: ${paths.project}/data/builds/${data.build_id}/manifest.json
-  evaluation: no_holdout          # 尚未发布隔离验证集；不生成验证 loss
+  evaluation: no_holdout          # No isolated validation set; validation loss is unavailable
 
-# ---- 训练：run_name 和 precision 在 train-*.yaml 中指定 ----
+# ---- Training: set run_name and precision in the experiment YAML ----
 train:
   runs_root: ${paths.runs}
 
-  # 训练步数与学习率。恢复时保持 schedule_steps 不变。
+  # Optimizer steps and learning rates. Keep schedule_steps unchanged when resuming.
   max_steps: 100000
   schedule_steps: 100000
   warmup_steps: 1000
-  lr: 0.0001                    # 音频预测等新模块
-  backbone_lr: 1.0e-05           # 预训练的 Talker backbone
+  lr: 0.0001                    # New modules, including audio prediction
+  backbone_lr: 1.0e-05           # Pretrained Talker backbone
   loss_reduction: token         # token / sample / sqrt
   residual_weight: 0.3
 
-  # 每张卡的动态组批预算；降低 frames / tokens 可减少显存。
+  # Per-GPU dynamic batch budgets; reduce frames / tokens to lower memory use.
   max_batch_frames: 6000
   max_batch_tokens: 16000
-  accumulation: 2               # 每次更新累积的 microbatch 数
+  accumulation: 2               # Microbatches accumulated per optimizer update
 
-  # 数据读取与有界 shuffle，避免展开整个大数据集。
+  # Data loading and bounded shuffling avoid materializing the full corpus.
   num_workers: 4
   prefetch_factor: 2
   shuffle_window: 65536
 
-  # 保存和观测频率，单位均为 optimizer step。
+  # Checkpoint and logging intervals, measured in optimizer steps.
   save_every: 500
   keep_checkpoints: 2
-  eval_every: 500                # 仅配置独立 val_build 时生效
+  eval_every: 500                # Only used with an isolated val_build
   log_every: 10
   tensorboard:
-    groups: [optimization, performance, batch]  # 按组关闭，避免逐码本刷屏
+    groups: [optimization, performance, batch]  # Select groups; omit per-codebook diagnostics
 
-# ---- 训练中验证：与 evaluation.yaml 的生成音频评分分开 ----
+# ---- In-training validation: separate from generated-audio scoring in evaluation.yaml ----
 eval:
   batch_size: 8
 
-# ---- ACP 提交：与训练共用一个实验 YAML，提交器读取此区块 ----
+# ---- ACP: submission settings share the experiment YAML; only the submitter reads them ----
 acp:
-  # ---- 计算资源：通常只需覆盖节点数或镜像 ----
+  # ---- Compute: experiments usually override only the node count or image ----
   region: cnsh01
   zone: cn-sh-01a
   workspace: workspace-whai
   cluster: cluster-whai
-  worker_spec: N3lS.Ii.I60.94c944g  # 每节点 8 张 A800
-  nodes: 2                       # 提交时 --nodes 优先
+  worker_spec: N3lS.Ii.I60.94c944g  # 8 A800 GPUs per node
+  nodes: 2                       # The submission --nodes option takes precedence
   image: registry.cn-sh-01.sensecore.cn/ccr-wh/amphion-base:amphion-base-20260923072955
 
-  # ---- 平台身份与 API：固定设置，凭据放 home 下，不写进 YAML ----
+  # ---- Platform identity and API: keep credentials under home, outside this YAML ----
   subscription: 01a0c34d-630a-719f-bef0-0ba5b6008878
   resource_group: default
   workspace_zone: cn-sh-01z
   api_endpoint: https://aec2.cn-sh-01.sensecoreapi.cn
   home: ${paths.workspace}/acp
 
-  # ---- 存储与观测：复用默认 AFS，TensorBoard 挂载统一 Runs 目录 ----
+  # ---- Storage: reuse default AFS; TensorBoard mounts the shared Runs directory ----
   volume_id: 01a0c847-3d8d-7b42-8c75-50cbd189bb56
   mount_path: /workspace
   ssh_auto_key_setup: true
-  tensorboard: platform           # local：只使用开发机上的独立仪表盘
+  tensorboard: platform           # local: use only the standalone dashboard

@@ -50,10 +50,10 @@ def setup_dashboard(writer, groups):
         writer.add_custom_scalars(charts)
 
 
-def write_training(writer, metrics, step, groups, *, skip_tags=()):
+def write_training(writer, metrics, step, groups):
     for group in groups:
         for tag, key in GROUPS[group].items():
-            if key in metrics and tag not in skip_tags:
+            if key in metrics:
                 writer.add_scalar(tag, metrics[key], step)
 
 

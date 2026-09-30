@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import tempfile
 from pathlib import Path
 
 from qwen3_train.config import read_yaml
@@ -11,41 +12,51 @@ from qwen3_train.training.telemetry import setup_dashboard, write_training, writ
 
 
 def rebuild(run, destination=None):
-    from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+    """Replace restored events from current journals, preserving live training events."""
     from torch.utils.tensorboard import SummaryWriter
 
     directory = destination or run / "tensorboard/restored"
-    existing = (
-        EventAccumulator(str(directory)).Reload().Tags()["scalars"] if directory.exists() else []
-    )
-    groups = ["optimization", "performance", "batch"]
-    with SummaryWriter(str(directory)) as writer:
-        setup_dashboard(writer, groups)
-        if (run / "metrics.jsonl").exists():
-            for line in (run / "metrics.jsonl").read_text().splitlines():
+    directory.mkdir(parents=True, exist_ok=True)
+    previous = list(directory.glob("events.out.tfevents.*"))
+    records = {}
+    journal = run / "metrics.jsonl"
+    if journal.exists():
+        with journal.open() as stream:
+            for line in stream:
                 record = json.loads(line)
-                if "train" in record:
-                    write_training(
-                        writer, record["train"], record["step"], groups, skip_tags=existing
+                for kind in ("train", "val"):
+                    if kind in record:
+                        # A resumed run can log the same step again; its last value wins.
+                        records[(record["step"], kind)] = record[kind]
+    groups = ["optimization", "performance", "batch"]
+    # Publish only after successful replay, so missing audio cannot destroy a dashboard.
+    with tempfile.TemporaryDirectory(prefix=".rebuild-", dir=directory.parent) as temporary:
+        with SummaryWriter(temporary) as writer:
+            setup_dashboard(writer, groups)
+            for (step, kind), metrics in sorted(records.items()):
+                if kind == "train":
+                    write_training(writer, metrics, step, groups)
+                else:
+                    write_validation(writer, metrics, step)
+            for report in sorted(run.glob("**/report.json")):
+                samples = report.with_name("samples.json")
+                if not samples.exists():
+                    continue
+                result = json.loads(report.read_text())
+                if "identity" in result and result["identity"].get("step") is not None:
+                    config = result["identity"].get("config", {})
+                    write_evaluation(
+                        writer,
+                        result,
+                        json.loads(samples.read_text()),
+                        result["identity"]["step"],
+                        config.get("tensorboard", {}),
+                        max_audio_seconds=config.get("max_audio_seconds", 180),
                     )
-                if "val" in record and "val/first_ce" not in existing:
-                    write_validation(writer, record["val"], record["step"])
-        for report in sorted(run.glob("**/report.json")):
-            samples = report.with_name("samples.json")
-            if not samples.exists():
-                continue
-            result = json.loads(report.read_text())
-            if "identity" in result and result["identity"].get("step") is not None:
-                write_evaluation(
-                    writer,
-                    result,
-                    json.loads(samples.read_text()),
-                    result["identity"]["step"],
-                    {"audio_samples": 2},
-                    max_audio_seconds=result["identity"]
-                    .get("config", {})
-                    .get("max_audio_seconds", 180),
-                )
+        for event in Path(temporary).glob("events.out.tfevents.*"):
+            event.replace(directory / event.name)
+        for event in previous:
+            event.unlink()
 
 
 def main():
@@ -53,7 +64,9 @@ def main():
     parser.add_argument("--run", required=True, help="Run name, or an explicit directory")
     parser.add_argument("--config", default="configs/train-bf16.yaml")
     parser.add_argument(
-        "--rebuild", action="store_true", help="Restore missing curves and evaluation previews"
+        "--rebuild",
+        action="store_true",
+        help="Rebuild restored curves and evaluation previews from current journals",
     )
     parser.add_argument("--rebuild-only", action="store_true")
     parser.add_argument("--port", type=int, default=6006)

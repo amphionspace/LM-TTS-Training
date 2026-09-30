@@ -2,7 +2,6 @@
 
 import copy
 import gc
-import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -273,14 +272,6 @@ def initialize_model(
     if getattr(config.talker_config, "lm_tts_freeze_speaker_encoder", False):
         model.speaker_encoder.requires_grad_(False).eval()
     return model
-
-
-def sha256(path):
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as f:
-        for block in iter(lambda: f.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def copy_codec(source, destination):

@@ -1,19 +1,19 @@
 extends: base.yaml
 
-# ---- 推理设备与精度：使用导出的 checkpoint ----
+# ---- Inference device and precision: load an exported checkpoint ----
 precision: bf16
 device: cuda:0
 
-# ---- 生成：seed 继承 base，按样本编号派生独立随机种子 ----
+# ---- Generation: inherit seed from base; derive a seed per sample index ----
 generation:
-  max_new_tokens: 2048          # 最大 codec 帧数，避免无界生成
+  max_new_tokens: 2048          # Maximum codec frames per sample
   do_sample: true
   top_k: 50
   top_p: 1.0
   temperature: 0.9
   repetition_penalty: 1.05
 
-  # Residual codebook 预测器的采样设置。
+  # Sampling settings for the residual codebook predictor.
   subtalker_dosample: true
   subtalker_top_k: 50
   subtalker_top_p: 1.0

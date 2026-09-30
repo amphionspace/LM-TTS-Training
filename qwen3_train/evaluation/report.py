@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from ..artifacts import file_hash
 from ..config import read_yaml
-from ..data.build import file_hash
 from .audio import load_audio
 from .metrics import ASRScorer, aggregate_content
 from .quality import DNSMOS

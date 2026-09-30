@@ -1,20 +1,20 @@
 extends: base.yaml
 
-# ---- 评分项目：可移除暂时不需要的项目 ----
+# ---- Metrics: remove groups that are not needed ----
 metrics: [content, quality, similarity]
 
-# ---- 评分模型：独立于基础模型和 assembled 模型 ----
+# ---- Scoring models: stored separately from base and assembled training models ----
 asr_model: ${paths.evaluation_models}/faster-whisper-small
 dnsmos_model: ${paths.evaluation_models}/DNSMOS/sig_bak_ovr.onnx
 speaker_model: ${paths.evaluation_models}/wavlm-base-plus-sv
 
-# ---- 资源与音频限制：不占用训练进程中的 GPU ----
+# ---- Resources: scoring runs independently; CPU is the default ----
 speaker_device: cpu
 speaker_chunk_seconds: 10
 max_audio_seconds: 180
 cpu_threads: 4
 
-# ---- TensorBoard：仅裁剪试听预览，完整音频仍参与评分 ----
+# ---- TensorBoard: truncate listening previews only; score the full audio ----
 tensorboard:
-  audio_samples: 2              # 0 关闭音频预览
+  audio_samples: 2              # 0 disables audio previews
   audio_seconds: 20

@@ -1,10 +1,10 @@
 extends: base.yaml
 
-# 实验身份：新实验改名字，断点恢复沿用同名 run。
+# Use a new run_name for a new experiment; retain it when resuming.
 train:
   run_name: unified-bf16
-  precision: bf16  # FlashAttention；master weights 和 loss 保持 FP32
+  precision: bf16  # FlashAttention; master weights and loss remain FP32
 
-# ACP 资源也在本文件覆盖，例如取消下面两行注释改为 4 节点：
+# Override ACP resources here; uncomment the following lines to use 4 nodes:
 # acp:
 #   nodes: 4

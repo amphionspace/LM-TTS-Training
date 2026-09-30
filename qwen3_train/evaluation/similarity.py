@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from ..data.build import file_hash
+from ..artifacts import file_hash
 
 
 def model_identity(directory):

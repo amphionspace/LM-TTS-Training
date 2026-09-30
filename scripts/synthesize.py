@@ -8,8 +8,8 @@ import numpy as np
 import soundfile as sf
 import torch
 
+from qwen3_train.artifacts import file_hash
 from qwen3_train.config import read_yaml
-from qwen3_train.data.build import file_hash
 
 
 def main():

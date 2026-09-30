@@ -6,7 +6,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .build import file_hash, open_snapshot, read_complete
+from ..artifacts import file_hash
+from .build import open_snapshot, read_complete
 
 
 class MetadataColumn:

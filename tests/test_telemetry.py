@@ -31,9 +31,14 @@ def test_dashboard_restores_journal_and_preserves_steps(tmp_path):
         "\n".join(json.dumps({"step": step, "train": metrics}) for step in (10, 20))
     )
     rebuild(tmp_path)
+    with (tmp_path / "metrics.jsonl").open("a") as journal:
+        journal.write("\n" + json.dumps({"step": 20, "train": {**metrics, "first_ce": 1.5}}))
+        journal.write("\n" + json.dumps({"step": 30, "train": metrics}))
+    rebuild(tmp_path)
     rebuild(tmp_path)
     events = EventAccumulator(str(tmp_path / "tensorboard/restored")).Reload()
-    assert [event.step for event in events.Scalars("train/first_ce")] == [10, 20]
+    assert [event.step for event in events.Scalars("train/first_ce")] == [10, 20, 30]
+    assert events.Scalars("train/first_ce")[1].value == 1.5
     assert events.Scalars("batch/global_samples")[0].value == 16
     assert "custom_scalars__config__" in events.Tags()["tensors"]
     with SummaryWriter(str(tmp_path / "limited")) as writer:
@@ -76,3 +81,30 @@ def test_evaluation_dashboard_has_scores_and_bounded_paired_audio(tmp_path):
     for tag in audio:
         assert events.Audio(tag)[0].length_frames == 16000
     assert "samples/00-sample_one/text/text_summary" in events.Tags()["tensors"]
+    evaluation = tmp_path / "evaluation"
+    evaluation.mkdir()
+    (evaluation / "samples.json").write_text(json.dumps([row]))
+    (evaluation / "report.json").write_text(
+        json.dumps(
+            {
+                **summary,
+                "identity": {
+                    "step": 500,
+                    "config": {"tensorboard": {"audio_samples": 1, "audio_seconds": 1}},
+                },
+            }
+        )
+    )
+    rebuild(tmp_path)
+    rebuild(tmp_path)
+    restored = tmp_path / "tensorboard/restored"
+    replay = EventAccumulator(str(restored)).Reload()
+    assert len(replay.Scalars("eval/wer")) == 1
+    for tag in replay.Tags()["audio"]:
+        assert len(replay.Audio(tag)) == 1
+        assert replay.Audio(tag)[0].length_frames == 16000
+    previous = {p.name: p.read_bytes() for p in restored.iterdir()}
+    reference.unlink()
+    with pytest.raises(sf.LibsndfileError):
+        rebuild(tmp_path)
+    assert {p.name: p.read_bytes() for p in restored.iterdir()} == previous

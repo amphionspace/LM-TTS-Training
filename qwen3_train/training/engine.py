@@ -13,8 +13,9 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
+from ..artifacts import digest
 from ..data.batch import collate
-from ..data.build import digest, tokenizer_identity
+from ..data.build import tokenizer_identity
 from ..data.reader import FeatureDataset
 from ..data.sampler import TokenBatchSampler
 from ..evaluation.validation import validate
