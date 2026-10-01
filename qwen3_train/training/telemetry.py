@@ -19,6 +19,9 @@ GROUPS = {
         "train/audio_seconds_per_second": "audio_seconds_per_second",
         "performance/step_seconds": "step_seconds",
         "performance/data_wait_seconds": "data_wait_seconds",
+        "performance/data_wait_mean_seconds": "data_wait_mean_seconds",
+        "performance/data_wait_fraction": "data_wait_fraction",
+        "performance/batch_prepare_seconds": "batch_prepare_seconds",
         "performance/peak_memory_gib": "peak_memory_gib",
     },
     "batch": {

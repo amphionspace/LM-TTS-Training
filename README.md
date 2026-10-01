@@ -4,7 +4,7 @@
 
 日常流程：**修改实验配置 → 准备模型 → 构建数据索引 → 本地或 ACP 训练 → 查看日志与评分**。下面的命令均在仓库根目录执行。
 
-当前配置绑定已发布的 **16 个 merged features 数据集，共 128,220,178 条样本**。正式实验使用 FP32、32 卡、token loss、3 个 epoch，并按数据集固定抽取约 0.1% 作为验证集。
+当前配置绑定已发布的 **16 个 merged features 数据集，共 128,220,178 条样本**。正式实验使用 BF16、32 卡、token loss、3 个 epoch，并按数据集固定抽取约 0.1% 作为验证集。
 
 ## 1. 选择实验和配置
 
@@ -14,7 +14,7 @@ PY=/workspace/workspace/yanglin/envs/lm-tts/bin/python
 CFG=configs/train-bf16.yaml
 ```
 
-使用通用 FP32 配置时，将 `CFG` 改为 `configs/train-fp32.yaml`。全量实验使用 `configs/supervised-tts-20260929-all16-fp32-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml`。新实验可以复制一个 `train-*.yaml` 到 `configs/`，修改 `train.run_name`，再让 `CFG` 指向新文件。
+使用通用 FP32 配置时，将 `CFG` 改为 `configs/train-fp32.yaml`。全量实验使用 `configs/supervised-tts-20260929-all16-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml`。新实验可以复制一个 `train-*.yaml` 到 `configs/`，修改 `train.run_name`，再让 `CFG` 指向新文件。
 
 所有配置直接继承一个 [base.yaml](configs/base.yaml)，无需追踪多级依赖。ACP 和训练参数放在同一份实验配置中；数据绑定、生成和评分各有自己的入口。
 
@@ -134,9 +134,11 @@ SSH 免密和平台 TensorBoard 默认开启。提交器将代码快照、有效
 
 ### 精度与恢复约束
 
-BF16 使用 FlashAttention，FP32 使用 SDPA；两者都保留 FP32 master weights、梯度归约和 cross entropy，关闭 TF32。组批预算按每张卡计算；FP32 还用 `max_batch_tokens` 限制 padding 后的 token 数，避免长短样本混合导致显存突增。`length_bucket_size` 在随机窗口内按长度组批以减少 padding。显存不足时降低 `max_batch_frames` / `max_batch_tokens`。数据提取精度与训练精度分别记录。
+BF16 的 Talker 使用 FlashAttention-2，将样本打包并用序列边界隔离注意力，不做长度 padding；FP32 的 Talker 使用带 padding 的 SDPA。Code Predictor 的序列固定为 16 个位置，两种精度都使用原生 SDPA，不需要长度 padding；两者都保留 FP32 master weights、梯度归约和 cross entropy，关闭 TF32。组批预算按每张卡计算；FP32 还用 `max_batch_tokens` 限制 padding 后的 token 数，避免长短样本混合导致显存突增。`length_bucket_size` 在随机窗口内按长度组批以减少 padding。显存不足时降低 `max_batch_frames` / `max_batch_tokens`。数据提取精度与训练精度分别记录。
 
 恢复时保持相同 world size、模型、数据、batch、优化器和学习率计划；可以增加 `max_steps`，但不能超过原有 `schedule_steps`。epoch 实验由 `epochs` 停止，`max_steps: null` 表示不设步数上限。改变这些训练语义时使用新 run。
+
+Dynamic batching 的 checkpoint 保存 epoch、已完成的 microbatch 位置和全局已消费样本数，并保存 optimizer、scheduler 及各 rank 的随机状态。恢复时按同一 seed / epoch 重建组批顺序，只跳过已消费的索引；预取队列中尚未训练的数据会重新读取。`num_workers` 和 `prefetch_factor` 可调整，不改变恢复位置；调整 token / frame 预算或卡数则不能作为同一 run 的严格恢复。
 
 全量配置使用 WSD：新增模块峰值 LR `3e-4`，backbone `1e-4`；前 1% 总训练进度线性 warmup，保持到第 2.7 epoch，最后 0.3 epoch 余弦衰减至峰值的 10%。warmup 按已消费样本数计算，不沿用旧实验的固定步数；调整 batch 预算也不会改变各阶段覆盖的数据比例。
 
@@ -170,8 +172,12 @@ $PY -m scripts.tensorboard --run unified-bf16
 | 组 | 用来看什么 |
 | --- | --- |
 | `optimization` | 总 loss、首码本 / residual CE、两组学习率、梯度范数、epoch |
-| `performance` | 音频秒吞吐、每步耗时、数据等待、rank 0 每步峰值显存 |
+| `performance` | 音频秒吞吐、每步耗时、最慢卡 / 平均数据等待、等待占比、batch 准备耗时、所有卡中的最大峰值显存 |
 | `batch` | 全局样本数、音频秒数、token 数、padding 效率、坏样本及连带跳过数 |
+
+`data_wait_seconds` 只计训练线程等待 `next(loader)` 的时间，跨卡取最大值；`data_wait_mean_seconds` 是平均值，`data_wait_fraction` 是最大等待占整步的比例。`batch_prepare_seconds` 另含组批健康检查与同步。它们是日志步的观测值，不是磁盘读取总耗时：worker 预取与 GPU 计算重叠的部分不会计为等待。若等待持续偏高，先检查 AFS / CPU，再调整 `num_workers`、`prefetch_factor`；盲目增大预取会增加主存和存储并发压力。NVML 的实际占用及利用率见各节点 GPU CSV，PyTorch 峰值不含全部驱动 / 通信开销。
+
+全量实验先在第 100 步做一次完整验证与保存，之后每 2500 步同时执行。验证 loss 在训练 GPU 上分布式计算；独立的生成音频评分由下一节入口执行。
 
 `Custom Scalars` 提供 loss、学习率和耗时组合图；`Text` 显示配置。执行下一节评分后，会增加 WER / CER、音质、相似度和参考 / 生成音频试听。音质指标不会随训练自动生成。
 
@@ -229,6 +235,8 @@ $PY -m scripts.evaluate --config configs/evaluation.yaml --pairs "$RUN/generated
 $PY -m pytest -q
 $PY -m ruff check qwen3_train scripts tests
 $PY -m ruff format --check qwen3_train scripts tests
+# 双卡实际训练：坏样本、3 epoch WSD、预取参数变化后的严格恢复
+PYTHONPATH=.:tests $PY tests/check_epoch_resume.py --output artifacts/check-epoch-resume
 ```
 
 需要重新验证集群启动和恢复时，可以显式提交微型模型验证任务：

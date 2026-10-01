@@ -19,10 +19,8 @@ class TTSModel(nn.Module):
     def __init__(self, config, speaker_config=None):
         super().__init__()
         backends = {c._attn_implementation for c in (config, config.code_predictor_config)}
-        if len(backends) != 1 or not backends <= {"flash_attention_2", "sdpa"}:
-            raise ValueError(
-                "Talker and Code Predictor require the same flash_attention_2 or sdpa backend"
-            )
+        if not backends <= {"flash_attention_2", "sdpa"}:
+            raise ValueError("Talker and Code Predictor require flash_attention_2 or sdpa")
         self.config = config
         self.talker = Qwen3TTSTalkerForConditionalGeneration(config)
         self.speaker_encoder = Qwen3TTSSpeakerEncoder(speaker_config) if speaker_config else None
@@ -74,7 +72,11 @@ class TTSModel(nn.Module):
                     raise ValueError(f"Assembled artifact changed: {name}")
         config = Qwen3TTSConfig.from_dict(json.loads((directory / "config.json").read_text()))
         config.talker_config._attn_implementation = attn_implementation
-        config.talker_config.code_predictor_config._attn_implementation = attn_implementation
+        # Predictor sequences have exactly 16 positions, one sequence per codec frame.
+        # FA2's deterministic backward workspace scales with the rounded sequence length;
+        # large frame batches fail on our supported CUDA stack. Native SDPA avoids that
+        # workspace without adding padding or changing the teacher-forcing objective.
+        config.talker_config.code_predictor_config._attn_implementation = "sdpa"
         model = cls(config.talker_config, config.speaker_encoder_config)
         if load_weights:
             model.talker.load_state_dict(load_prefix(directory, "talker."), strict=True)
@@ -106,11 +108,6 @@ class TTSModel(nn.Module):
         return build_inputs(self.talker, self.speaker_encoder, self.config, batch)
 
     def hidden(self, batch):
-        if (
-            self.config._attn_implementation
-            != self.config.code_predictor_config._attn_implementation
-        ):
-            raise ValueError("Talker and Code Predictor attention backends disagree")
         inputs, audio_positions = self.input_embeddings(batch)
         outputs = self.talker.model(**inputs, use_cache=False)
         return outputs.last_hidden_state.flatten(0, 1)[audio_positions]

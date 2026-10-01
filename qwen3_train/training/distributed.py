@@ -16,6 +16,12 @@ def initialize(seed):
     torch.manual_seed(seed)
     torch.use_deterministic_algorithms(True)
     os.environ["FLASH_ATTENTION_DETERMINISTIC"] = "1"
+    # Native SDPA otherwise selects Flash again for the fixed-length predictor.
+    # Its very large batch dimension reproduces non-finite / illegal-access backward
+    # failures on this stack. Keep deterministic memory-efficient SDPA and math.
+    # The external FA2 varlen kernel used by the packed Talker is unaffected.
+    torch.backends.cuda.enable_flash_sdp(False)
+    torch.backends.cuda.enable_cudnn_sdp(False)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cudnn.benchmark = False

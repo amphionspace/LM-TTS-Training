@@ -83,7 +83,7 @@ class PackingTests(unittest.TestCase):
     def test_flash_packed_loss_and_gradients_match_individual_utterances(self):
         model = self.model.bfloat16().cuda().train()
         model.config._attn_implementation = "flash_attention_2"
-        model.config.code_predictor_config._attn_implementation = "flash_attention_2"
+        model.config.code_predictor_config._attn_implementation = "sdpa"
         with patch.dict("os.environ", {"FLASH_ATTENTION_DETERMINISTIC": "1"}):
             for protocol in ["qwen3_non_streaming", "legacy_prefix"]:
                 with self.subTest(protocol=protocol):
@@ -125,7 +125,7 @@ class PackingTests(unittest.TestCase):
     def test_packed_attention_isolates_samples_and_future_audio(self):
         model = self.model.bfloat16().cuda().eval()
         model.config._attn_implementation = "flash_attention_2"
-        model.config.code_predictor_config._attn_implementation = "flash_attention_2"
+        model.config.code_predictor_config._attn_implementation = "sdpa"
 
         def hidden(rows):
             batch = {k: v.cuda() for k, v in collate(rows).items()}

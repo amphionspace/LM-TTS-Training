@@ -140,7 +140,7 @@ class FrozenFrontendProtocolTests(QwenProtocolTests):
             self.skipTest("Flash Attention 2 is not installed")
         flash = copy.deepcopy(self.model)
         flash.config._attn_implementation = "flash_attention_2"
-        flash.config.code_predictor_config._attn_implementation = "flash_attention_2"
+        flash.config.code_predictor_config._attn_implementation = "sdpa"
         second = {
             **self.row,
             "text_ids": [18, 5, 19],

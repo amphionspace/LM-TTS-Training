@@ -2,6 +2,7 @@
 
 import torch
 import torch.distributed as dist
+from torch.utils.data import DataLoader
 
 from ..data.batch import collate, val_batches
 from ..objectives.tts import loss_normalizers, tts_loss
@@ -9,11 +10,38 @@ from ..training.distributed import batch_health, move
 
 
 @torch.no_grad()
-def validate(model, dataset, batch_size, device, loss_reduction="token", residual_weight=0.3):
+def validate(
+    model,
+    dataset,
+    batch_size,
+    device,
+    loss_reduction="token",
+    residual_weight=0.3,
+    *,
+    loader_settings=None,
+):
     model.eval()
     totals = torch.zeros(25, dtype=torch.float64, device=device)
-    for indices, real in val_batches(dataset, batch_size, dist.get_world_size(), dist.get_rank()):
-        batch = move(collate(dataset.__getitems__(indices)), device)
+    settings = loader_settings or {}
+    workers = settings.get("num_workers", 0)
+    plan = list(val_batches(dataset, batch_size, dist.get_world_size(), dist.get_rank()))
+    # A tiny holdout cannot amortize spawning workers and filling their queues.
+    if len(plan) <= workers * settings.get("prefetch_factor", 2):
+        workers = 0
+    loader = DataLoader(
+        dataset,
+        batch_sampler=[indices for indices, _ in plan],
+        collate_fn=collate,
+        num_workers=workers,
+        pin_memory=True,
+        prefetch_factor=settings.get("prefetch_factor", 2) if workers else None,
+        multiprocessing_context="spawn" if workers else None,
+        timeout=settings.get("loader_timeout_seconds", 300) if workers else 0,
+        # Validation worker startup must not advance the training RNG state.
+        generator=torch.Generator().manual_seed(dist.get_rank()),
+    )
+    for (_, real), batch in zip(plan, loader, strict=True):
+        batch = move(batch, device)
         if real:
             totals[23] += batch["skipped_samples"]
         if not batch_health(batch, device)[0]:

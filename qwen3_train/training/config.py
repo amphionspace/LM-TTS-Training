@@ -68,6 +68,9 @@ def load_config(path):
             raise ValueError(f"train.{key} must be a positive integer")
     if type(train["num_workers"]) is not int or train["num_workers"] < 0:
         raise ValueError("Invalid worker count")
+    first_check = train.get("first_check_step")
+    if first_check is not None and (type(first_check) is not int or first_check < 1):
+        raise ValueError("first_check_step must be a positive integer or null")
     epochs, steps = train.get("epochs"), train.get("max_steps")
     if epochs is not None and (type(epochs) is not int or epochs < 1):
         raise ValueError("train.epochs must be a positive integer")

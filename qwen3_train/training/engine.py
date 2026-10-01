@@ -139,6 +139,7 @@ def run(config, resume=None, eval_only=False):
             "max_steps",
             "save_every",
             "eval_every",
+            "first_check_step",
             "log_every",
             "keep_checkpoints",
             "num_workers",
@@ -147,7 +148,7 @@ def run(config, resume=None, eval_only=False):
             "tensorboard",
         }
         signature = {
-            "protocol": 4,
+            "protocol": 5,
             "seed": seed,
             "model": config["model"],
             "assembly_sha256": hashlib.sha256(
@@ -202,6 +203,7 @@ def run(config, resume=None, eval_only=False):
                         "world_size": world,
                         "precision": settings["precision"],
                         "attention": backend,
+                        "predictor_attention": model.config.code_predictor_config._attn_implementation,
                         "train_samples": len(train_data),
                         "progress": progress,
                     }
@@ -218,6 +220,7 @@ def run(config, resume=None, eval_only=False):
                 device,
                 settings["loss_reduction"],
                 settings["residual_weight"],
+                loader_settings=settings,
             )
             if rank == 0:
                 print(json.dumps({"step": progress["step"], "val": metrics}), flush=True)
@@ -261,7 +264,9 @@ def run(config, resume=None, eval_only=False):
             started = time.perf_counter()
             torch.cuda.reset_peak_memory_stats(device)
             batches = []
+            data_wait_seconds = 0.0
             while len(batches) < settings["accumulation"]:
+                read_started = time.perf_counter()
                 try:
                     batch = next(reader)
                 except StopIteration:
@@ -279,6 +284,7 @@ def run(config, resume=None, eval_only=False):
                     sampler.set_epoch(progress["epoch"])
                     reader = iter(loader)
                     batch = next(reader)
+                data_wait_seconds += time.perf_counter() - read_started
                 progress["next_batch"] += 1
                 skipped_since_log += int(batch["skipped_samples"])
                 usable, consumed = batch_health(batch, device)
@@ -290,7 +296,7 @@ def run(config, resume=None, eval_only=False):
                 batches.append(batch)
             if not batches:
                 break
-            wait_seconds = time.perf_counter() - started
+            prepare_seconds = time.perf_counter() - started
             denominators = sum(
                 loss_normalizers(b["frame_lengths"], settings["loss_reduction"]) for b in batches
             ).to(device)
@@ -348,9 +354,24 @@ def run(config, resume=None, eval_only=False):
             progress["step"] += 1
             step = progress["step"]
             dist.all_reduce(sums)
-            if rank == 0 and step % settings["log_every"] == 0:
+            if step % settings["log_every"] == 0:
                 torch.cuda.synchronize(device)
-                elapsed = time.perf_counter() - started
+                # Every rank participates: rank 0 alone can hide an input bottleneck elsewhere.
+                timing = torch.tensor(
+                    [
+                        time.perf_counter() - started,
+                        data_wait_seconds,
+                        prepare_seconds,
+                        torch.cuda.max_memory_allocated(device) / 2**30,
+                    ],
+                    dtype=torch.float64,
+                    device=device,
+                )
+                wait_mean = timing[1].clone()
+                dist.all_reduce(wait_mean)
+                dist.all_reduce(timing, op=dist.ReduceOp.MAX)
+                elapsed, wait_seconds, prepare_seconds, peak_memory = timing.tolist()
+            if rank == 0 and step % settings["log_every"] == 0:
                 metrics = {
                     "first_ce": (sums[0] / counts[0]).item(),
                     "residual_ce": (sums[1] / counts[1]).item(),
@@ -371,8 +392,11 @@ def run(config, resume=None, eval_only=False):
                     "grad_norm": norm.item(),
                     "step_seconds": elapsed,
                     "data_wait_seconds": wait_seconds,
+                    "data_wait_mean_seconds": wait_mean.item() / world,
+                    "data_wait_fraction": wait_seconds / elapsed,
+                    "batch_prepare_seconds": prepare_seconds,
                     "audio_seconds_per_second": counts[3].item() / elapsed,
-                    "peak_memory_gib": torch.cuda.max_memory_allocated(device) / 2**30,
+                    "peak_memory_gib": peak_memory,
                     "lr_backbone": optimizer.param_groups[0]["lr"],
                     "lr_new": optimizer.param_groups[1]["lr"],
                 }
@@ -383,7 +407,15 @@ def run(config, resume=None, eval_only=False):
             if step % settings["log_every"] == 0:
                 skipped_since_log = discarded_since_log = 0
             final = finished(settings, progress)
-            if val_data is not None and (step % settings["eval_every"] == 0 or final):
+            first_check = step == settings.get("first_check_step")
+            if val_data is not None and (
+                first_check or step % settings["eval_every"] == 0 or final
+            ):
+                if rank == 0:
+                    print(
+                        json.dumps({"validation_started": step, "samples": len(val_data)}),
+                        flush=True,
+                    )
                 metrics = validate(
                     model,
                     val_data,
@@ -391,13 +423,15 @@ def run(config, resume=None, eval_only=False):
                     device,
                     settings["loss_reduction"],
                     settings["residual_weight"],
+                    loader_settings=settings,
                 )
                 if rank == 0:
+                    print(json.dumps({"step": step, "val": metrics}), flush=True)
                     write_validation(writer, metrics, step)
                     with (output / "metrics.jsonl").open("a") as journal:
                         journal.write(json.dumps({"step": step, "val": metrics}) + "\n")
                 last_validated_step = step
-            if step % settings["save_every"] == 0 or final:
+            if first_check or step % settings["save_every"] == 0 or final:
                 save_checkpoint(
                     output / "checkpoints",
                     model,
@@ -419,6 +453,7 @@ def run(config, resume=None, eval_only=False):
                 device,
                 settings["loss_reduction"],
                 settings["residual_weight"],
+                loader_settings=settings,
             )
             if rank == 0:
                 write_validation(writer, metrics, progress["step"])
