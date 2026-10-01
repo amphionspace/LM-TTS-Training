@@ -67,6 +67,8 @@ $PY -m scripts.prepare_models --config "$CFG"
 
 当前组装方案：Talker 主干来自纯文本 `Qwen3-0.6B-Base` 并继续训练；text embedding、text projector 和 speaker encoder 来自官方 Qwen3-TTS 并冻结；16 组 codec embedding、音频输出 head 和 Code Predictor 新初始化并训练。Talker → Code Predictor 的 projector 因两侧同宽而是无参数 Identity。音频 codec 不参与训练。逐模块参数量与来源见[初始化与冻结范围](docs/training/all16-20261001.md#初始化与冻结范围)。
 
+备选方案“0.6B Base 文本 embedding + 扩词表 + 随机 projector，文本端可训练”目前**仅有设计文档，未生成模型或启动实验**。后续组装命令、验收与学习率分组注意事项见[备选组装方案](docs/design/text-base-trainable-assembly.md)。
+
 | 目录 | 内容 |
 | --- | --- |
 | `assets/base/` | 复制的基础模型、官方 TTS 模板和 codec |
