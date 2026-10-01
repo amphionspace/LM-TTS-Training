@@ -245,6 +245,6 @@ PYTHONPATH=.:tests $PY tests/check_epoch_resume.py --output artifacts/check-epoc
 $PY -m scripts.acp.submit --validate --nodes 4 --run-name check-32gpu --submit
 ```
 
-已完成的 ACP 4 节点 32 张 A800 作业 `pt-ughagq38` 验证了 BF16 / FP32 连续训练与 2+2 步恢复：权重逐位一致，冻结模块未变，评分接口通过。报告在 `/workspace/LM-TTS-Training-Runs/acp-20260930-32gpu/result.json`。该结果证明微型模型功能，不代表完整模型吞吐。当前 merged 数据的接入、坏样本跳过和 epoch / WSD 恢复另有回归覆盖；完整模型的预算测试和正式实验记录见 [全量训练记录](docs/training/all16-20261001.md)。
+已完成的 ACP 4 节点 32 张 A800 作业 `pt-ughagq38` 验证了 BF16 / FP32 连续训练与 2+2 步恢复：权重逐位一致，冻结模块未变，评分接口通过。报告在 `正式 BF16 run 的 logs/verification/acp32-legacy-result.json`。该结果证明微型模型功能，不代表完整模型吞吐。当前 merged 数据的接入、坏样本跳过和 epoch / WSD 恢复另有回归覆盖；完整模型的预算测试和正式实验记录见 [全量训练记录](docs/training/all16-20261001.md)。
 
 更多证据见[验证记录](docs/training/unified-refactor.md)。历史 run 按[保留规则](runs/README.md)保存，旧实验文档仅作历史记录，当前操作以本 README 为准。

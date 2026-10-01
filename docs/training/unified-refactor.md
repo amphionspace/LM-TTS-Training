@@ -22,7 +22,7 @@
 - ACP 两个真实物理节点、16 张 A800：训练和恢复完成，但首次 master 的验收脚本错误地检查了默认 fixture 行数；任务状态 FAILED。修复脚本后，保存结果离线验证全部权重逐位一致。没有将失败任务标为成功。
 - ACP 作业 `pt-ughagq38`：四个真实物理节点、32 张不同 UUID 的 A800，状态 SUCCEEDED。BF16 / FP32 各进行连续 4 步和 2+2 步恢复，所有权重差异为 0，四组训练模块发生更新，冻结 text frontend / speaker 保持不变。实际跨机器 NCCL、spawn worker、梯度累积、activation checkpoint、DCP 和导出链路通过。
 
-32 卡报告：`/workspace/LM-TTS-Training-Runs/acp-20260930-32gpu/result.json`。这些任务使用真实 Lance fixture 和 64 维微型模型，不能外推完整模型的显存或吞吐。当前的微型验证入口为 `scripts/acp/submit.py --validate`。
+32 卡报告：`正式 BF16 run 的 logs/verification/acp32-legacy-result.json`。这些任务使用真实 Lance fixture 和 64 维微型模型，不能外推完整模型的显存或吞吐。当前的微型验证入口为 `scripts/acp/submit.py --validate`。
 
 ## 评分与 TensorBoard
 
