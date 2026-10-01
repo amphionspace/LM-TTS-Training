@@ -65,6 +65,8 @@ $PY -m scripts.prepare_models --config "$CFG"
 
 该命令从 `/workspace/model` 复制基础权重，校验后组装；可用 `--source` 指定其他本地来源。训练启动时只加载带 `ASSEMBLY_COMPLETE` 标记的产物。
 
+当前组装方案：Talker 主干来自纯文本 `Qwen3-0.6B-Base` 并继续训练；text embedding、text projector 和 speaker encoder 来自官方 Qwen3-TTS 并冻结；16 组 codec embedding、音频输出 head 和 Code Predictor 新初始化并训练。Talker → Code Predictor 的 projector 因两侧同宽而是无参数 Identity。音频 codec 不参与训练。逐模块参数量与来源见[初始化与冻结范围](docs/training/all16-20261001.md#初始化与冻结范围)。
+
 | 目录 | 内容 |
 | --- | --- |
 | `assets/base/` | 复制的基础模型、官方 TTS 模板和 codec |
@@ -178,6 +180,8 @@ $PY -m scripts.tensorboard --run unified-bf16
 `data_wait_seconds` 只计训练线程等待 `next(loader)` 的时间，跨卡取最大值；`data_wait_mean_seconds` 是平均值，`data_wait_fraction` 是最大等待占整步的比例。`batch_prepare_seconds` 另含组批健康检查与同步。它们是日志步的观测值，不是磁盘读取总耗时：worker 预取与 GPU 计算重叠的部分不会计为等待。若等待持续偏高，先检查 AFS / CPU，再调整 `num_workers`、`prefetch_factor`；盲目增大预取会增加主存和存储并发压力。NVML 的实际占用及利用率见各节点 GPU CSV，PyTorch 峰值不含全部驱动 / 通信开销。
 
 全量实验先在第 100 步做一次完整验证与保存，之后每 2500 步同时执行。验证 loss 在训练 GPU 上分布式计算；独立的生成音频评分由下一节入口执行。
+
+当前 all16 实验另有每小时运行的后台 Codex 巡检 agent，按[故障处置手册](docs/training/all16-20261001-incident-playbook.md)自主检查和有限恢复，摘要追加到[巡检记录](docs/training/all16-20261001-supervision.md)。调度入口仅唤醒 agent，不按脚本规则诊断或重启训练；宿主机 / 容器需保持运行。
 
 `Custom Scalars` 提供 loss、学习率和耗时组合图；`Text` 显示配置。执行下一节评分后，会增加 WER / CER、音质、相似度和参考 / 生成音频试听。音质指标不会随训练自动生成。
 
