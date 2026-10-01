@@ -9,7 +9,16 @@ class DynamicBatchingTests(unittest.TestCase):
         tokens = [f + 10 + i % 5 for i, f in enumerate(frames)]
         samplers = [
             TokenBatchSampler(
-                frames, tokens, 40, 100, world_size=4, rank=r, seed=42, shuffle_window=11
+                frames,
+                tokens,
+                40,
+                100,
+                world_size=4,
+                rank=r,
+                seed=42,
+                shuffle_window=11,
+                length_bucket_size=7,
+                pad_to_longest=True,
             )
             for r in range(4)
         ]
@@ -26,6 +35,7 @@ class DynamicBatchingTests(unittest.TestCase):
                 for batch in plan:
                     self.assertLessEqual(sum(frames[i] for i in batch), 40)
                     self.assertLessEqual(sum(tokens[i] for i in batch), 100)
+                    self.assertLessEqual(len(batch) * max(tokens[i] for i in batch), 100)
             if previous is not None:
                 self.assertNotEqual(previous, plans)
             previous = plans

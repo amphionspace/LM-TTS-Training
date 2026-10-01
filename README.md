@@ -4,7 +4,7 @@
 
 日常流程：**修改实验配置 → 准备模型 → 构建数据索引 → 本地或 ACP 训练 → 查看日志与评分**。下面的命令均在仓库根目录执行。
 
-> 当前正式数据尚未全部发布。`configs/data.yaml` 中的路径是预期发布位置，不能直接假定全部可用；构建前需要确认所选数据集的 codec 和 speaker manifest 都已完成。
+当前配置绑定已发布的 **16 个 merged features 数据集，共 128,220,178 条样本**。正式实验使用 FP32、32 卡、token loss、3 个 epoch，并按数据集固定抽取约 0.1% 作为验证集。
 
 ## 1. 选择实验和配置
 
@@ -14,7 +14,7 @@ PY=/workspace/workspace/yanglin/envs/lm-tts/bin/python
 CFG=configs/train-bf16.yaml
 ```
 
-使用 FP32 时，将 `CFG` 改为 `configs/train-fp32.yaml`。新实验可以复制一个 `train-*.yaml` 到 `configs/`，修改 `train.run_name`，再让 `CFG` 指向新文件。
+使用通用 FP32 配置时，将 `CFG` 改为 `configs/train-fp32.yaml`。全量实验使用 `configs/supervised-tts-20260929-all16-fp32-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml`。新实验可以复制一个 `train-*.yaml` 到 `configs/`，修改 `train.run_name`，再让 `CFG` 指向新文件。
 
 所有配置直接继承一个 [base.yaml](configs/base.yaml)，无需追踪多级依赖。ACP 和训练参数放在同一份实验配置中；数据绑定、生成和评分各有自己的入口。
 
@@ -23,7 +23,7 @@ CFG=configs/train-bf16.yaml
 | 实验名称、精度、学习率、batch 预算 | 实验 YAML 的 `train` 区块 |
 | ACP 节点数、镜像 | 同一实验 YAML 的 `acp` 区块；提交时也可用 `--nodes` |
 | 公共路径、通信设置、训练默认值 | `configs/base.yaml` |
-| selection、各数据集 codec / speaker manifest | [configs/data.yaml](configs/data.yaml) |
+| selection、各数据集 merged manifest、验证比例 | [configs/data.yaml](configs/data.yaml) |
 | 新数据索引的名称 | 实验 YAML 的 `data.build_id` |
 | 生成参数、生成设备和精度 | [configs/synthesis.yaml](configs/synthesis.yaml) |
 | 评分项目、评分模型、试听数量 | [configs/evaluation.yaml](configs/evaluation.yaml) |
@@ -78,21 +78,30 @@ $PY -m scripts.prepare_models --config "$CFG"
 
 ## 3. 构建训练数据
 
-检查 `configs/data.yaml` 的 `selection_manifest` 和 `bindings`。每个绑定选择同一数据集、同一 release 的 codec 和 speaker embedding manifest，必须为 `status: complete`，不能指向 `.incomplete`。先使用部分数据时，保留已完成的数据集绑定即可。
+检查 `configs/data.yaml` 的 `selection_manifest` 和 `bindings`。每个绑定指向一个已发布的 merged manifest，必须为 `status: complete`。该表已经合并 codec、speaker embedding 和 text，训练无需再次 join。
 
-- **text / language** 已包含在发布后的 codec 表中，文本来自固定 selection 的 `selected_text` 或原始 samples 的 `text`；训练侧不生成转写。
+- **text / language** 来自 merged 表中的独立文本特征，发布 manifest 固定其来源；训练侧不生成转写。
 - **codec** 是每帧 16 个码本的离散 token。
-- **speaker embedding** 是官方冻结 encoder 生成的 1024 维向量。
+- **speaker embedding** 是冻结 encoder 生成的 1024 维向量，启动时会核对其权重与组装模型一致。
 
 ```bash
 $PY -m scripts.build_unified --config "$CFG"
 ```
 
-完成后生成 `data/builds/<build_id>/manifest.json`，训练通过实验配置的 `data.build` 读取它。Build 固定 feature 版本，建立 speaker 定位和 text token 缓存，只写训练仓库；它仍引用 unified 的源文件，因此源文件需要保留。
+`data.yaml` 是数据选择配置；`data/builds/<build_id>/` 是由它生成的训练缓存，包含固定版本引用、text token、长度索引和训练 / 验证划分。codec 和 speaker 大字段仍引用 unified 源文件，因此源文件需要保留。整个 build 只写本仓库，不写 unified；同一 build 可以复用于 BF16 和 FP32。
 
-更换 selection、feature 版本或 tokenizer 时，修改 `data.build_id` 创建新 build。已有 build 不会被覆盖；同一 build 可供 BF16 和 FP32 训练复用。
+| build 内的位置 | 用途 |
+| --- | --- |
+| `manifest.json` | 完整数据的版本与覆盖记录 |
+| `train/manifest.json` | 正式训练入口，由 `data.build` 指向 |
+| `validation/manifest.json` | 验证入口，由 `data.val_build` 指向 |
+| 数据集目录、`sampling-*.npy` | token 缓存、采样长度与行定位，自动生成 |
 
-**`data.evaluation: no_holdout` 表示这份数据没有划出独立验证集。** 训练仍记录 loss，但不会产生 validation loss，`train.eval_every` 此时不起作用。当前构建器只生成这种 build；启用训练中验证需要另外发布真正隔离的训练 / 验证 build，并设置 `data.val_build`，不能只改这个字符串。下文的独立生成评分仍可使用。
+默认按每个数据集的固定快照、`split_seed: 42` 抽取 `validation_fraction: 0.001`。训练约 128,091,959 条，验证约 128,219 条；两者的行不重叠。这是**样本级划分**，不承诺说话人或文本完全不重叠。每个 epoch 不放回遍历训练集，多卡尾部不足每卡一条时丢弃少于 world size 条样本。
+
+`train_isolated` / `heldout` 表示这一对训练 / 验证 build；`no_holdout` 表示尚未划分的源 build。仅修改这个标签不会产生验证集。更换 selection、feature、tokenizer 或划分方式时创建新 `build_id`，已有 build 不会覆盖。
+
+单条 feature 无法读取、codec 越界或 embedding 无效时会跳过，并记录坏样本数；若某张卡整个 microbatch 都无效，所有卡一起跳过该 microbatch，避免通信卡住。模型计算、配置或整体数据版本错误仍会报错，不能当成坏样本掩盖。
 
 ## 4. 启动训练
 
@@ -125,9 +134,11 @@ SSH 免密和平台 TensorBoard 默认开启。提交器将代码快照、有效
 
 ### 精度与恢复约束
 
-BF16 使用 FlashAttention，FP32 使用 SDPA；两者都保留 FP32 master weights、梯度归约和 cross entropy，关闭 TF32。组批预算按每张卡计算，显存不足时降低 `max_batch_frames` / `max_batch_tokens`。数据提取精度与训练精度分别记录。
+BF16 使用 FlashAttention，FP32 使用 SDPA；两者都保留 FP32 master weights、梯度归约和 cross entropy，关闭 TF32。组批预算按每张卡计算；FP32 还用 `max_batch_tokens` 限制 padding 后的 token 数，避免长短样本混合导致显存突增。`length_bucket_size` 在随机窗口内按长度组批以减少 padding。显存不足时降低 `max_batch_frames` / `max_batch_tokens`。数据提取精度与训练精度分别记录。
 
-恢复时保持相同 world size、模型、数据、batch、优化器和学习率计划；可以增加 `max_steps`，但不能超过原有 `schedule_steps`。改变这些训练语义时使用新 run。
+恢复时保持相同 world size、模型、数据、batch、优化器和学习率计划；可以增加 `max_steps`，但不能超过原有 `schedule_steps`。epoch 实验由 `epochs` 停止，`max_steps: null` 表示不设步数上限。改变这些训练语义时使用新 run。
+
+全量配置使用 WSD：新增模块峰值 LR `3e-4`，backbone `1e-4`；前 1% 总训练进度线性 warmup，保持到第 2.7 epoch，最后 0.3 epoch 余弦衰减至峰值的 10%。warmup 按已消费样本数计算，不沿用旧实验的固定步数；调整 batch 预算也不会改变各阶段覆盖的数据比例。
 
 通信默认值集中在 base 的 `environment`：`NCCL_IB_TIMEOUT=22`、`NCCL_IB_RETRY_CNT=13`、`NCCL_IB_AR_THRESHOLD=0`，按当前[商汤 ACP 建议](https://www.sensecore.cn/help/docs/cloud-foundation/compute/acp/acpUserGuide/acpEnvironmentVariable)设置。本地显式 shell 环境优先；ACP 将配置值注入各节点。
 
@@ -140,7 +151,8 @@ BF16 使用 FlashAttention，FP32 使用 SDPA；两者都保留 FP32 master weig
 | `checkpoints/step-XXXXXXXX/` | 完整训练状态，默认保留最近两份 |
 | `checkpoints/latest` | 保存最后一个完整 checkpoint 的目录名 |
 | `tensorboard/` | 训练和评分事件 |
-| `logs/` | 每个节点的启动及训练输出 |
+| `logs/` | 节点输出，以及每节点所有 GPU 每 10 秒的利用率 / 显存 CSV |
+| `completion.json` | 训练正常结束后的最终步数和 epoch |
 | `metrics.jsonl` | 可用于重建曲线的指标记录 |
 | `config.json`、`config.yaml` | 有效配置和源实验 YAML |
 | `submissions/` | ACP 提交记录及代码快照 |
@@ -157,9 +169,9 @@ $PY -m scripts.tensorboard --run unified-bf16
 
 | 组 | 用来看什么 |
 | --- | --- |
-| `optimization` | 总 loss、首码本 / residual CE、两组学习率、梯度范数 |
+| `optimization` | 总 loss、首码本 / residual CE、两组学习率、梯度范数、epoch |
 | `performance` | 音频秒吞吐、每步耗时、数据等待、rank 0 每步峰值显存 |
-| `batch` | 全局样本数、音频秒数、codec token 数，包含梯度累积 |
+| `batch` | 全局样本数、音频秒数、token 数、padding 效率、坏样本及连带跳过数 |
 
 `Custom Scalars` 提供 loss、学习率和耗时组合图；`Text` 显示配置。执行下一节评分后，会增加 WER / CER、音质、相似度和参考 / 生成音频试听。音质指标不会随训练自动生成。
 
@@ -225,6 +237,6 @@ $PY -m ruff format --check qwen3_train scripts tests
 $PY -m scripts.acp.submit --validate --nodes 4 --run-name check-32gpu --submit
 ```
 
-已完成的 ACP 4 节点 32 张 A800 作业 `pt-ughagq38` 验证了 BF16 / FP32 连续训练与 2+2 步恢复：权重逐位一致，冻结模块未变，评分接口通过。报告在 `/workspace/LM-TTS-Training-Runs/acp-20260930-32gpu/result.json`。该结果证明微型模型功能，不代表完整模型吞吐。另已用独立完成的 CSEMOTIONS features 验证真实数据读取，正式 selection 仍待处理完成。
+已完成的 ACP 4 节点 32 张 A800 作业 `pt-ughagq38` 验证了 BF16 / FP32 连续训练与 2+2 步恢复：权重逐位一致，冻结模块未变，评分接口通过。报告在 `/workspace/LM-TTS-Training-Runs/acp-20260930-32gpu/result.json`。该结果证明微型模型功能，不代表完整模型吞吐。当前 merged 数据的接入、坏样本跳过和 epoch / WSD 恢复另有回归覆盖；完整模型的预算测试和正式实验记录见 [全量训练记录](docs/training/all16-20261001.md)。
 
 更多证据见[验证记录](docs/training/unified-refactor.md)。历史 run 按[保留规则](runs/README.md)保存，旧实验文档仅作历史记录，当前操作以本 README 为准。

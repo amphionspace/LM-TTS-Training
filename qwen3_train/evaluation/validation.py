@@ -5,15 +5,21 @@ import torch.distributed as dist
 
 from ..data.batch import collate, val_batches
 from ..objectives.tts import loss_normalizers, tts_loss
-from ..training.distributed import move
+from ..training.distributed import batch_health, move
 
 
 @torch.no_grad()
 def validate(model, dataset, batch_size, device, loss_reduction="token", residual_weight=0.3):
     model.eval()
-    totals = torch.zeros(23, dtype=torch.float64, device=device)
+    totals = torch.zeros(25, dtype=torch.float64, device=device)
     for indices, real in val_batches(dataset, batch_size, dist.get_world_size(), dist.get_rank()):
         batch = move(collate(dataset.__getitems__(indices)), device)
+        if real:
+            totals[23] += batch["skipped_samples"]
+        if not batch_health(batch, device)[0]:
+            if real:
+                totals[24] += len(batch.get("frame_lengths", ()))
+            continue
         out = tts_loss(model(batch), batch, model.eos, loss_reduction)
         if real:
             totals[0] += out["first_sum"]
@@ -24,7 +30,11 @@ def validate(model, dataset, batch_size, device, loss_reduction="token", residua
             totals[19:21] += torch.stack([out["first_reduced_sum"], out["residual_reduced_sum"]])
             totals[21:23] += loss_normalizers(batch["frame_lengths"], loss_reduction)
     dist.all_reduce(totals)
+    if totals[1] == 0:
+        raise ValueError("No usable validation samples remain")
     metrics = {
+        "skipped_samples": totals[23].item(),
+        "discarded_samples": totals[24].item(),
         "first_ce": (totals[0] / totals[1]).item(),
         "residual_ce": (totals[2] / (totals[3] * 15)).item(),
         "loss": (totals[19] / totals[21] + residual_weight * totals[20] / totals[22]).item(),

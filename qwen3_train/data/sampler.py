@@ -21,6 +21,8 @@ class TokenBatchSampler:
         rank,
         seed,
         shuffle_window=65536,
+        length_bucket_size=0,
+        pad_to_longest=False,
     ):
         if len(frames) != len(tokens) or len(frames) < world_size:
             raise ValueError("Sampling metadata must have at least one sample per rank")
@@ -32,6 +34,10 @@ class TokenBatchSampler:
         self.frames, self.tokens = frames, tokens
         self.max_frames, self.max_tokens = max_frames, max_tokens
         self.world_size, self.rank, self.seed = world_size, rank, seed
+        if type(length_bucket_size) is not int or length_bucket_size < 0:
+            raise ValueError("length_bucket_size must be a nonnegative integer")
+        self.length_bucket_size = length_bucket_size
+        self.pad_to_longest = pad_to_longest
         self.window = shuffle_window
         self.epoch, self.start_batch, self.max_batches = 0, 0, None
 
@@ -47,10 +53,14 @@ class TokenBatchSampler:
             local = np.random.default_rng(
                 np.random.SeedSequence([self.seed, self.epoch, int(window), 1])
             )
-            yield from (
-                start + int(i)
-                for i in local.permutation(min(self.window, len(self.frames) - start))
-            )
+            indices = start + local.permutation(min(self.window, len(self.frames) - start))
+            if self.length_bucket_size:
+                # Randomized local buckets reduce SDPA padding without changing epoch coverage.
+                for offset in range(0, len(indices), self.length_bucket_size):
+                    bucket = indices[offset : offset + self.length_bucket_size]
+                    yield from sorted(map(int, bucket), key=lambda i: self.tokens[i])
+            else:
+                yield from map(int, indices)
 
     def __iter__(self):
         order = iter(self.order())
@@ -65,7 +75,7 @@ class TokenBatchSampler:
                 if not 0 < f <= self.max_frames or not 0 < t <= self.max_tokens:
                     raise ValueError(f"Sample {pending} exceeds frame/token budgets: {f}/{t}")
                 group.append([pending])
-                loads.append([f, t])
+                loads.append([f, t, t])
                 pending = next(order, None)
             while pending is not None:
                 f, t = int(self.frames[pending]), int(self.tokens[pending])
@@ -73,8 +83,13 @@ class TokenBatchSampler:
                     raise ValueError(f"Sample {pending} exceeds frame/token budgets: {f}/{t}")
                 fits = [
                     r
-                    for r, (lf, lt) in enumerate(loads)
-                    if lf + f <= self.max_frames and lt + t <= self.max_tokens
+                    for r, (lf, lt, longest) in enumerate(loads)
+                    if lf + f <= self.max_frames
+                    and lt + t <= self.max_tokens
+                    and (
+                        not self.pad_to_longest
+                        or (len(group[r]) + 1) * max(longest, t) <= self.max_tokens
+                    )
                 ]
                 if not fits:
                     break
@@ -85,6 +100,7 @@ class TokenBatchSampler:
                 group[rank].append(pending)
                 loads[rank][0] += f
                 loads[rank][1] += t
+                loads[rank][2] = max(loads[rank][2], t)
                 pending = next(order, None)
             if batch_number >= self.start_batch:
                 if self.max_batches is not None and yielded >= self.max_batches:

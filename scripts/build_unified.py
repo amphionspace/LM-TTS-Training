@@ -15,7 +15,7 @@ def main():
     config = read_yaml(args.config)
     manifest = create_build(
         config["data"]["config"],
-        Path(config["data"]["build"]).parent,
+        config["data"].get("build_root", Path(config["data"]["build"]).parent),
         paths=config.get("paths"),
     )
     print(

@@ -24,7 +24,10 @@ def main():
     if args.eval_only and not config["data"].get("val_build"):
         parser.error("--eval-only requires an independently isolated validation build")
     if args.max_steps is not None:
-        if not 0 < args.max_steps <= config["train"]["schedule_steps"]:
+        if args.max_steps < 1 or (
+            config["train"].get("schedule_steps") is not None
+            and args.max_steps > config["train"]["schedule_steps"]
+        ):
             parser.error("--max-steps must be positive and within schedule_steps")
         config["train"]["max_steps"] = args.max_steps
     if args.output:

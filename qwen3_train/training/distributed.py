@@ -35,3 +35,11 @@ def shard(model, device, policy):
 
 def move(batch, device):
     return {k: v.to(device, non_blocking=True) for k, v in batch.items()}
+
+
+def batch_health(batch, device):
+    """Agree on FSDP participation and count consumed samples, including rejected rows."""
+    count = len(batch.get("frame_lengths", ()))
+    health = torch.tensor([int(count > 0), count + int(batch["skipped_samples"])], device=device)
+    dist.all_reduce(health)
+    return health[0].item() == dist.get_world_size(), int(health[1].item())

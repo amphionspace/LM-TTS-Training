@@ -12,14 +12,15 @@ import yaml
 from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
 from safetensors.torch import load_file
-from test_unified_data import fixture
+from test_merged_data import merged_fixture
 from tokenizers import Tokenizer
 from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import PreTrainedTokenizerFast
 
 from qwen3_train.artifacts import file_hash
-from qwen3_train.data.build import bind_features, tokenizer_identity
+from qwen3_train.data.build import tokenizer_identity
+from qwen3_train.data.merged import bind_merged
 from qwen3_train.models.assembly import save_model
 from qwen3_train.models.qwen import make_config
 
@@ -82,10 +83,10 @@ def prepare(root, precision, num_rows=8):
         )
     )
     (assembled / "ASSEMBLY_COMPLETE").write_text("ok\n")
-    recipe, selection, path = fixture(
+    recipe, selection, path = merged_fixture(
         root / "unified", embedding_dim=64, speaker_profile=profile, num_rows=num_rows
     )
-    bind_features(
+    bind_merged(
         recipe,
         root / "build",
         selection,

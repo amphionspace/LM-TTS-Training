@@ -1,9 +1,11 @@
 """Batched fixed-snapshot feature reads with mmap sampling metadata."""
 
+import warnings
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
 import torch
 
 from ..artifacts import file_hash
@@ -43,7 +45,7 @@ class FeatureDataset:
                 raise ValueError("Sampling metadata changed")
             self.indices.append(np.load(path, mmap_mode="r")[: binding["ready_rows"]])
             lengths.append(binding["ready_rows"])
-            for kind in ("codec", "speaker"):
+            for kind in ("merged",) if "merged" in binding else ("codec", "speaker"):
                 ref = binding[kind]
                 if verify_integrity and file_hash(ref["manifest_path"]) != ref["manifest_sha256"]:
                     raise ValueError("Feature manifest changed")
@@ -51,6 +53,7 @@ class FeatureDataset:
         if not self.offsets[-1]:
             raise ValueError("Empty training build")
         self.tables = {}
+        self.bad_rows_reported = 0
         self.frame_lengths = MetadataColumn(self, "frames")
         self.token_lengths = MetadataColumn(self, "tokens", extra=10)
 
@@ -103,8 +106,74 @@ class FeatureDataset:
             slot, row = self.locate(index)
             groups[slot].append((position, int(row["row"])))
         result = [None] * len(indices)
+        errors = (ValueError, TypeError, OSError, RuntimeError, pa.ArrowException)
         for slot, group in groups.items():
             positions, locators = zip(*group)
+            try:
+                rows = self._read_rows(slot, locators)
+            except errors:
+                # Isolate a corrupt payload; one failed batched take must not discard its peers.
+                rows = []
+                for locator in locators:
+                    try:
+                        rows.extend(self._read_rows(slot, [locator]))
+                    except errors as error:
+                        self._report_bad_row(slot, locator, error)
+                        rows.append(None)
+            for position, locator, pair in zip(positions, locators, rows, strict=True):
+                if pair is None:
+                    continue
+                try:
+                    result[position] = self._sample(*pair, self.bindings[slot])
+                except errors as error:
+                    self._report_bad_row(slot, locator, error)
+        return result
+
+    def _report_bad_row(self, slot, locator, error):
+        # Bound per-worker log volume; exact skipped counts are reported by the trainer.
+        if self.bad_rows_reported < 5:
+            warnings.warn(
+                f"Skipping bad sample: dataset={self.bindings[slot]['dataset_id']} row={locator}: {error}",
+                RuntimeWarning,
+            )
+        self.bad_rows_reported += 1
+
+    def _read_rows(self, slot, locators):
+        binding = self.bindings[slot]
+        if "merged" in binding:
+            from .merged import METADATA_COLUMNS
+
+            rows = (
+                self.table(slot, "merged")
+                .take(
+                    list(locators),
+                    columns=[*METADATA_COLUMNS, "codec_codes", "speaker_embedding", "text_ids"],
+                )
+                .to_pylist()
+            )
+            codec, speaker = [], []
+            for row in rows:
+                codec.append(
+                    {
+                        **row,
+                        **{
+                            k.removeprefix("codec_"): v
+                            for k, v in row.items()
+                            if k.startswith("codec_")
+                        },
+                    }
+                )
+                speaker.append(
+                    {
+                        **row,
+                        **{
+                            k.removeprefix("speaker_"): v
+                            for k, v in row.items()
+                            if k.startswith("speaker_")
+                        },
+                    }
+                )
+        else:
             codec = (
                 self.table(slot, "codec")
                 .take(
@@ -130,12 +199,10 @@ class FeatureDataset:
                 )
                 .to_pylist()
             )
-            if any(not r["build_ready"] or r["speaker_row"] is None for r in codec):
-                raise ValueError("Sampling index selected an unready row")
             speaker = (
                 self.table(slot, "speaker")
                 .take(
-                    [r["speaker_row"] for r in codec],
+                    [r["speaker_row"] if r["speaker_row"] is not None else 0 for r in codec],
                     columns=[
                         "target_id",
                         "parent_sample_id",
@@ -150,44 +217,56 @@ class FeatureDataset:
                 )
                 .to_pylist()
             )
-            for position, c, s in zip(positions, codec, speaker, strict=True):
-                keys = (
-                    "target_id",
-                    "parent_sample_id",
-                    "audio_sha256",
-                    "start_frame",
-                    "end_frame",
-                    "native_sample_rate",
-                )
-                if any(c[k] != s[k] for k in keys) or c["status"] != "ok" or s["status"] != "ok":
-                    raise ValueError("Cached speaker locator has the wrong identity/interval")
-                binding = self.bindings[slot]
-                if (
-                    c["profile_id"] != binding["codec"]["profile_id"]
-                    or s["profile_id"] != binding["speaker"]["profile_id"]
-                ):
-                    raise ValueError("Feature profile differs from build binding")
-                codes = torch.tensor(c["codes"], dtype=torch.long)
-                vector = torch.tensor(s["embedding"], dtype=torch.float32)
-                if (
-                    codes.shape != (c["num_codec_frames"], 16)
-                    or not len(codes)
-                    or codes.min() < 0
-                    or codes.max() >= 2048
-                ):
-                    raise ValueError("Invalid codec shape or vocabulary")
-                if vector.ndim != 1 or not torch.isfinite(vector).all() or vector.norm() == 0:
-                    raise ValueError("Invalid cached speaker embedding")
-                bos, eos = self.text_special_tokens
-                result[position] = {
-                    "id": c["target_id"],
-                    "text": c["text"],
-                    "language": c["language"],
-                    "speaker": c["speaker_id"],
-                    "text_ids": [bos, *c["text_ids"], eos],
-                    "codes": codes,
-                    "speaker_embedding": vector,
-                    "num_frames": len(codes),
-                    "duration": (c["end_frame"] - c["start_frame"]) / c["native_sample_rate"],
-                }
-        return result
+        return list(zip(codec, speaker, strict=True))
+
+    def _sample(self, c, s, binding):
+        if "merged" in binding:
+            from .merged import validate_row
+
+            validate_row(c, binding)
+            if len(s["embedding"]) != s["embedding_dim"]:
+                raise ValueError("Merged speaker embedding dimension differs")
+        elif not c["build_ready"] or c["speaker_row"] is None:
+            raise ValueError("Sampling index selected an unready row")
+        if not c["text_ids"] or not isinstance(c["text"], str) or not c["text"].strip():
+            raise ValueError("Empty training text")
+        keys = (
+            "target_id",
+            "parent_sample_id",
+            "audio_sha256",
+            "start_frame",
+            "end_frame",
+            "native_sample_rate",
+        )
+        if "merged" in binding:
+            keys = tuple(k for k in keys if k != "end_frame")
+        if any(c[k] != s[k] for k in keys) or c["status"] != "ok" or s["status"] != "ok":
+            raise ValueError("Cached speaker locator has the wrong identity/interval")
+        if (
+            c["profile_id"] != binding["codec"]["profile_id"]
+            or s["profile_id"] != binding["speaker"]["profile_id"]
+        ):
+            raise ValueError("Feature profile differs from build binding")
+        codes = torch.tensor(c["codes"], dtype=torch.long)
+        vector = torch.tensor(s["embedding"], dtype=torch.float32)
+        if (
+            codes.shape != (c["num_codec_frames"], 16)
+            or not len(codes)
+            or codes.min() < 0
+            or codes.max() >= 2048
+        ):
+            raise ValueError("Invalid codec shape or vocabulary")
+        if vector.ndim != 1 or not torch.isfinite(vector).all() or vector.norm() == 0:
+            raise ValueError("Invalid cached speaker embedding")
+        bos, eos = self.text_special_tokens
+        return {
+            "id": c["target_id"],
+            "text": c["text"],
+            "language": c["language"],
+            "speaker": c["speaker_id"],
+            "text_ids": [bos, *c["text_ids"], eos],
+            "codes": codes,
+            "speaker_embedding": vector,
+            "num_frames": len(codes),
+            "duration": (c["end_frame"] - c["start_frame"]) / c["native_sample_rate"],
+        }

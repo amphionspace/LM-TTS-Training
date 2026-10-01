@@ -26,9 +26,11 @@ model:
 # ---- Data: data.yaml pins feature versions; build_id selects the training index ----
 data:
   config: ${paths.project}/configs/data.yaml
-  build_id: unified-fp32-20260930
-  build: ${paths.project}/data/builds/${data.build_id}/manifest.json
-  evaluation: no_holdout          # No isolated validation set; validation loss is unavailable
+  build_id: supervised-tts-20260929-merged-20261001-all16
+  build_root: ${paths.project}/data/builds/${data.build_id}
+  build: ${data.build_root}/train/manifest.json
+  val_build: ${data.build_root}/validation/manifest.json
+  evaluation: train_isolated     # A fixed sample-level holdout is excluded from training.
 
 # ---- Training: set run_name and precision in the experiment YAML ----
 train:

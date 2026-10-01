@@ -115,6 +115,9 @@ def create_build(recipe_path, output, *, paths=None):
             "speaker_conditioning_mode",
             "evaluation",
             "bindings",
+            "workers",
+            "validation_fraction",
+            "split_seed",
         ),
     )
     root = Path(recipe["root"]).resolve()
@@ -134,9 +137,25 @@ def create_build(recipe_path, output, *, paths=None):
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_info["path"], fix_mistral_regex=False, local_files_only=True
     )
-    return bind_features(
-        recipe, output, selection, selection_path, selection_hash, tokenizer_info, tokenizer
-    )
+    if any("merged_manifest" in binding for binding in recipe["bindings"]):
+        from .merged import bind_merged
+
+        manifest = bind_merged(
+            recipe, output, selection, selection_path, selection_hash, tokenizer_info, tokenizer
+        )
+    else:
+        manifest = bind_features(
+            recipe, output, selection, selection_path, selection_hash, tokenizer_info, tokenizer
+        )
+    if recipe.get("validation_fraction"):
+        from .split import split_build
+
+        return split_build(
+            Path(output) / "manifest.json",
+            recipe["validation_fraction"],
+            recipe.get("split_seed", 42),
+        )
+    return manifest
 
 
 def bind_features(

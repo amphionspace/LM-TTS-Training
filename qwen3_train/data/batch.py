@@ -4,6 +4,10 @@ import torch
 
 
 def collate(rows):
+    skipped = sum(row is None for row in rows)
+    rows = [row for row in rows if row is not None]
+    if not rows:
+        return {"skipped_samples": torch.tensor(skipped)}
     text_lengths = torch.tensor([len(r["text_ids"]) for r in rows])
     if (text_lengths == 0).any():
         raise ValueError("Text token sequence cannot be empty")
@@ -20,6 +24,7 @@ def collate(rows):
         batch["speaker_embeddings"] = torch.stack([r["speaker_embedding"] for r in rows])
     if "duration" in rows[0]:
         batch["audio_seconds"] = torch.tensor([r["duration"] for r in rows], dtype=torch.float64)
+    batch["skipped_samples"] = torch.tensor(skipped)
     return batch
 
 

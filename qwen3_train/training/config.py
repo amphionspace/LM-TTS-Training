@@ -56,8 +56,6 @@ def load_config(path):
     for key in (
         "max_batch_frames",
         "max_batch_tokens",
-        "max_steps",
-        "schedule_steps",
         "accumulation",
         "prefetch_factor",
         "shuffle_window",
@@ -68,17 +66,48 @@ def load_config(path):
     ):
         if type(train[key]) is not int or train[key] < 1:
             raise ValueError(f"train.{key} must be a positive integer")
-    if (
-        type(train["num_workers"]) is not int
-        or train["num_workers"] < 0
-        or train["max_steps"] > train["schedule_steps"]
-    ):
-        raise ValueError("Invalid worker count or stopping/schedule horizon")
-    if (
-        type(train["warmup_steps"]) is not int
-        or not 0 <= train["warmup_steps"] <= train["schedule_steps"]
-    ):
+    if type(train["num_workers"]) is not int or train["num_workers"] < 0:
+        raise ValueError("Invalid worker count")
+    epochs, steps = train.get("epochs"), train.get("max_steps")
+    if epochs is not None and (type(epochs) is not int or epochs < 1):
+        raise ValueError("train.epochs must be a positive integer")
+    if steps is not None and (type(steps) is not int or steps < 1):
+        raise ValueError("train.max_steps must be a positive integer or null")
+    if epochs is None and steps is None:
+        raise ValueError("Training needs epochs or max_steps")
+    schedule = train.get("scheduler", {"name": "cosine"})
+    if schedule.get("name") == "wsd":
+        if epochs is None:
+            raise ValueError("WSD requires train.epochs")
+        for key in ("decay_ratio", "min_lr_ratio"):
+            value = schedule.get(key)
+            if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= 1:
+                raise ValueError(f"scheduler.{key} must be in (0, 1]")
+    elif schedule.get("name") == "cosine":
+        horizon = train.get("schedule_steps")
+        if type(horizon) is not int or horizon < 1 or (steps is not None and steps > horizon):
+            raise ValueError("Invalid stopping/schedule horizon")
+    else:
+        raise ValueError("scheduler.name must be cosine or wsd")
+    if "warmup_ratio" in schedule:
+        ratio = schedule["warmup_ratio"]
+        if (
+            schedule["name"] != "wsd"
+            or train.get("warmup_steps") is not None
+            or type(ratio) not in (int, float)
+            or not math.isfinite(ratio)
+            or not 0 < ratio < 1 - schedule["decay_ratio"]
+        ):
+            raise ValueError(
+                "WSD warmup_ratio requires warmup_steps=null and a nonempty steady phase"
+            )
+    elif type(train["warmup_steps"]) is not int or train["warmup_steps"] < 0:
+        raise ValueError("warmup_steps must be a nonnegative integer")
+    if schedule.get("name") == "cosine" and train["warmup_steps"] > train["schedule_steps"]:
         raise ValueError("warmup_steps must be within schedule_steps")
+    bucket = train.get("length_bucket_size", 0)
+    if type(bucket) is not int or bucket < 0:
+        raise ValueError("length_bucket_size must be a nonnegative integer")
     if type(train["keep_checkpoints"]) is not int or train["keep_checkpoints"] < 1:
         raise ValueError("keep_checkpoints must be a positive integer")
     for key in ("lr", "backbone_lr", "grad_clip", "residual_weight", "weight_decay"):
