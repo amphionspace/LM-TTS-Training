@@ -17,34 +17,26 @@
 1. 先读本文、巡检记录最后几段、`supervision/agent-state.json`（若存在）、最新 submission 的 job.json。平台 job ID 与 run、display_name、启动脚本必须匹配。通过 `qwen3_train.config.read_yaml` 和 `scripts.acp.api.request/jobs_url` 查询 ACP；不要输出凭据文件或认证头。
 2. 从 `metrics.jsonl` 提取上次至今的 train/val，核对 step、epoch、LR、有限 loss/grad、skipped/discarded、data_wait_seconds/fraction、step_seconds、吞吐与峰值显存。日志每 10 步记录的是单步数值，不能冒充连续全部训练步统计。跳过半行 JSON，不能用空日志认定训练正常。
 3. 检查 `logs/` 下四节点 GPU CSV 的新鲜度、32 卡覆盖、显存/利用率、stdout/worker 错误，结合平台状态判断是否训练、排队、eval、保存或退出。API 返回失败时记录“平台不可确认”，不把旧 GPU 样本说成当前利用率。
-4. 检查最近完整 checkpoint 的 COMPLETE、metadata.json、DCP `.metadata`、32 个 RNG 文件与分片，核对进度/world_size=32；新 eval 与 checkpoint 应同 step，正在写入时给出合理等待时间。**每轮优先执行下一节的固定归档命令，保存所有新完整 checkpoint，不能只记录存在而不归档。** TensorBoard 在 `tensorboard/`，指标原始值在 `metrics.jsonl`。
-5. 检查可用磁盘与异常数据增长。正常状态执行 checkpoint 归档并记录摘要，不停止、重启或为了满显存调整配置。持续低利用率先区分数据 CPU 组批、AFS I/O、eval/save 等阶段；当前基线 NVML 约 66.5–66.8 GiB/卡，训练阶段利用率高，正常 train step 约 7–8 秒，数据等待约几个百分点。
+4. 检查最近完整 checkpoint 的 COMPLETE、metadata.json、DCP `.metadata`、32 个 RNG 文件与分片，核对进度/world_size=32；新 eval 与 checkpoint 应同 step，正在写入时给出合理等待时间。TensorBoard 在 `tensorboard/`，指标原始值在 `metrics.jsonl`。
+5. 检查可用磁盘与异常数据增长。正常状态记录训练摘要，不停止、重启或为了满显存调整配置。持续低利用率先区分数据 CPU 组批、AFS I/O、eval/save 等阶段；当前基线 NVML 约 66.5–66.8 GiB/卡，训练阶段利用率高，正常 train step 约 7–8 秒，数据等待约几个百分点。
 6. 在本文关联记录追加 UTC、job、step/epoch、最近 eval/ckpt、资源/数据等待、判断、动作和后续事项。详细证据写 run/supervision/ 下带 UTC 时间戳 JSON；更新 agent-state.json 的 current_job、last_step、last_checked、status、已用重试及事件。凭据不得进入记录。当前主会话正在提交文档时不要并发 git commit；后续每轮无需自动 commit/push，工作树中的追加记录即持久化。必要代码修复在针对性测试及真实恢复验证通过后可按既有授权 commit/push（`lucky9cyou <lucky@lucky9.cyou>`），只包含本次修复文件，不得 force push。
 
-## 完整 checkpoint 的永久归档（2026-10-02 用户新增要求）
+## checkpoint 归档独立运行（2026-10-03 更新）
 
-用户要求 supervisor 每次发现新的完整 checkpoint，就执行固定命令保存到轮转之外。目标固定为：
+用户要求归档脱离 supervisor，由独立定时进程每小时执行。**agent 不再检查、触发或维护归档，也不等待归档结果结束训练巡检。** 原先每轮归档的要求已撤销；历史记录只代表当时的动作。
 
-```text
-/workspace/LM-TTS-Training-Runs/supervised-tts-20260929-all16-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd/archived-checkpoints/step-XXXXXXXX/
-```
-
-每次巡检在仓库根目录执行下面同一条命令，不改目标、不重新实现复制、不只归档 latest：
+入口为 `scripts.schedule_checkpoint_archive`，运行于独立 tmux `all16-checkpoint-archive`，无需 Codex、平台 API 或网络代理。固定启动命令（仓库根目录）：
 
 ```bash
-/workspace/workspace/yanglin/envs/lm-tts/bin/python -m scripts.archive_checkpoints \
+/workspace/workspace/yanglin/envs/lm-tts/bin/python -m scripts.schedule_checkpoint_archive \
   --run /workspace/LM-TTS-Training-Runs/supervised-tts-20260929-all16-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd
 ```
 
-该命令只读取完整的 `checkpoints/step-XXXXXXXX`，核对 run 签名、step、DCP metadata 和各 rank RNG，复制所有 checkpoint 文件。逐文件比较源读取流与目标文件的 SHA256，一致后写入 `ARCHIVE_COMPLETE.json`，再原子发布归档目录。**是独立复制，不是 mv、软链接或硬链接**；不删除源 checkpoint、不改 latest、不修改 keep_checkpoints。训练仍只保留两个工作 checkpoint，归档目录保留所有成功归档的版本，不能自行轮转或清理。
+启动立即检查，此后每 3600 秒扫描；单次最多 3000 秒，失败记录后下一小时重试。目标固定为 `<run>/archived-checkpoints/step-XXXXXXXX/`，状态、每次日志和历史分别在 `<run>/archive-service/status.json`、时间戳 `.log` 和 `history.jsonl`。归档只处理完整 checkpoint，核对签名、step、DCP metadata 和 RNG，独立复制后逐文件比较 SHA256，写 `ARCHIVE_COMPLETE.json` 后原子发布。已有归档检查结构与文件大小后跳过，不重复拷贝；不会删除源文件或归档、改变 latest 或两份工作 checkpoint 的轮转。
 
-命令有互斥锁和重复执行检查。已有归档会核对结构、文件清单 / 大小与 metadata，然后返回 `already_archived`，不会每小时重拷贝大文件。需要重新核对归档内容时，在同一命令末尾加 `--verify`，它会重新计算所有归档文件 SHA256，包括源 checkpoint 已被训练轮转删除的版本。首次归档已执行全文件 SHA256 校验；不能把日常跳过重复归档描述为再次全量校验。
+定时进程与复制命令分别加锁，防止重复实例和并行复制。`archive-service/STOP` 只停止归档定时进程；停止 supervisor 不影响归档。训练结束后仍会继续检查，确保最后 checkpoint 有机会归档；需要停归档时由人工确认最后归档回执，再创建 STOP。宿主机或容器退出仍需重新执行启动命令，tmux 不提供跨主机重启恢复。
 
-将命令结果、归档 step、目标路径和失败原因写入每轮巡检记录。复制 / 校验失败不能记录为成功；先定位 I/O、容量或源 checkpoint 已被轮转的问题，再有限重试，不得手工补归档回执，也不得为释放空间删除已有归档。仅凭目录存在不能认定归档完成，必须有有效回执。开始归档前已被轮转删除的版本不能凭日志恢复。
-
-归档和训练输出目前在同一 AFS，用于防止训练轮转删除，**不是异地容灾备份**。每份完整 checkpoint 当前约 7.86 GiB，记录归档总量与可用空间。每小时巡检需要正常运行才能发现新版本；长期巡检中断可能错过已被轮转删除的 checkpoint，应如实记录缺口。
-
-需要从归档恢复时先加 `--verify` 完成全量校验，再使用归档 checkpoint 的绝对路径作为 `--resume` 参数；仍须满足下述完整恢复步骤，不更改训练签名。
+手动补存使用 `python -m scripts.archive_checkpoints --run <run>`；加 `--verify` 可重新计算所有归档 SHA256。恢复时如选择归档路径，应先执行该校验，再按下述完整恢复流程传入绝对路径。归档与训练在同一 AFS，仅防训练轮转删除，不是异地备份。已被删除且尚未归档的版本无法恢复。每份当前约 7.86 GiB。
 
 ## 故障处置
 
@@ -79,6 +71,6 @@
 
 ## 完成与调度控制
 
-3 epochs 结束后，核对 ACP 成功终态、`completion.json` 的最终进度、最后 checkpoint 完整且进度达到目标、对应最终 val 与 TensorBoard，执行固定命令确保最终 checkpoint 也已归档，记录最终摘要。只有 agent 核实完成后才创建 `supervision/COMPLETE`，让调度器退出；不能仅因为 job 退出、API 不可用或训练 step 暂停就写此标记。无需额外启动 3 epochs 之外的训练或新评估实验。
+3 epochs 结束后，核对 ACP 成功终态、`completion.json` 的最终进度、最后 checkpoint 完整且进度达到目标、对应最终 val 与 TensorBoard，记录最终摘要；最终 checkpoint 由独立归档进程保存。只有 agent 核实完成后才创建 `supervision/COMPLETE`，让调度器退出；不能仅因为 job 退出、API 不可用或训练 step 暂停就写此标记。无需额外启动 3 epochs 之外的训练或新评估实验。
 
 调度每 3600 秒唤醒固定持久 Codex session，单轮最多 3000 秒且有独占锁；代码只负责唤醒和记录 CLI 退出，不做训练规则判定或自动 restart。`supervision/STOP` 只停止后续巡检，不影响训练；删除该标记后重新启动调度即可接续同一 session。宿主机/容器需持续运行，CLI 认证需可用；不保证跨宿主机重启自动唤醒。CLI 机制见 [OpenAI 非交互模式说明](https://learn.chatgpt.com/docs/non-interactive-mode)。

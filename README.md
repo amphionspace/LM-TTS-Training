@@ -156,7 +156,7 @@ Dynamic batching 的 checkpoint 保存 epoch、已完成的 microbatch 位置和
 | --- | --- |
 | `checkpoints/step-XXXXXXXX/` | 完整训练状态，默认保留最近两份 |
 | `checkpoints/latest` | 保存最后一个完整 checkpoint 的目录名 |
-| `archived-checkpoints/step-XXXXXXXX/` | 巡检 agent 复制并校验的完整 checkpoint，保留全部归档版本，不参与训练轮转 |
+| `archived-checkpoints/step-XXXXXXXX/` | 独立定时脚本复制并校验的完整 checkpoint，保留全部归档版本，不参与训练轮转 |
 | `tensorboard/` | 训练和评分事件 |
 | `logs/` | 节点输出，以及每节点所有 GPU 每 10 秒的利用率 / 显存 CSV |
 | `completion.json` | 训练正常结束后的最终步数和 epoch |
@@ -186,7 +186,15 @@ $PY -m scripts.tensorboard --run unified-bf16
 
 当前 all16 实验另有每小时运行的后台 Codex 巡检 agent，按[故障处置手册](docs/training/all16-20261001-incident-playbook.md)自主检查和有限恢复，摘要追加到[巡检记录](docs/training/all16-20261001-supervision.md)。调度入口仅唤醒 agent，不按脚本规则诊断或重启训练；宿主机 / 容器需保持运行。
 
-将 `RUN` 设为实际 run 的绝对路径后，运行 `$PY -m scripts.archive_checkpoints --run "$RUN"`，把新完整 checkpoint 独立复制到该 run 的 `archived-checkpoints/`，逐文件 SHA256 校验后发布；源目录仍按最近两份轮转。当前 agent 每轮执行的固定命令见上述手册。加 `--verify` 可重新校验所有归档；日常重复执行会跳过已归档版本。归档与训练在同一 AFS，用于防轮转删除，不能代替异地备份。
+checkpoint 归档独立于巡检 agent 和 Codex 服务。将 `RUN` 设为实际 run 的绝对路径，在仓库根目录启动：
+
+```bash
+$PY -m scripts.schedule_checkpoint_archive --run "$RUN"
+```
+
+启动立即检查，之后每小时检查一次；当前 all16 已在独立 tmux `all16-checkpoint-archive` 中运行。新完整 checkpoint 复制到 `<run>/archived-checkpoints/`，逐文件 SHA256 校验后发布，已有归档跳过；源目录仍只保留最近两份。状态与日志在 `<run>/archive-service/`，失败记录后下一小时重试。创建该目录下的 `STOP` 可停止归档；训练完成不会自动停止归档，以免漏掉最终 checkpoint。宿主机 / 容器退出后需重启入口。
+
+手动补存用 `$PY -m scripts.archive_checkpoints --run "$RUN"`，此命令加 `--verify` 可重新计算所有归档的 SHA256。归档与训练在同一 AFS，用于防轮转删除，不能代替异地备份。
 
 `Custom Scalars` 提供 loss、学习率和耗时组合图；`Text` 显示配置。执行下一节评分后，会增加 WER / CER、音质、相似度和参考 / 生成音频试听。音质指标不会随训练自动生成。
 
