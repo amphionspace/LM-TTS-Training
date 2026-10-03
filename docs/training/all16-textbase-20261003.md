@@ -25,7 +25,14 @@
 
 7. 完整模型八卡从第 3 步恢复到第 6 步：第 4–6 步 loss/CE、梯度范数、LR、样本/音频 token 数逐值一致，最终 checkpoint 元数据完全一致。两份 FP32 全模型导出权重 SHA256 相同：`3360862062e2573fb306ed02122ab9134f6ce24b43c67778bddd3e957dac4b70`。
 
-实际 ACP 提交结果在创建任务后追加。这里的短预检证明工程可运行，不能证明收敛效果或长时间所有 batch 的峰值。正式 32 卡跨节点运行仍须以平台现场为准。
+## 正式提交与清理
+
+- **Job：`pt-u0ys9osd`**，平台创建时间 **2026-10-03 09:25:30 UTC**；首次回查为 **STARTING**，原 `pt-blb39rgw` 仍为 RUNNING。提交只执行一次，没有恢复旧实验或停止其他任务。
+- Submission：`submissions/20261003T092528497771Z`；实际源码快照 **`209a70ab01f77aed7983ad2dbc101fa6344dd652`**。已核对保存的 `experiment.yaml`：BF16、3 epochs、4 节点、独立模型与输出、保留全量 checkpoint、正式 holdout 开启。
+- 12 份验证报告 / 指标 / GPU 采样已复制并校验到本 run 的 **`logs/verification/`**，清单和 SHA256 在 `verification-files.json`。关键结果为 `assembly-audit.json`、`legacy-bf16-resume.json`、`textbase-bf16-resume.json`、`full-model-8gpu-resume.json`。
+- 确认提交后删除本次 `artifacts/textbase-validation/` 下临时数据 fixture、测试模型、预检 checkpoint、导出权重和临时配置，释放 **31.54 GiB**；回归测试代码和验证证据保留。正式模型、训练数据、原任务和新任务的 checkpoint 均未清理。
+
+这里的短预检证明工程可运行，不能证明收敛效果或长时间所有 batch 的峰值。正式 32 卡跨节点运行仍须以平台现场为准。
 
 ## 操作
 
