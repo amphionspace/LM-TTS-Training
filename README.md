@@ -67,7 +67,18 @@ $PY -m scripts.prepare_models --config "$CFG"
 
 当前组装方案：Talker 主干来自纯文本 `Qwen3-0.6B-Base` 并继续训练；text embedding、text projector 和 speaker encoder 来自官方 Qwen3-TTS 并冻结；16 组 codec embedding、音频输出 head 和 Code Predictor 新初始化并训练。Talker → Code Predictor 的 projector 因两侧同宽而是无参数 Identity。音频 codec 不参与训练。逐模块参数量与来源见[初始化与冻结范围](docs/training/all16-20261001.md#初始化与冻结范围)。
 
-备选方案“0.6B Base 文本 embedding + 扩词表 + 随机 projector，文本端可训练”目前**仅有设计文档，未生成模型或启动实验**。后续组装命令、验收与学习率分组注意事项见[备选组装方案](docs/design/text-base-trainable-assembly.md)。
+### 可训练文本前端实验
+
+`configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml` 使用文本 Base 的 embedding、新 TTS token 行和随机 text projector，文本端参与训练。该 YAML 的 `assembly` 区块用于离线准备，`train` / `acp` 区块用于训练和提交：
+
+```bash
+CONFIG=configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml
+$PY -m scripts.prepare_models --config "$CONFIG"
+$PY -m scripts.acp.submit --config "$CONFIG"            # Preview.
+$PY -m scripts.acp.submit --config "$CONFIG" --submit   # Submit once.
+```
+
+预训练 embedding 与 Talker 使用 `backbone_lr`；随机 projector 与音频模块使用 `lr`。所有 checkpoint 保留，控制项为 `keep_checkpoints: null`。初始化、恢复边界见[方案说明](docs/design/text-base-trainable-assembly.md)，实测与任务状态见[本轮记录](docs/training/all16-textbase-20261003.md)。原冻结模型配置继续按原语义运行和恢复。
 
 | 目录 | 内容 |
 | --- | --- |
@@ -154,7 +165,7 @@ Dynamic batching 的 checkpoint 保存 epoch、已完成的 microbatch 位置和
 
 | 位置 | 内容 |
 | --- | --- |
-| `checkpoints/step-XXXXXXXX/` | 完整训练状态，默认保留最近两份 |
+| `checkpoints/step-XXXXXXXX/` | 完整训练状态；默认保留最近两份，`train.keep_checkpoints: null` 保留全部 |
 | `checkpoints/latest` | 保存最后一个完整 checkpoint 的目录名 |
 | `archived-checkpoints/step-XXXXXXXX/` | 独立定时脚本复制并校验的完整 checkpoint，保留全部归档版本，不参与训练轮转 |
 | `tensorboard/` | 训练和评分事件 |

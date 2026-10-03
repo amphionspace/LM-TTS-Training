@@ -111,8 +111,11 @@ def load_config(path):
     bucket = train.get("length_bucket_size", 0)
     if type(bucket) is not int or bucket < 0:
         raise ValueError("length_bucket_size must be a nonnegative integer")
-    if type(train["keep_checkpoints"]) is not int or train["keep_checkpoints"] < 1:
-        raise ValueError("keep_checkpoints must be a positive integer")
+    keep = train["keep_checkpoints"]
+    if keep is not None and (type(keep) is not int or keep < 1):
+        raise ValueError("keep_checkpoints must be a positive integer or null (keep all)")
+    if train.get("text_embedding_lr_group", "fresh") not in {"fresh", "backbone"}:
+        raise ValueError("text_embedding_lr_group must be fresh or backbone")
     for key in ("lr", "backbone_lr", "grad_clip", "residual_weight", "weight_decay"):
         if (
             not isinstance(train[key], (int, float))

@@ -103,6 +103,42 @@ def tokenizer_identity(directory):
     return {"path": str(directory), "files": files, "sha256": digest(files)}
 
 
+def verify_tokenizer_compatibility(directory, expected):
+    """Keep legacy build fingerprints while allowing different model-only dimensions."""
+    source = tokenizer_identity(expected["path"])
+    if source["sha256"] != expected["sha256"]:
+        raise ValueError("Build tokenizer artifact changed")
+    target = tokenizer_identity(directory)
+    if target["sha256"] == source["sha256"]:
+        return
+    # Older builds included the whole model config in their tokenizer fingerprint.
+    # Tokenizer bytes and every text protocol ID still have to match exactly.
+    files = [
+        {k: v for k, v in item["files"].items() if k != "config.json"} for item in (source, target)
+    ]
+    if files[0] != files[1]:
+        raise ValueError("Assembled tokenizer files differ from the training build")
+    configs = [
+        json.loads((Path(item["path"]) / "config.json").read_text()) for item in (source, target)
+    ]
+
+    def protocol(value):
+        talker = value.get("talker_config", {})
+        return {
+            "model_type": value.get("model_type"),
+            "token_ids": {
+                k: v for k, v in value.items() if k.endswith(("_token_id", "_token_ids"))
+            },
+            "input_protocol": talker.get("lm_tts_input_protocol"),
+            "role_ids": talker.get("lm_tts_role_ids"),
+            "pad_id": talker.get("lm_tts_pad_token_id"),
+            "text_vocab_size": talker.get("text_vocab_size"),
+        }
+
+    if protocol(configs[0]) != protocol(configs[1]):
+        raise ValueError("Assembled tokenizer protocol differs from the training build")
+
+
 def create_build(recipe_path, output, *, paths=None):
     recipe = read_yaml(
         recipe_path,

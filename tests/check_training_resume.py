@@ -25,7 +25,7 @@ from qwen3_train.models.assembly import save_model
 from qwen3_train.models.qwen import make_config
 
 
-def prepare(root, precision, num_rows=8):
+def prepare(root, precision, num_rows=8, *, train_text_frontend=False):
     root.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(2)
     torch.manual_seed(123)
@@ -39,7 +39,7 @@ def prepare(root, precision, num_rows=8):
     talker.codec_think_bos_id = 2152
     talker.codec_think_eos_id = 2153
     talker.lm_tts_freeze_speaker_encoder = True
-    talker.lm_tts_freeze_text_frontend = True
+    talker.lm_tts_freeze_text_frontend = not train_text_frontend
     config = Qwen3TTSConfig(
         talker_config=talker.to_dict(),
         tts_model_type="base",
@@ -117,6 +117,10 @@ def prepare(root, precision, num_rows=8):
         "eval": {"batch_size": 2},
     }
 
+    if train_text_frontend:
+        experiment["train"].update(
+            text_embedding_lr_group="backbone", keep_checkpoints=None, save_every=1
+        )
     for name in ("continuous", "resumed"):
         experiment["train"]["runs_root"] = str(root)
         experiment["train"]["run_name"] = name
@@ -149,7 +153,10 @@ def compare(root, precision, world_size):
         torch.testing.assert_close(weights[0][key], weights[1][key], atol=0, rtol=0)
         largest = max(largest, (weights[0][key] - weights[1][key]).abs().max().item())
     baseline = load_file(root / "assembled/model.safetensors")
-    frozen = ("speaker_encoder.", "talker.model.text_embedding.", "talker.text_projection.")
+    config = json.loads((root / "assembled/config.json").read_text())
+    text_frozen = config["talker_config"]["lm_tts_freeze_text_frontend"]
+    text_prefixes = ("talker.model.text_embedding.", "talker.text_projection.")
+    frozen = ("speaker_encoder.",) + (text_prefixes if text_frozen else ())
     for key in baseline:
         if key.startswith(frozen):
             torch.testing.assert_close(baseline[key], weights[0][key], atol=0, rtol=0)
@@ -159,6 +166,11 @@ def compare(root, precision, world_size):
         "talker.codec_head.",
         "talker.code_predictor.",
     ]
+    if not text_frozen:
+        updated.extend(text_prefixes)
+        for name in ("continuous", "resumed"):
+            for step in range(1, 5):
+                assert (root / name / f"checkpoints/step-{step:08d}/COMPLETE").exists()
     for prefix in updated:
         if not any(
             not torch.equal(baseline[key], weights[0][key])
@@ -188,6 +200,7 @@ def main():
     parser.add_argument("--precision", choices=["bf16", "fp32"], default="fp32")
     parser.add_argument("--rows", type=int, default=8)
     parser.add_argument("--world-size", type=int, default=2)
+    parser.add_argument("--train-text-frontend", action="store_true")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare-only", action="store_true")
     mode.add_argument("--compare-only", action="store_true")
@@ -202,7 +215,7 @@ def main():
     if args.compare_only:
         compare(root, args.precision, args.world_size)
         return
-    prepare(root, args.precision, args.rows)
+    prepare(root, args.precision, args.rows, train_text_frontend=args.train_text_frontend)
     if args.prepare_only:
         print(json.dumps({"prepared": str(root), "rows": args.rows}))
         return

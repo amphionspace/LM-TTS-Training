@@ -14,7 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from ..artifacts import digest
 from ..data.batch import collate
-from ..data.build import tokenizer_identity
+from ..data.build import tokenizer_identity, verify_tokenizer_compatibility
 from ..data.reader import FeatureDataset
 from ..data.sampler import TokenBatchSampler
 from ..evaluation.validation import validate
@@ -22,6 +22,7 @@ from ..models.qwen import TTSModel
 from ..objectives.tts import loss_normalizers, tts_loss
 from .checkpoint import load_checkpoint, save_checkpoint
 from .distributed import batch_health, initialize, move, shard
+from .optimizer import parameter_groups
 from .precision import training_precision
 from .schedule import finished, learning_rate_factor
 from .telemetry import (
@@ -71,8 +72,7 @@ def run(config, resume=None, eval_only=False):
         train_data = FeatureDataset(config["data"]["build"], specials, verify_integrity=rank == 0)
         if rank == 0:
             train_data.validate_budgets(settings["max_batch_frames"], settings["max_batch_tokens"])
-        if train_data.manifest["tokenizer"]["sha256"] != tokenizer_identity(assembled)["sha256"]:
-            raise ValueError("Data build and assembled model use different tokenizers")
+        verify_tokenizer_compatibility(assembled, train_data.manifest["tokenizer"])
         val_data = (
             FeatureDataset(config["data"]["val_build"], specials, verify_integrity=rank == 0)
             if config["data"].get("val_build")
@@ -90,6 +90,7 @@ def run(config, resume=None, eval_only=False):
         model = TTSModel.from_assembled(assembled, load_weights=True, attn_implementation=backend)
         verify_conditioning(model, train_data)
         if val_data is not None:
+            verify_tokenizer_compatibility(assembled, val_data.manifest["tokenizer"])
             verify_conditioning(model, val_data)
         if config["model"].get("activation_checkpointing", True):
             model.talker.model.gradient_checkpointing_enable(
@@ -106,20 +107,8 @@ def run(config, resume=None, eval_only=False):
         dist.barrier()
         gpu_monitor = start_gpu_logging(output, rank)
         shard(model, device, policy)
-        backbone, fresh = [], []
-        for name, param in model.named_parameters():
-            if param.requires_grad:
-                destination = (
-                    backbone
-                    if name.startswith(("talker.model.layers.", "talker.model.norm."))
-                    else fresh
-                )
-                destination.append(param)
         optimizer = torch.optim.AdamW(
-            [
-                {"params": backbone, "lr": settings["backbone_lr"]},
-                {"params": fresh, "lr": settings["lr"]},
-            ],
+            parameter_groups(model, settings),
             weight_decay=settings["weight_decay"],
         )
 

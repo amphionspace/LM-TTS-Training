@@ -2,7 +2,7 @@
 
 当前主线见 [基线详细结构](final-architecture.md)，官方逐模块结构见 [官方结构与初始化证据](official-qwen3-tts.md)。
 
-2026-10-01 另记录了 [Base 文本 embedding + 可训练随机 projector 的备选方案](text-base-trainable-assembly.md)，包含现有 CLI 的组装参数、扩词表和未来训练接入要求。它目前仅为方案，未替换本页的默认组装模型，也未生成对应权重。
+2026-10-01 另记录了 [Base 文本 embedding + 可训练随机 projector 的备选方案](text-base-trainable-assembly.md)，包含现有 CLI 的组装参数、扩词表和未来训练接入要求。该方案已于 2026-10-03 实现并生成独立权重；本页默认组装方案保持不变。
 
 入口：`scripts/assemble_qwen3_tts.py`。默认固定官方来源 revision，也可传入本地目录。
 组装产物只是初始化权重，尚未训练的音频预测模块不能直接合成可理解语音。

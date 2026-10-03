@@ -6,6 +6,17 @@ from qwen3_train.training.checkpoint import prune_checkpoints
 
 
 class CheckpointRetentionTests(unittest.TestCase):
+    def test_keep_all_never_removes_checkpoints(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for step in range(1, 5):
+                checkpoint = root / f"step-{step:08d}"
+                checkpoint.mkdir()
+                (checkpoint / "COMPLETE").write_text("ok")
+                (root / "latest").write_text(checkpoint.name)
+                self.assertEqual(prune_checkpoints(root, None), [])
+            self.assertEqual(len(list(root.glob("step-*/COMPLETE"))), 4)
+
     def test_pruning_preserves_latest_and_incomplete_writes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
