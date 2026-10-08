@@ -27,6 +27,11 @@ def main():
     dtype = torch.bfloat16 if config["precision"] == "bf16" else torch.float32
     backend = "flash_attention_2" if dtype == torch.bfloat16 else "sdpa"
     export = json.loads((args.model / "export.json").read_text())
+    if not export.get("use_speaker_embedding", True):
+        raise ValueError(
+            "This speaker-only synthesis entry point requires speaker conditioning; "
+            "a no-speaker checkpoint requires codec-prefix inference without a speaker position"
+        )
     if file_hash(args.model / "model.safetensors") != export["weights_sha256"]:
         raise ValueError("Export weights changed")
     rows = json.loads(args.prompts.read_text())

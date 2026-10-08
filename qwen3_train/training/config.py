@@ -14,6 +14,8 @@ def load_config(path):
         path, keys=("paths", "environment", "seed", "model", "data", "train", "eval")
     )
     model, data, train = (config[k] for k in ("model", "data", "train"))
+    if type(model.get("use_speaker_embedding", True)) is not bool:
+        raise ValueError("model.use_speaker_embedding must be a boolean")
     if "run_name" in train or "runs_root" in train:
         name = train.get("run_name")
         if (

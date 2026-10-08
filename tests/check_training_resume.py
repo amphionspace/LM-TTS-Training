@@ -25,7 +25,7 @@ from qwen3_train.models.assembly import save_model
 from qwen3_train.models.qwen import make_config
 
 
-def prepare(root, precision, num_rows=8, *, train_text_frontend=False):
+def prepare(root, precision, num_rows=8, *, train_text_frontend=False, use_speaker_embedding=True):
     root.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(2)
     torch.manual_seed(123)
@@ -121,6 +121,8 @@ def prepare(root, precision, num_rows=8, *, train_text_frontend=False):
         experiment["train"].update(
             text_embedding_lr_group="backbone", keep_checkpoints=None, save_every=1
         )
+    if not use_speaker_embedding:
+        experiment["model"]["use_speaker_embedding"] = False
     for name in ("continuous", "resumed"):
         experiment["train"]["runs_root"] = str(root)
         experiment["train"]["run_name"] = name
@@ -201,6 +203,7 @@ def main():
     parser.add_argument("--rows", type=int, default=8)
     parser.add_argument("--world-size", type=int, default=2)
     parser.add_argument("--train-text-frontend", action="store_true")
+    parser.add_argument("--no-speaker-embedding", action="store_true")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare-only", action="store_true")
     mode.add_argument("--compare-only", action="store_true")
@@ -215,7 +218,13 @@ def main():
     if args.compare_only:
         compare(root, args.precision, args.world_size)
         return
-    prepare(root, args.precision, args.rows, train_text_frontend=args.train_text_frontend)
+    prepare(
+        root,
+        args.precision,
+        args.rows,
+        train_text_frontend=args.train_text_frontend,
+        use_speaker_embedding=not args.no_speaker_embedding,
+    )
     if args.prepare_only:
         print(json.dumps({"prepared": str(root), "rows": args.rows}))
         return

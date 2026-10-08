@@ -20,7 +20,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--precision", choices=["bf16", "fp32"], default="fp32")
     parser.add_argument(
-        "--copy-tokenizer", action="store_true",
+        "--copy-tokenizer",
+        action="store_true",
         help="Copy the speech tokenizer for a self-contained export instead of linking it",
     )
     args = parser.parse_args()
@@ -34,7 +35,10 @@ def main():
         raise ValueError("Checkpoint and assembled model have different assembly identities")
     torch.set_num_threads(4)
     model = TTSModel.from_assembled(
-        args.assembled_model, load_weights=False, attn_implementation="sdpa"
+        args.assembled_model,
+        load_weights=False,
+        attn_implementation="sdpa",
+        use_speaker_embedding=metadata["signature"].get("model", {}).get("use_speaker_embedding"),
     )
     state = model.state_dict()
     dcp.load({"model": state}, checkpoint_id=args.checkpoint / "distributed")
@@ -57,10 +61,21 @@ def main():
         elif (
             source.is_file()
             and source.suffix in {".json", ".txt"}
-            and source.name not in {"assembly_report.json", "export.json", "model.safetensors.index.json"}
+            and source.name
+            not in {"assembly_report.json", "export.json", "model.safetensors.index.json"}
         ):
             shutil.copy2(source, args.output / source.name)
+    use_speaker = metadata["signature"].get("model", {}).get("use_speaker_embedding", True)
+    if not use_speaker:
+        config_path = args.output / "config.json"
+        config = json.loads(config_path.read_text())
+        config.setdefault("talker_config", {})["lm_tts_use_speaker_embedding"] = False
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
+        print(
+            "No-speaker export: inference must omit the speaker position; vanilla Qwen voice_clone does not honor this flag."
+        )
     report = {
+        "use_speaker_embedding": use_speaker,
         "checkpoint": str(args.checkpoint.resolve()),
         "precision": args.precision,
         "checkpoint_metadata_sha256": file_hash(args.checkpoint / "metadata.json"),

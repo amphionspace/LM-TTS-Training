@@ -36,11 +36,13 @@ from .telemetry import (
 
 
 def verify_conditioning(model, dataset):
-    if not getattr(model.config, "lm_tts_freeze_speaker_encoder", False):
-        raise ValueError("Cached embeddings require a frozen speaker encoder")
     tokenizer = tokenizer_identity(dataset.manifest["tokenizer"]["path"])
     if tokenizer["sha256"] != dataset.manifest["tokenizer"]["sha256"]:
         raise ValueError("Build tokenizer artifact changed")
+    if not getattr(model.config, "lm_tts_use_speaker_embedding", True):
+        return
+    if not getattr(model.config, "lm_tts_freeze_speaker_encoder", False):
+        raise ValueError("Cached embeddings require a frozen speaker encoder")
     state = model.speaker_encoder.state_dict()
     for binding in dataset.bindings:
         tensors = binding["speaker_profile"]["model"]["tensors"]
@@ -69,12 +71,23 @@ def run(config, resume=None, eval_only=False):
         assembled = Path(config["model"]["assembled_model"]).resolve()
         full_config = json.loads((assembled / "config.json").read_text())
         specials = (full_config["tts_bos_token_id"], full_config["tts_eos_token_id"])
-        train_data = FeatureDataset(config["data"]["build"], specials, verify_integrity=rank == 0)
+        use_speaker = config["model"].get("use_speaker_embedding", True)
+        train_data = FeatureDataset(
+            config["data"]["build"],
+            specials,
+            verify_integrity=rank == 0,
+            use_speaker_embedding=use_speaker,
+        )
         if rank == 0:
             train_data.validate_budgets(settings["max_batch_frames"], settings["max_batch_tokens"])
         verify_tokenizer_compatibility(assembled, train_data.manifest["tokenizer"])
         val_data = (
-            FeatureDataset(config["data"]["val_build"], specials, verify_integrity=rank == 0)
+            FeatureDataset(
+                config["data"]["val_build"],
+                specials,
+                verify_integrity=rank == 0,
+                use_speaker_embedding=use_speaker,
+            )
             if config["data"].get("val_build")
             else None
         )
@@ -87,7 +100,12 @@ def run(config, resume=None, eval_only=False):
                 or train_data.manifest["split_sha256"] != val_data.manifest.get("split_sha256")
             ):
                 raise ValueError("Validation requires builds published from an isolated selection")
-        model = TTSModel.from_assembled(assembled, load_weights=True, attn_implementation=backend)
+        model = TTSModel.from_assembled(
+            assembled,
+            load_weights=True,
+            attn_implementation=backend,
+            use_speaker_embedding=use_speaker,
+        )
         verify_conditioning(model, train_data)
         if val_data is not None:
             verify_tokenizer_compatibility(assembled, val_data.manifest["tokenizer"])
@@ -193,6 +211,7 @@ def run(config, resume=None, eval_only=False):
                         "precision": settings["precision"],
                         "attention": backend,
                         "predictor_attention": model.config.code_predictor_config._attn_implementation,
+                        "use_speaker_embedding": use_speaker,
                         "train_samples": len(train_data),
                         "progress": progress,
                     }
@@ -298,9 +317,12 @@ def run(config, resume=None, eval_only=False):
                     sum(b["audio_seconds"].sum().item() for b in batches),
                     skipped_since_log,
                     discarded_since_log,
-                    sum((b["text_lengths"] + b["frame_lengths"] + 8).sum().item() for b in batches),
                     sum(
-                        (b["text_lengths"] + b["frame_lengths"] + 8).max().item()
+                        (b["text_lengths"] + b["frame_lengths"] + 7 + int(use_speaker)).sum().item()
+                        for b in batches
+                    ),
+                    sum(
+                        (b["text_lengths"] + b["frame_lengths"] + 7 + int(use_speaker)).max().item()
                         * len(b["frame_lengths"])
                         for b in batches
                     ),

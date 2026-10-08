@@ -23,6 +23,7 @@ CFG=configs/train-bf16.yaml
 | 要改什么 | 修改位置 |
 | --- | --- |
 | 实验名称、精度、学习率、batch 预算 | 实验 YAML 的 `train` 区块 |
+| 是否输入 speaker embedding | 实验 YAML 的 `model.use_speaker_embedding`，默认 `true` |
 | ACP 节点数、镜像 | 同一实验 YAML 的 `acp` 区块；提交时也可用 `--nodes` |
 | 公共路径、通信设置、训练默认值 | `configs/base.yaml` |
 | selection、各数据集 merged manifest、验证比例 | [configs/data.yaml](configs/data.yaml) |
@@ -46,6 +47,10 @@ acp:
 ```
 
 配置规则：`extends` 相对于当前 YAML；字典合并，列表整体替换；`${paths.project}` 等引用在合并后解析。数据构建会沿用实验配置解析后的 `paths`。独立运行的生成、评分入口读取各自的 YAML，因此多流程共用的路径建议改在 base 中。
+
+无 speaker 条件实验在 `model` 下设置 `use_speaker_embedding: false`，保留完整文本与 codec，移除 speaker 输入位置，并跳过 embedding 向量读取和 encoder 计算。复用原来的训练索引和样本划分；不是重新接纳旧 build 已排除的样本。省略该设置时维持原行为；更改它需要创建新 run，不能跨模式 resume。
+
+完整的 16 卡、累积 2、3 epoch 配置为 [no-spk 实验](configs/supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd.yaml)，初始化与运行记录见[实验说明](docs/training/all16-no-speaker-20261008.md)。这种模型的指定音色生成需要参考 codec；官方原样的 speaker-only 生成入口不适用，ICL 推理也必须省去 speaker 位置。
 
 **输出目录统一为 `paths.runs / train.run_name`**。默认是 `/workspace/LM-TTS-Training-Runs/<run_name>/`，checkpoint、TensorBoard 和日志自动派生，不用重复填写路径。`yanglin/LM-TTS-Training-Runs` 是指向该目录的软链接。
 

@@ -28,7 +28,14 @@ class MetadataColumn:
 
 
 class FeatureDataset:
-    def __init__(self, build_path, text_special_tokens, *, verify_integrity=True):
+    def __init__(
+        self,
+        build_path,
+        text_special_tokens,
+        *,
+        verify_integrity=True,
+        use_speaker_embedding=True,
+    ):
         self.path = Path(build_path).resolve()
         self.manifest = read_complete(self.path)
         if self.manifest.get("artifact_kind") != "training_build":
@@ -37,6 +44,7 @@ class FeatureDataset:
             raise ValueError("FeatureDataset requires frozen_embedding")
         self.fingerprint = file_hash(self.path)
         self.text_special_tokens = text_special_tokens
+        self.use_speaker_embedding = use_speaker_embedding
         self.bindings = self.manifest["bindings"]
         self.indices, lengths = [], []
         for binding in self.bindings:
@@ -83,11 +91,17 @@ class FeatureDataset:
             "path": self.path,
             "text_special_tokens": self.text_special_tokens,
             "fingerprint": self.fingerprint,
+            "use_speaker_embedding": self.use_speaker_embedding,
         }
 
     def __setstate__(self, state):
         # Parent validated large indices. Recheck the small manifest in workers.
-        self.__init__(state["path"], state["text_special_tokens"], verify_integrity=False)
+        self.__init__(
+            state["path"],
+            state["text_special_tokens"],
+            verify_integrity=False,
+            use_speaker_embedding=state["use_speaker_embedding"],
+        )
         if self.fingerprint != state["fingerprint"]:
             raise ValueError("Training build changed while starting workers")
 
@@ -147,7 +161,8 @@ class FeatureDataset:
                 self.table(slot, "merged")
                 .take(
                     list(locators),
-                    columns=[*METADATA_COLUMNS, "codec_codes", "speaker_embedding", "text_ids"],
+                    columns=[*METADATA_COLUMNS, "codec_codes", "text_ids"]
+                    + (["speaker_embedding"] if self.use_speaker_embedding else []),
                 )
                 .to_pylist()
             )
@@ -212,8 +227,8 @@ class FeatureDataset:
                         "end_frame",
                         "native_sample_rate",
                         "status",
-                        "embedding",
-                    ],
+                    ]
+                    + (["embedding"] if self.use_speaker_embedding else []),
                 )
                 .to_pylist()
             )
@@ -224,7 +239,7 @@ class FeatureDataset:
             from .merged import validate_row
 
             validate_row(c, binding)
-            if len(s["embedding"]) != s["embedding_dim"]:
+            if self.use_speaker_embedding and len(s["embedding"]) != s["embedding_dim"]:
                 raise ValueError("Merged speaker embedding dimension differs")
         elif not c["build_ready"] or c["speaker_row"] is None:
             raise ValueError("Sampling index selected an unready row")
@@ -248,7 +263,6 @@ class FeatureDataset:
         ):
             raise ValueError("Feature profile differs from build binding")
         codes = torch.tensor(c["codes"], dtype=torch.long)
-        vector = torch.tensor(s["embedding"], dtype=torch.float32)
         if (
             codes.shape != (c["num_codec_frames"], 16)
             or not len(codes)
@@ -256,17 +270,20 @@ class FeatureDataset:
             or codes.max() >= 2048
         ):
             raise ValueError("Invalid codec shape or vocabulary")
-        if vector.ndim != 1 or not torch.isfinite(vector).all() or vector.norm() == 0:
-            raise ValueError("Invalid cached speaker embedding")
         bos, eos = self.text_special_tokens
-        return {
+        sample = {
             "id": c["target_id"],
             "text": c["text"],
             "language": c["language"],
             "speaker": c["speaker_id"],
             "text_ids": [bos, *c["text_ids"], eos],
             "codes": codes,
-            "speaker_embedding": vector,
             "num_frames": len(codes),
             "duration": (c["end_frame"] - c["start_frame"]) / c["native_sample_rate"],
         }
+        if self.use_speaker_embedding:
+            vector = torch.tensor(s["embedding"], dtype=torch.float32)
+            if vector.ndim != 1 or not torch.isfinite(vector).all() or vector.norm() == 0:
+                raise ValueError("Invalid cached speaker embedding")
+            sample["speaker_embedding"] = vector
+        return sample

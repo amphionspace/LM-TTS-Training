@@ -22,6 +22,8 @@ seed: 42
 model:
   assembled_model: ${paths.assembled_model}
   activation_checkpointing: true  # Trade recomputation for lower GPU memory use
+  # use_speaker_embedding defaults to true; set false in an ablation experiment.
+  # Keep this key absent here to preserve existing checkpoint resume signatures.
 
 # ---- Data: data.yaml pins feature versions; build_id selects the training index ----
 data:

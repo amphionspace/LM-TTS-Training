@@ -17,13 +17,14 @@ def build_inputs(talker, speaker_encoder, config, batch):
     embedding = talker.model.codec_embedding
     bos = embedding.weight[config.codec_bos_id : config.codec_bos_id + 1]
     speaker = None
-    if "speaker_embeddings" in batch:
+    use_speaker = getattr(config, "lm_tts_use_speaker_embedding", True)
+    if use_speaker and "speaker_embeddings" in batch:
         if speaker_encoder is None or any(p.requires_grad for p in speaker_encoder.parameters()):
             raise ValueError("Cached speaker embeddings require a frozen speaker encoder")
         speaker = batch["speaker_embeddings"].to(text.dtype)
         if speaker.shape != (len(batch["frame_lengths"]), config.hidden_size):
             raise ValueError("Cached speaker embedding dimension disagrees with the model")
-    elif speaker_encoder is not None:
+    elif use_speaker and speaker_encoder is not None:
         lengths = batch["speaker_lengths"].tolist()
         mel_rows = batch["speaker_mels"].split(lengths)
         groups = {}

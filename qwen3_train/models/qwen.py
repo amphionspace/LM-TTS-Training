@@ -55,7 +55,13 @@ class TTSModel(nn.Module):
         return self
 
     @classmethod
-    def from_assembled(cls, directory, load_weights=True, attn_implementation="flash_attention_2"):
+    def from_assembled(
+        cls,
+        directory,
+        load_weights=True,
+        attn_implementation="flash_attention_2",
+        use_speaker_embedding=None,
+    ):
         if attn_implementation not in {"flash_attention_2", "sdpa"}:
             raise ValueError("TTSModel requires flash_attention_2 or sdpa")
         from .assembly import load_prefix
@@ -71,6 +77,10 @@ class TTSModel(nn.Module):
                 if file_hash(directory / name) != expected:
                     raise ValueError(f"Assembled artifact changed: {name}")
         config = Qwen3TTSConfig.from_dict(json.loads((directory / "config.json").read_text()))
+        if use_speaker_embedding is not None:
+            if type(use_speaker_embedding) is not bool:
+                raise ValueError("use_speaker_embedding must be a boolean")
+            config.talker_config.lm_tts_use_speaker_embedding = use_speaker_embedding
         config.talker_config._attn_implementation = attn_implementation
         # Predictor sequences have exactly 16 positions, one sequence per codec frame.
         # FA2's deterministic backward workspace scales with the rounded sequence length;
