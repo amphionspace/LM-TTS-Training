@@ -19,6 +19,10 @@ def main():
     parser.add_argument("--assembled-model", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--precision", choices=["bf16", "fp32"], default="fp32")
+    parser.add_argument(
+        "--copy-tokenizer", action="store_true",
+        help="Copy the speech tokenizer for a self-contained export instead of linking it",
+    )
     args = parser.parse_args()
     if not (args.checkpoint / "COMPLETE").is_file():
         raise ValueError("Cannot export an incomplete checkpoint")
@@ -46,11 +50,14 @@ def main():
     )
     for source in args.assembled_model.iterdir():
         if source.name == "speech_tokenizer":
-            (args.output / source.name).symlink_to(source.resolve(), target_is_directory=True)
+            if args.copy_tokenizer:
+                shutil.copytree(source.resolve(), args.output / source.name)
+            else:
+                (args.output / source.name).symlink_to(source.resolve(), target_is_directory=True)
         elif (
             source.is_file()
             and source.suffix in {".json", ".txt"}
-            and source.name not in {"assembly_report.json", "export.json"}
+            and source.name not in {"assembly_report.json", "export.json", "model.safetensors.index.json"}
         ):
             shutil.copy2(source, args.output / source.name)
     report = {

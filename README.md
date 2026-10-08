@@ -247,6 +247,13 @@ $PY -m scripts.evaluate --config configs/evaluation.yaml --pairs "$RUN/generated
 
 导出时必须使用该 checkpoint 训练时的 assembled 模型。生成、导出和评分输出目录均需为新目录，重复运行时更换名称。
 
+外部评测也使用仓库内的 `scripts/export_checkpoint.py` 转换脚本；`--checkpoint` 可直接指向
+`archived-checkpoints/step-XXXXXXXX`。增加 `--copy-tokenizer` 会复制音频 tokenizer，生成自包含的
+Qwen3-TTS 模型目录；默认使用软链接。转换只读取训练 checkpoint，不影响训练或 resume。
+导出默认保留 FP32 权重，推理时可以 BF16 加载；`export.json` 记录来源步数及权重 SHA-256。
+本轮 all16 step 47382 的 Seed-TTS 评测说明见
+[Seed-TTS 外部评测](docs/training/seed-tts-all16-47382.md)。
+
 | 评分 | 含义 |
 | --- | --- |
 | WER / CER | Whisper small 转写后的词 / 字符错误率，越低越好；中文主要看 CER |
