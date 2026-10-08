@@ -174,7 +174,11 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 使用同一训练 run 的完整归档 `step-00032500`，67 个文件已通过 SHA-256 校验。导出模型为 `UltraEval-Audio/init_model/all16-frozen-conditioning-step-00032500`；模型配置、文本 tokenizer 与 step 47,382 一致。
 
-按 **greedy → 采样** 顺序评测，两组均为 speaker + ICL、完整 3,108 条、8 卡、每推理进程 16 GiB 上限。Greedy 完成生成、ASR/SIM 和完整审计后才启动采样；任一阶段失败即停止接续。两组保持本节其余生成参数不变，speaker-only 不运行。
+按 **greedy → 采样** 顺序评测，两组均为 speaker + ICL、3,108 条输入、8 卡、每推理进程 16 GiB 上限。Greedy 完成生成、ASR/SIM 和审计后才启动采样；任一阶段失败即停止接续。speaker-only 不运行。
+
+**2026-10-08 更新：各组独立排除输出超过 30 秒的样本，不参与 WER/CER 和 SIM，不强制使用相同排除清单。** 对已经生成的长音频只排除评分，原音频保留；后续生成在略超 30 秒时结束并排除，不把截短输出当成正常样本。命令使用 `--max-audio-seconds 30`，采样参数不变，生成上限从 2,048 调整为 378 个 token（按 codec 帧率折算并留出超过阈值的余量）。
+
+`full/summary.json` 分别记录输入、已生成、应评分、已评分和排除数量；`full/audit.json` 保存排除 ID、时长与原因。每组的保留数可能不同，报告按实际分母展示；上文 step 47,382 表格仍为原始全量结果，不能将过滤后的改善全部归因于模型差异。
 
 以下路径相对 UltraEval-Audio：
 
@@ -192,7 +196,7 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 现有完整归档没有 step 15,000 / 16,000；最接近 16,000 的是 **step 17,500**。其 checkpoint 记录已完成 1 个 epoch，再消费 13,686,509 / 128,091,959 条训练样本，约 **1.107 epoch**。
 
-已安排自动顺序：**32,500 greedy → 32,500 采样 → 17,500 greedy → 17,500 采样**。每组必须完成全量评分并通过审计，才会开始下一组；前序失败则停止接续。17,500 沿用相同 speaker + ICL、数据、采样参数、8 卡和每进程 16 GiB 上限，开始前自动核验归档并导出模型。
+已安排自动顺序：**32,500 greedy → 32,500 采样 → 17,500 greedy → 17,500 采样**。每组必须完成全量评分并通过审计，才会开始下一组；前序失败则停止接续。17,500 沿用相同 speaker + ICL、数据、采样参数、8 卡和每进程 16 GiB 上限，以及上述各组独立的 30 秒过滤规则，开始前自动核验归档并导出模型。
 
 结果分别写入 UltraEval-Audio 的 `res/all16-step17500-seedtts-greedy-20261008-8gpu` 和 `res/all16-step17500-seedtts-sampling-20261008-8gpu`。后台会话 `seedtts-all16-s17500-sequence` 当前等待 32,500 两组完成；调度日志为 `log/seed-tts-step17500-sequence.log`，阶段在 greedy 目录的 `sequence-stage.txt`。本段为已启动的接续安排，尚无该 checkpoint 的评测成绩。
 
