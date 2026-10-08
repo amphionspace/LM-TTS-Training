@@ -170,7 +170,21 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 **结论：greedy 在内容准确率上更好，但并非所有指标都更好。** 英文和中文错误率均下降，SIM 略降；没有 MOS 或完整主观试听结果，不能据此认定整体音质更好。Greedy 最长英文 70 秒、中文 105.04 秒；其中 1 条英文触及现有 Whisper 评分器的 30 秒截断，因此该条 WER 未衡量后半段内容，长输出风险需单独看待。
 
-若下一步比较约 32,000 步与最终模型，建议两者统一使用 **speaker + ICL、双 greedy**，保持相同数据和评分口径，重点比较内容准确率，同时保留 SIM 与长输出统计。已找到完整的 `step-00032500`，但尚未启动其评测；先依据本次对比决定下一步设置。
+### Step 32,500 对照（2026-10-08 启动）
+
+使用同一训练 run 的完整归档 `step-00032500`，67 个文件已通过 SHA-256 校验。导出模型为 `UltraEval-Audio/init_model/all16-frozen-conditioning-step-00032500`；模型配置、文本 tokenizer 与 step 47,382 一致。
+
+按 **greedy → 采样** 顺序评测，两组均为 speaker + ICL、完整 3,108 条、8 卡、每推理进程 16 GiB 上限。Greedy 完成生成、ASR/SIM 和完整审计后才启动采样；任一阶段失败即停止接续。两组保持本节其余生成参数不变，speaker-only 不运行。
+
+以下路径相对 UltraEval-Audio：
+
+| 内容 | 路径 |
+| --- | --- |
+| Greedy 结果 | `res/all16-step32500-seedtts-greedy-20261008-8gpu` |
+| 随后采样的结果 | `res/all16-step32500-seedtts-sampling-20261008-8gpu` |
+| 顺序执行日志 | `log/seed-tts-step32500-sequence.log` |
+
+后台会话为 `seedtts-all16-s32500-sequence`；顺序启动命令保存在 greedy 目录的 `run-sequence.sh`，阶段见 `sequence-stage.txt`。各组完成后分别读取 `full/summary.json` 和 `full/audit.json`。该对照尚无完整成绩，不混入上表 step 47,382 的结果。
 
 完整结果见 [采样汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/summary.json)、[greedy 汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json)和 [greedy 审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json)。早期小样本诊断保存在 [评测证据](evidence/seed-tts-step47382.json)，正式结论以上述全量结果为准。
 
