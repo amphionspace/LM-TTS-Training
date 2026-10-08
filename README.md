@@ -6,6 +6,8 @@
 
 当前配置绑定已发布的 **16 个 merged features 数据集，共 128,220,178 条样本**。正式实验使用 BF16、32 卡、token loss、3 个 epoch，并按数据集固定抽取约 0.1% 作为验证集。
 
+数据明细、两轮模型的初始化与冻结、完整 Seed-TTS 成绩、历史 Qwen 对比及 greedy 进度统一见 [训练与评测 README](docs/training/README.md)。
+
 ## 1. 选择实验和配置
 
 ```bash
@@ -252,7 +254,7 @@ $PY -m scripts.evaluate --config configs/evaluation.yaml --pairs "$RUN/generated
 Qwen3-TTS 模型目录；默认使用软链接。转换只读取训练 checkpoint，不影响训练或 resume。
 导出默认保留 FP32 权重，推理时可以 BF16 加载；`export.json` 记录来源步数及权重 SHA-256。
 本轮 all16 step 47382 的 Seed-TTS 评测说明见
-[Seed-TTS 外部评测](docs/training/seed-tts-all16-47382.md)。
+[All16 训练与评测汇总](docs/training/README.md)。
 
 | 评分 | 含义 |
 | --- | --- |
