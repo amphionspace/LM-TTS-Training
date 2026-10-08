@@ -174,7 +174,33 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 完整结果见 [采样汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/summary.json)、[greedy 汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json)和 [greedy 审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json)。早期小样本诊断保存在 [评测证据](evidence/seed-tts-step47382.json)，正式结论以上述全量结果为准。
 
-## 6. 导出、运行 greedy 和查看结果
+## 6. 当前训练存在的问题：speaker 条件的训推不一致
+
+**训练与验证使用目标音频自身的 speaker embedding，实际克隆推理使用另一条参考音频的 embedding。** 数据中的 codec 目标和 speaker 向量来自同一段录音；推理时目标录音尚不存在，只能从参考录音提取 speaker 条件。两者的条件来源不同，即使属于同一说话人，也不能假设向量完全等价。
+
+冻结 speaker encoder 只保证提取器的参数不更新，不保证其向量只包含说话人身份。向量仍可能携带内容、韵律、语速或录音条件；可训练的 Talker 可能学会依赖这些与目标有关的信息。换成另一句话的参考向量后，这种依赖可能造成错读。这是当前需要验证的训练捷径风险，不能简单归因于推理采样设置。
+
+### 已有证据
+
+在最终 checkpoint 上固定中英文各 16 条目标，仅替换 speaker 条件，使用 speaker-only、双 greedy，并将 speaker 提取精度和预处理对齐训练 pipeline：
+
+| Speaker 条件 | 英文 WER/% ↓ | 中文 CER/% ↓ |
+| --- | ---: | ---: |
+| 目标录音自身的 embedding | 0.000 | 1.276 |
+| 配对说话人的另一条参考录音 | 75.741 | 48.083 |
+| 排除当前目标后的两条参考 embedding 均值 | 64.105 | 22.595 |
+
+跨句参考相较自身条件，英文 16/16、中文 13/16 条错误率变差，其余持平。这支持模型对目标自身条件存在依赖的担忧。**自身条件使用了真实目标录音，属于诊断，不能作为零样本克隆成绩。** 同说话人关系来自 Seed-TTS 的原始配对，没有额外独立身份核验；样本量较小，均值组还改变了向量幅度，因此尚不能证明具体泄漏了词汇内容，也不能将全部生成错误归因于此。
+
+完整设置、转写和试听见 [speaker 条件配对诊断](../../../UltraEval-Audio/res/seedtts-speaker-conditioning-20261008/RESULTS.md)。这组测试没有 ICL，参数也与全量评测不同，分数不与上节全量成绩直接横比。
+
+### 对当前结果和后续训练的影响
+
+训练内 holdout 也使用目标自身的 embedding，所以 teacher-forcing 验证 loss 不能直接衡量跨句参考时的生成表现。双 greedy 降低了当前全量 WER/CER，但没有改变 speaker 条件来源，不能视为修复了训推不一致。
+
+后续优先验证：训练时为目标配对**同说话人的另一条录音**作为 speaker 参考，严格排除目标自身；验证时固定跨句参考，同时检查 speaker-only 与 speaker + ICL 的内容准确率、SIM 和长输出。需要先核对数据的说话人身份与可用参考，不能随意换成不同说话人的音频。以上是待验证的改进方向，本报告不代表已经修改训练数据、模型或正在运行的任务。
+
+## 7. 导出、运行 greedy 和查看结果
 
 模型转换入口保留在本仓库。以下命令输出目录必须尚不存在；本次模型已经导出，不必重跑：
 
