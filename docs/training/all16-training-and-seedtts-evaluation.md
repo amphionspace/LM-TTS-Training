@@ -1,8 +1,8 @@
 # All16 frozen-conditioning 训练与 Seed-TTS 评测
 
-本报告记录 all16 frozen-conditioning 的训练设置、数据、模型初始化与冻结范围，以及最终 checkpoint **`step-00047382`** 的 Seed-TTS 评测。
+本报告记录 all16 frozen-conditioning 的训练设置、数据、模型初始化与冻结范围，以及最终 checkpoint **`step-00047382`** 和中途 checkpoint 的 Seed-TTS 评测。
 
-更新于 **2026-10-08 07:22 UTC**。本轮已完成 3 个 epoch；speaker + ICL 的采样和双 greedy 两组全量评测均已完成并通过审计，每组 3,108 条。speaker-only 保持暂停。
+更新于 **2026-10-08 10:16 UTC**。本轮已完成 3 个 epoch；step 47,382 的 speaker + ICL 采样和双 greedy 均完成，每组 3,108 条。Step 32,500 greedy 也已完成并通过审计，排除 32 条长输出后评分 3,076 条；采样评测已自动启动，step 17,500 等待接续。speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -138,7 +138,7 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 - 英文：Whisper-large-v3 WER；中文：SeACo-Paraformer CER。
 - 相似度：WavLM-large + ECAPA，SIM 为余弦相似度乘 100。
-- WER/CER 使用逐句错误率的算术平均，不是全语料累计编辑距离比例。本轮结果保留全量；历史 Qwen 使用下述异常过滤口径。
+- WER/CER 使用逐句错误率的算术平均，不是全语料累计编辑距离比例。Step 47,382 原始结果保留全量；后续对照采用下述各组独立的 30 秒过滤口径，历史 Qwen 使用其原有异常过滤口径。
 - 当前 Seed-TTS 流程没有 DNSMOS / 主观 MOS；SIM 衡量说话人相似度，不能替代音质评分。
 
 | 模型与解码 | 英文 WER/% ↓ | 中文 CER/% ↓ | 英文 SIM×100 ↑ | 中文 SIM×100 ↑ |
@@ -170,7 +170,7 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 **结论：greedy 在内容准确率上更好，但并非所有指标都更好。** 英文和中文错误率均下降，SIM 略降；没有 MOS 或完整主观试听结果，不能据此认定整体音质更好。Greedy 最长英文 70 秒、中文 105.04 秒；其中 1 条英文触及现有 Whisper 评分器的 30 秒截断，因此该条 WER 未衡量后半段内容，长输出风险需单独看待。
 
-### Step 32,500 对照（2026-10-08 启动）
+### Step 32,500 对照（greedy 已完成，采样运行中）
 
 使用同一训练 run 的完整归档 `step-00032500`，67 个文件已通过 SHA-256 校验。导出模型为 `UltraEval-Audio/init_model/all16-frozen-conditioning-step-00032500`；模型配置、文本 tokenizer 与 step 47,382 一致。
 
@@ -188,7 +188,18 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 | 随后采样的结果 | `res/all16-step32500-seedtts-sampling-20261008-8gpu` |
 | 顺序执行日志 | `log/seed-tts-step32500-sequence.log` |
 
-后台会话为 `seedtts-all16-s32500-sequence`；顺序启动命令保存在 greedy 目录的 `run-sequence.sh`，阶段见 `sequence-stage.txt`。各组完成后分别读取 `full/summary.json` 和 `full/audit.json`。该对照尚无完整成绩，不混入上表 step 47,382 的结果。
+**Greedy 于 2026-10-08 10:13 UTC 完成并通过审计**：3,108 条均已生成，英文排除 4 条、中文排除 28 条超过 30 秒的输出；保留的 3,076 条均完成 ASR 和 SIM，无未恢复的生成或评分错误。采样评测随后自动启动。
+
+下表对两个 checkpoint 分别应用 **输出超过 30 秒即排除** 的规则；step 47,382 从既有逐条评分重新汇总，不重新生成，不覆盖上文原始全量成绩。
+
+| Checkpoint，均为 speaker + ICL 双 greedy | 英文保留 / 排除 | 英文 WER/% ↓ | 英文 SIM×100 ↑ | 中文保留 / 排除 | 中文 CER/% ↓ | 中文 SIM×100 ↑ |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Step 47,382 | 1,087 / 1 | 13.255 | **63.665** | 2,016 / 4 | 9.523 | **74.943** |
+| Step 32,500 | 1,084 / 4 | **4.803** | 62.203 | 1,992 / 28 | **5.024** | 71.525 |
+
+Step 32,500 的英文 WER 和中文 CER 分别降低 **8.452、4.499 个百分点**，但 SIM 分别降低 **1.462、3.418**，且异常长输出更多。它在保留样本上的内容准确率更好，不能据此认定整体克隆质量更好，也不能仅凭这两组结果确定退化原因。各组保留样本不同；排除的长输出仍须计入失败现象，不能视为模型已经解决这些样本。历史 Qwen 的过滤阈值为 160 秒，与此表也不同。
+
+结果见 [32,500 greedy 汇总](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/summary.json)和[审计](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/audit.json)。后台会话为 `seedtts-all16-s32500-sequence`；顺序启动命令保存在 greedy 目录的 `run-sequence.sh`，阶段见 `sequence-stage.txt`。采样尚无完整成绩。
 
 完整结果见 [采样汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/summary.json)、[greedy 汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json)和 [greedy 审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json)。早期小样本诊断保存在 [评测证据](evidence/seed-tts-step47382.json)，正式结论以上述全量结果为准。
 
