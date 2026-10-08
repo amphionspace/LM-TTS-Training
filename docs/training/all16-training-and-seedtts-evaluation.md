@@ -188,6 +188,14 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 完整结果见 [采样汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/summary.json)、[greedy 汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json)和 [greedy 审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json)。早期小样本诊断保存在 [评测证据](evidence/seed-tts-step47382.json)，正式结论以上述全量结果为准。
 
+### 一个 epoch 附近的对照：step 17,500
+
+现有完整归档没有 step 15,000 / 16,000；最接近 16,000 的是 **step 17,500**。其 checkpoint 记录已完成 1 个 epoch，再消费 13,686,509 / 128,091,959 条训练样本，约 **1.107 epoch**。
+
+已安排自动顺序：**32,500 greedy → 32,500 采样 → 17,500 greedy → 17,500 采样**。每组必须完成全量评分并通过审计，才会开始下一组；前序失败则停止接续。17,500 沿用相同 speaker + ICL、数据、采样参数、8 卡和每进程 16 GiB 上限，开始前自动核验归档并导出模型。
+
+结果分别写入 UltraEval-Audio 的 `res/all16-step17500-seedtts-greedy-20261008-8gpu` 和 `res/all16-step17500-seedtts-sampling-20261008-8gpu`。后台会话 `seedtts-all16-s17500-sequence` 当前等待 32,500 两组完成；调度日志为 `log/seed-tts-step17500-sequence.log`，阶段在 greedy 目录的 `sequence-stage.txt`。本段为已启动的接续安排，尚无该 checkpoint 的评测成绩。
+
 ## 6. 当前训练存在的问题：speaker 条件的训推不一致
 
 **训练与验证使用目标音频自身的 speaker embedding，实际克隆推理使用另一条参考音频的 embedding。** 数据中的 codec 目标和 speaker 向量来自同一段录音；推理时目标录音尚不存在，只能从参考录音提取 speaker 条件。两者的条件来源不同，即使属于同一说话人，也不能假设向量完全等价。
