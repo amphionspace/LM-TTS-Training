@@ -138,17 +138,17 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 - 英文：Whisper-large-v3 WER；中文：SeACo-Paraformer CER。
 - 相似度：WavLM-large + ECAPA，SIM 为余弦相似度乘 100。
-- WER/CER 使用逐句错误率的算术平均，不是全语料累计编辑距离比例。不剔除长音频或高错误率样本。
+- WER/CER 使用逐句错误率的算术平均，不是全语料累计编辑距离比例。本轮结果保留全量；历史 Qwen 使用下述异常过滤口径。
 - 当前 Seed-TTS 流程没有 DNSMOS / 主观 MOS；SIM 衡量说话人相似度，不能替代音质评分。
 
 | 模型与解码 | 英文 WER/% ↓ | 中文 CER/% ↓ | 英文 SIM×100 ↑ | 中文 SIM×100 ↑ |
 | --- | ---: | ---: | ---: | ---: |
-| 历史复现 Qwen3-TTS 0.6B，speaker + ICL，采样 | 4.521 | 1.116 | 70.787 | 76.666 |
-| 历史复现 Qwen3-TTS 1.7B，speaker + ICL，采样 | 1.735 | 0.958 | 71.278 | 76.958 |
+| 历史复现 Qwen3-TTS 0.6B，speaker + ICL，采样，剔除异常 | 1.747 | 1.116 | 70.831 | 76.666 |
+| 历史复现 Qwen3-TTS 1.7B，speaker + ICL，采样，剔除异常 | 1.743 | 0.958 | 71.285 | 76.958 |
 | 本轮 frozen-conditioning step 47382，speaker + ICL，采样 | **17.072** | **14.169** | **64.253** | **76.158** |
 | 同一 checkpoint，speaker + ICL，两个模块均 greedy | 运行中 | 运行中 | 运行中 | 运行中 |
 
-历史值取 [2026-09-07 Qwen 复现报告](../../../UltraEval-Audio/replication/voice_clone_20260907.md)的“表 1：不剔除异常，全部样本”，不是论文成绩，也不是过滤后的更好成绩。历史原始音频 / 逐条评分未在当前仓库保留，本次没有重新审计历史数值。
+历史值取 [2026-09-07 Qwen 复现报告](../../../UltraEval-Audio/replication/voice_clone_20260907.md)的“表 2：统一剔除异常长输出对应样本”。规则是历史任一已完成配置输出 **超过 160 秒**，即在所有配置中同步剔除该样本，不按错误率筛选。英文剔除 5 条，保留 **1,083/1,088**；中文保留 **2,020/2,020**。本轮仍为全量，英文样本集合不同。历史数值沿用报告，本次未重新评分。
 
 **比较限制：**历史 Qwen 使用显式 English/Chinese language ID 与默认 streaming 文本布局；本轮按训练协议使用 `language="Auto"`、`non_streaming_mode=True`，没有显式 language ID。因此这是现有实验成绩对比，不能将全部差距归因于权重或训练数据。当前模型的内容错误率明显更高，中文 SIM 接近并不表示读对了文本。
 
