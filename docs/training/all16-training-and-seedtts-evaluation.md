@@ -2,7 +2,7 @@
 
 本报告记录 all16 frozen-conditioning 的训练设置、数据、模型初始化与冻结范围，以及最终 checkpoint **`step-00047382`** 的 Seed-TTS 评测。
 
-状态快照：**2026-10-08 05:34 UTC**。本轮已完成 3 个 epoch；其 speaker + ICL 采样评测已完成，两个模块均 greedy 的全量对照正在运行。speaker-only 按要求暂停，不继续生成或评分。运行状态以后文结果目录中的文件为准。
+更新于 **2026-10-08 07:22 UTC**。本轮已完成 3 个 epoch；speaker + ICL 的采样和双 greedy 两组全量评测均已完成并通过审计，每组 3,108 条。speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -146,7 +146,7 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 | 历史复现 Qwen3-TTS 0.6B，speaker + ICL，采样，剔除异常 | 1.747 | 1.116 | 70.831 | 76.666 |
 | 历史复现 Qwen3-TTS 1.7B，speaker + ICL，采样，剔除异常 | 1.743 | 0.958 | 71.285 | 76.958 |
 | 本轮 frozen-conditioning step 47382，speaker + ICL，采样 | **17.072** | **14.169** | **64.253** | **76.158** |
-| 同一 checkpoint，speaker + ICL，两个模块均 greedy | 运行中 | 运行中 | 运行中 | 运行中 |
+| 同一 checkpoint，speaker + ICL，两个模块均 greedy | **13.327** | **9.721** | **63.646** | **74.908** |
 
 历史值取 [2026-09-07 Qwen 复现报告](../../../UltraEval-Audio/replication/voice_clone_20260907.md)的“表 2：统一剔除异常长输出对应样本”。规则是历史任一已完成配置输出 **超过 160 秒**，即在所有配置中同步剔除该样本，不按错误率筛选。英文剔除 5 条，保留 **1,083/1,088**；中文保留 **2,020/2,020**。本轮仍为全量，英文样本集合不同。历史数值沿用报告，本次未重新评分。
 
@@ -154,11 +154,25 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 采样基线：Talker / Code Predictor 均启用 sampling，`top_k=50, top_p=1.0, temperature=0.9`；Talker `repetition_penalty=1.05, max_new_tokens=2048`。Batch size 1，逐条 seed 为 `42 + split 内 index`。Greedy 只关闭两处采样，其余参数保持相同。
 
-### Greedy 对照的依据
+### Greedy 与采样：全量对比
 
-独立抽取的中英文各 48 条中，两处采样都关闭后，WER/CER 从 **15.20% / 13.33%** 降至 **11.52% / 7.44%**，因此继续进行全量对照。这只是小样本结果，尚无该子集的 SIM / 音质对比，不能作为全量成绩。
+两组使用同一 checkpoint、相同 1,088 条英文和 2,020 条中文、相同参考音频与评分器；仅关闭 Talker 和 Code Predictor 两处采样，其余生成参数不变。两组均保留全量，没有过滤异常样本。
 
-已核对导出权重、输入协议及 ASR 评分链路，未发现足以解释当前高错误率的实现错误；speaker 自参考依赖仍是待验证的训练问题。详细检查保存在 [评测证据](evidence/seed-tts-step47382.json)，这里不展开诊断过程。
+| 指标 | 两个模块均采样 | 两个模块均 greedy | Greedy 相对变化 |
+| --- | ---: | ---: | --- |
+| 英文 WER/% ↓ | 17.072 | **13.327** | 降低 3.744 个百分点，相对降低 21.9% |
+| 中文 CER/% ↓ | 14.169 | **9.721** | 降低 4.449 个百分点，相对降低 31.4% |
+| 英文 SIM×100 ↑ | **64.253** | 63.646 | 降低 0.606 |
+| 中文 SIM×100 ↑ | **76.158** | 74.908 | 降低 1.251 |
+| 英文零错误样本 | 451/1,088 | **611/1,088** | 增加 160 条 |
+| 中文零错误样本 | 588/2,020 | **931/2,020** | 增加 343 条 |
+| 输出超过 30 秒（英 / 中） | **0 / 0** | 1 / 4 | 出现少量长输出 |
+
+**结论：greedy 在内容准确率上更好，但并非所有指标都更好。** 英文和中文错误率均下降，SIM 略降；没有 MOS 或完整主观试听结果，不能据此认定整体音质更好。Greedy 最长英文 70 秒、中文 105.04 秒；其中 1 条英文触及现有 Whisper 评分器的 30 秒截断，因此该条 WER 未衡量后半段内容，长输出风险需单独看待。
+
+若下一步比较约 32,000 步与最终模型，建议两者统一使用 **speaker + ICL、双 greedy**，保持相同数据和评分口径，重点比较内容准确率，同时保留 SIM 与长输出统计。已找到完整的 `step-00032500`，但尚未启动其评测；先依据本次对比决定下一步设置。
+
+完整结果见 [采样汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/summary.json)、[greedy 汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json)和 [greedy 审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json)。早期小样本诊断保存在 [评测证据](evidence/seed-tts-step47382.json)，正式结论以上述全量结果为准。
 
 ## 6. 导出、运行 greedy 和查看结果
 
@@ -185,12 +199,12 @@ UE=/workspace/workspace/yanglin/UltraEval-Audio
 | `init_model/` | 本轮导出模型、Whisper、Paraformer、WavLM / ECAPA；模型与数据通过 HF Mirror 无代理下载 |
 | `envs/tts`、`envs/metrics` | 独立推理 / 评分 Conda 环境 |
 | `res/all16-step47382-seedtts-20261008-8gpu` | 已完成的采样 ICL；保留暂停的 speaker-only 记录 |
-| `res/all16-step47382-seedtts-greedy-20261008-8gpu` | 正在运行的全量 greedy ICL |
+| `res/all16-step47382-seedtts-greedy-20261008-8gpu` | 已完成的全量 greedy ICL |
 | `log/seed-tts-icl-greedy.log` | Greedy 调度日志 |
 
 数据 HF revision 为 `185352e5da255d788097b835ea7dd11ae4f74976`。下载版本、文件哈希与环境版本记录保留在 UltraEval。中文评分使用 JunHowie 的完整 FP32 SeACo-Paraformer 镜像；已核对模型加载完整，但未与原始 ModelScope 发布文件逐字节比较。
 
-当前后台会话为 `seedtts-all16-s47382-icl-greedy`，8 个 GPU 分片，每进程 16 GiB 显存上限。启动命令如下；任务活跃时不要重复启动，意外中断后可用同一命令接续：
+本次使用 8 个 GPU 分片，每进程 16 GiB 显存上限。运行命令如下；已完成的结果无需重跑，中断时可用同一命令接续：
 
 ```bash
 cd /workspace/workspace/yanglin/UltraEval-Audio
@@ -210,4 +224,4 @@ envs/tts/bin/python -u scripts/run_seed_tts.py \
 - `full/audit.json`：必须 `passed: true` 且覆盖全部 3,108 条；同时 pipeline 为 `complete` 才算所选模式完成。
 - `full/speaker_icl/`：逐条生成音频、转写、WER/CER、SIM、分片参数。
 
-文档中的运行状态是上述时间点的快照；greedy 完成后应从通过审计的 `full/summary.json` 更新比较表，不能使用小样本结果代替。
+本次两组均为 `complete`，审计通过；上表使用全量汇总结果。
