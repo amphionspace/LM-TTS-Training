@@ -29,7 +29,7 @@
 
 ## 4. 一个 batch 如何进入模型
 
-实现：[`CodeDataset / collate / DistributedTokenBatchSampler`](../../qwen3_train/data.py)、[`audio_mel`](../../qwen3_train/speaker.py)、[`train.main`](../../qwen3_train/train.py)。
+实现：[`CodeDataset / collate / DistributedTokenBatchSampler`](../../lm_tts/data.py)、[`audio_mel`](../../lm_tts/speaker.py)、[`train.main`](../../lm_tts/train.py)。
 
 ### 4.1 清单与样本读取
 
@@ -78,7 +78,7 @@ checkpoint 保存已消费的 `epoch / next_batch`，不计入 worker 提前读�
 
 ## 5. 模型从哪里初始化，哪些参数参与训练
 
-实现：[`TTSModel.from_assembled`](../../qwen3_train/model.py)、[`assembly.py`](../../qwen3_train/assembly.py)。组装产物的 `config.json` 和 `assembly_report.json` 是具体权重与维度的依据。
+实现：[`TTSModel.from_assembled`](../../lm_tts/model.py)、[`assembly.py`](../../lm_tts/assembly.py)。组装产物的 `config.json` 和 `assembly_report.json` 是具体权重与维度的依据。
 
 | 模块 | 结构/维度 | 来源 | 是否更新 |
 |---|---|---|---|
@@ -98,7 +98,7 @@ checkpoint 保存已消费的 `epoch / next_batch`，不计入 worker 提前读�
 
 ## 6. 模型真正看到的输入序列
 
-实现：[`TTSModel.input_embeddings / hidden`](../../qwen3_train/model.py)。以下描述的是本轮 `qwen3_non_streaming`、Auto language 路径。
+实现：[`TTSModel.input_embeddings / hidden`](../../lm_tts/model.py)。以下描述的是本轮 `qwen3_non_streaming`、Auto language 路径。
 
 定义：
 
@@ -133,7 +133,7 @@ audio_frame(t) = E_0(c[t,0]) + E_1(c[t,1]) + ... + E_15(c[t,15])
 
 ## 7. 首码本和 EOS 的 loss
 
-实现：[`TTSModel.forward`](../../qwen3_train/model.py)。
+实现：[`TTSModel.forward`](../../lm_tts/model.py)。
 
 ### 7.1 时间对齐
 
@@ -271,7 +271,7 @@ ASR、生成时长比例、EOS、截断率都只是评估指标，不进入训�
 
 ## 11. 保存、恢复和可复现边界
 
-实现：[`checkpoint.py`](../../qwen3_train/checkpoint.py)。
+实现：[`checkpoint.py`](../../lm_tts/checkpoint.py)。
 
 每 500 updates 保存一次，也在最后一步保存；保留最近两个完整 checkpoint。每份包含 DCP 模型和优化器状态、scheduler、`step / epoch / next_batch`、每个 rank 的 Python/NumPy/PyTorch/CUDA RNG 状态，以及恢复签名。
 

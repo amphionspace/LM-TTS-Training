@@ -11,10 +11,10 @@ import pyarrow as pa
 import torch
 from torch.utils.data import DataLoader
 
-from qwen3_train.artifacts import digest, file_hash
-from qwen3_train.data.batch import collate
-from qwen3_train.data.build import bind_features, feature_reference
-from qwen3_train.data.reader import FeatureDataset
+from lm_tts.artifacts import digest, file_hash
+from lm_tts.data.batch import collate
+from lm_tts.data.build import bind_features, feature_reference
+from lm_tts.data.reader import FeatureDataset
 
 
 class Tokenizer:

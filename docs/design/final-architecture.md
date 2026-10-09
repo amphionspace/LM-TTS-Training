@@ -70,4 +70,4 @@ DCP 保存模型、optimizer、scheduler、训练进度及每 rank RNG。组装�
 
 验证包含：初始化逐张量来源核对；冻结前端更新前后严格相等；官方非流式／ICL embedding 对照；teacher forcing 与逐帧生成 logits 对齐；变长 padding 与 EOS；FSDP 梯度；真实 Emilia 小样本训练、保存及恢复；正式基线的验证 CE、固定样本音频、原音频 ASR 对照和生成 WER/CER。通过工程检查不等于语音质量达标。
 
-文本 tokenizer 固定 checkpoint 原生 Qwen 规则，显式关闭 Mistral regex 补丁；规则由 `qwen3_train/prepare.py` 和 `qwen3_train/assembly.py` 固定。
+文本 tokenizer 固定 checkpoint 原生 Qwen 规则，显式关闭 Mistral regex 补丁；规则由 `lm_tts/prepare.py` 和 `lm_tts/assembly.py` 固定。

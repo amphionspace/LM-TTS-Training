@@ -6,8 +6,8 @@ import soundfile as sf
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 from torch.utils.tensorboard import SummaryWriter
 
-from qwen3_train.evaluation.telemetry import write_evaluation
-from qwen3_train.training.telemetry import tensorboard_groups, write_training
+from lm_tts.evaluation.telemetry import write_evaluation
+from lm_tts.training.telemetry import tensorboard_groups, write_training
 from scripts.tensorboard import rebuild
 
 

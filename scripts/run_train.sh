@@ -13,7 +13,7 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 RUN_OUTPUT="$("$PYTHON_BIN" - "$@" <<'PY'
 import argparse
 from pathlib import Path
-from qwen3_train.config import read_yaml
+from lm_tts.config import read_yaml
 
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument("--config")
@@ -43,4 +43,4 @@ else
                  --node_rank="$NODE_RANK" --master_addr="$MASTER_ADDR"
                  --master_port="${MASTER_PORT:-29500}")
 fi
-exec "$PYTHON_BIN" -m torch.distributed.run "${LAUNCH_ARGS[@]}" -m qwen3_train.train "$@"
+exec "$PYTHON_BIN" -m torch.distributed.run "${LAUNCH_ARGS[@]}" -m lm_tts.train "$@"

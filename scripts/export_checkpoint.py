@@ -1,4 +1,4 @@
-"""Export one completed FSDP checkpoint for native Qwen3-TTS inference."""
+"""Export one completed FSDP checkpoint as flat model weights and tokenizer artifacts."""
 
 import argparse
 import json
@@ -9,8 +9,8 @@ import torch
 import torch.distributed.checkpoint as dcp
 from safetensors.torch import save_file
 
-from qwen3_train.artifacts import file_hash
-from qwen3_train.models.qwen import TTSModel
+from lm_tts.artifacts import file_hash
+from lm_tts.models.loading import load_model
 
 
 def main():
@@ -34,7 +34,7 @@ def main():
     ):
         raise ValueError("Checkpoint and assembled model have different assembly identities")
     torch.set_num_threads(4)
-    model = TTSModel.from_assembled(
+    model = load_model(
         args.assembled_model,
         load_weights=False,
         attn_implementation="sdpa",

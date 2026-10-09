@@ -14,10 +14,10 @@ from reference_model import ReferenceTTSModel
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
 
-from qwen3_train.data.batch import collate
-from qwen3_train.evaluation.validation import validate
-from qwen3_train.models.qwen import TTSModel, make_config
-from qwen3_train.objectives.tts import loss_normalizers, tts_loss
+from lm_tts.data.batch import collate
+from lm_tts.evaluation.validation import validate
+from lm_tts.models.qwen import TTSModel, make_config
+from lm_tts.objectives.tts import loss_normalizers, tts_loss
 
 
 def main():

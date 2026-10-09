@@ -5,11 +5,11 @@ import pyarrow as pa
 import pytest
 from test_unified_data import Tokenizer, fixture
 
-from qwen3_train.artifacts import digest, file_hash
-from qwen3_train.data.batch import collate
-from qwen3_train.data.build import feature_reference
-from qwen3_train.data.merged import bind_merged
-from qwen3_train.data.reader import FeatureDataset
+from lm_tts.artifacts import digest, file_hash
+from lm_tts.data.batch import collate
+from lm_tts.data.build import feature_reference
+from lm_tts.data.merged import bind_merged
+from lm_tts.data.reader import FeatureDataset
 
 
 def merged_fixture(root, *, embedding_dim=1024, speaker_profile=None, num_rows=8):
@@ -178,7 +178,7 @@ def test_merged_interval_policy_is_pinned_and_enforced(tmp_path):
 def test_holdout_is_deterministic_disjoint_and_covers_every_source_row(tmp_path):
     import numpy as np
 
-    from qwen3_train.data.split import split_build
+    from lm_tts.data.split import split_build
 
     dataset = make_build(tmp_path / "features", tmp_path / "build", num_rows=100)
     split_build(dataset.path, fraction=0.1, seed=42)

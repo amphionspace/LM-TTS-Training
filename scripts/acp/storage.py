@@ -25,7 +25,7 @@ def afs_subdir(directory, mount):
 def snapshot(project, destination):
     project, destination = Path(project), Path(destination)
     destination.mkdir(parents=True, exist_ok=False)
-    for name in ("qwen3_train", "scripts", "configs", "tests"):
+    for name in ("lm_tts", "scripts", "configs", "tests"):
         shutil.copytree(
             project / name,
             destination / name,

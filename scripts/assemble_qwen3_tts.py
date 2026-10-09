@@ -18,8 +18,8 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 import torch
 from huggingface_hub import snapshot_download
 
-from qwen3_train.artifacts import file_hash
-from qwen3_train.models.assembly import (
+from lm_tts.artifacts import file_hash
+from lm_tts.models.assembly import (
     audit_sources,
     copy_codec,
     initialize_model,

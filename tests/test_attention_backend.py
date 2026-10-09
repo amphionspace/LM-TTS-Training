@@ -2,10 +2,10 @@ import unittest
 
 import torch
 
-from qwen3_train.data.batch import collate
-from qwen3_train.models.qwen import TTSModel, make_config
-from qwen3_train.objectives.tts import tts_loss
-from qwen3_train.training.precision import training_precision
+from lm_tts.data.batch import collate
+from lm_tts.models.qwen import TTSModel, make_config
+from lm_tts.objectives.tts import tts_loss
+from lm_tts.training.precision import training_precision
 
 
 class PrecisionTests(unittest.TestCase):

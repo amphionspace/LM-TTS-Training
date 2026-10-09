@@ -1,7 +1,7 @@
 """Dense FP32 oracle for CPU checks and comparisons against production FA2."""
 
-from qwen3_train.models.qwen import TTSModel
-from qwen3_train.objectives.tts import tts_loss
+from lm_tts.models.qwen import TTSModel
+from lm_tts.objectives.tts import tts_loss
 
 
 class ReferenceTTSModel(TTSModel):

@@ -9,17 +9,17 @@ import pytest
 import torch
 from test_merged_data import make_build
 
-from qwen3_train.data.batch import collate
-from qwen3_train.data.reader import FeatureDataset
-from qwen3_train.objectives.tts import tts_loss
-from qwen3_train.training.config import load_config
+from lm_tts.data.batch import collate
+from lm_tts.data.reader import FeatureDataset
+from lm_tts.objectives.tts import tts_loss
+from lm_tts.training.config import load_config
 
 
 def test_no_speaker_removes_position_and_preserves_causal_targets():
     from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
     from test_qwen_protocol import FrozenFrontendProtocolTests
 
-    from qwen3_train.models.qwen import TTSModel
+    from lm_tts.models.qwen import TTSModel
 
     fixture = FrozenFrontendProtocolTests()
     fixture.setUp()

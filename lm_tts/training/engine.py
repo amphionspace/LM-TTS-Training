@@ -18,7 +18,7 @@ from ..data.build import tokenizer_identity, verify_tokenizer_compatibility
 from ..data.reader import FeatureDataset
 from ..data.sampler import TokenBatchSampler
 from ..evaluation.validation import validate
-from ..models.qwen import TTSModel
+from ..models.loading import load_model
 from ..objectives.tts import loss_normalizers, tts_loss
 from .checkpoint import load_checkpoint, save_checkpoint
 from .distributed import batch_health, initialize, move, shard
@@ -102,7 +102,7 @@ def run(config, resume=None, eval_only=False):
                 or train_data.manifest["split_sha256"] != val_data.manifest.get("split_sha256")
             ):
                 raise ValueError("Validation requires builds published from an isolated selection")
-        model = TTSModel.from_assembled(
+        model = load_model(
             assembled,
             load_weights=True,
             attn_implementation=backend,

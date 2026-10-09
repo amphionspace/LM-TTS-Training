@@ -18,11 +18,11 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import PreTrainedTokenizerFast
 
-from qwen3_train.artifacts import file_hash
-from qwen3_train.data.build import tokenizer_identity
-from qwen3_train.data.merged import bind_merged
-from qwen3_train.models.assembly import save_model
-from qwen3_train.models.qwen import make_config
+from lm_tts.artifacts import file_hash
+from lm_tts.data.build import tokenizer_identity
+from lm_tts.data.merged import bind_merged
+from lm_tts.models.assembly import save_model
+from lm_tts.models.qwen import make_config
 
 
 def prepare(
@@ -275,7 +275,7 @@ def main():
             "--standalone",
             f"--nproc_per_node={args.world_size}",
             "-m",
-            "qwen3_train.train",
+            "lm_tts.train",
             "--config",
             str(cfg),
             "--max-steps",

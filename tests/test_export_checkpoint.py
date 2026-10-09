@@ -7,7 +7,7 @@ import pytest
 import torch
 from safetensors.torch import load_file
 
-from qwen3_train.artifacts import file_hash
+from lm_tts.artifacts import file_hash
 from scripts import export_checkpoint
 
 
@@ -44,7 +44,7 @@ def test_export_tokenizer_and_flat_weights(
         )
     )
     model = torch.nn.Linear(2, 2, bias=False)
-    monkeypatch.setattr(export_checkpoint.TTSModel, "from_assembled", lambda *a, **kw: model)
+    monkeypatch.setattr(export_checkpoint, "load_model", lambda *a, **kw: model)
 
     def load(state, **kwargs):
         state["model"]["weight"].fill_(0.25)

@@ -1,6 +1,6 @@
 # LM-TTS-Training
 
-基于 Qwen3-TTS 的非流式训练框架，读取 `tts-data-pipeline` 发布的 unified Lance features。默认冻结 text frontend 和 speaker encoder，训练 Talker 和音频预测模块。支持 FSDP2 多机多卡、BF16 / FP32、断点恢复，以及独立的生成音频评分。
+非流式 TTS 训练框架，支持 Qwen3 和 LFM2 主干，读取 `tts-data-pipeline` 发布的 unified Lance features。默认 Qwen 实验冻结 text frontend 和 speaker encoder；LFM pure codec 实验训练原生文本 embedding 和主干，不使用 speaker embedding。支持 FSDP2 多机多卡、BF16 / FP32、断点恢复，以及独立的生成音频评分。
 
 日常流程：**修改实验配置 → 准备模型 → 构建数据索引 → 本地或 ACP 训练 → 查看日志与评分**。下面的命令均在仓库根目录执行。
 
@@ -75,9 +75,11 @@ $PY -m scripts.prepare_models --config "$CFG"
 
 该命令从 `/workspace/model` 复制基础权重，校验后组装；可用 `--source` 指定其他本地来源。训练启动时只加载带 `ASSEMBLY_COMPLETE` 标记的产物。
 
-当前组装方案：Talker 主干来自纯文本 `Qwen3-0.6B-Base` 并继续训练；text embedding、text projector 和 speaker encoder 来自官方 Qwen3-TTS 并冻结；16 组 codec embedding、音频输出 head 和 Code Predictor 新初始化并训练。Talker → Code Predictor 的 projector 因两侧同宽而是无参数 Identity。音频 codec 不参与训练。逐模块参数量与来源见[初始化与冻结范围](docs/training/all16-20261001.md#初始化与冻结范围)。
+默认 Qwen 组装方案：Talker 主干来自纯文本 `Qwen3-0.6B-Base` 并继续训练；text embedding、text projector 和 speaker encoder 来自官方 Qwen3-TTS 并冻结；16 组 codec embedding、音频输出 head 和 Code Predictor 新初始化并训练。Talker → Code Predictor 的 projector 因两侧同宽而是无参数 Identity。音频 codec 不参与训练。逐模块参数量与来源见[初始化与冻结范围](docs/training/all16-20261001.md#初始化与冻结范围)。
 
 ### 可训练文本前端实验
+
+LFM Base 使用独立的本地组装入口：`$PY -m scripts.assemble_lfm_tts`，默认生成 `assets/assembled/lfm2.5-230m-base-pure-codec/`。它保留 5 层 Code Predictor，使用 LFM tokenizer 和文本 embedding；数据需要重新构建文本 token。初始化、packed 卷积隔离及准备命令见 [LFM pure codec 说明](docs/design/lfm-pure-codec.md)。LFM 不使用下面的 Qwen `prepare_models` 组装流程。
 
 `configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml` 使用文本 Base 的 embedding、新 TTS token 行和随机 text projector，文本端参与训练。该 YAML 的 `assembly` 区块用于离线准备，`train` / `acp` 区块用于训练和提交：
 
@@ -278,12 +280,12 @@ Qwen3-TTS 模型目录；默认使用软链接。转换只读取训练 checkpoin
 
 ## 开发与验证
 
-代码按职责划分：`qwen3_train/data/` 负责构建、读取和组批，`models/` 负责模型与输入协议，`objectives/` 负责 loss，`training/` 负责分布式更新和恢复，`evaluation/` 负责生成音频评分。`scripts/` 是操作入口，`scripts/acp/` 是平台适配层。代码与配置注释使用英文，操作文档使用中文。
+代码按职责划分：`lm_tts/data/` 负责构建、读取和组批，`models/` 负责模型与输入协议，`objectives/` 负责 loss，`training/` 负责分布式更新和恢复，`evaluation/` 负责生成音频评分。`scripts/` 是操作入口，`scripts/acp/` 是平台适配层。代码与配置注释使用英文，操作文档使用中文。
 
 ```bash
 $PY -m pytest -q
-$PY -m ruff check qwen3_train scripts tests
-$PY -m ruff format --check qwen3_train scripts tests
+$PY -m ruff check lm_tts scripts tests
+$PY -m ruff format --check lm_tts scripts tests
 # 双卡实际训练：坏样本、3 epoch WSD、预取参数变化后的严格恢复
 PYTHONPATH=.:tests $PY tests/check_epoch_resume.py --output artifacts/check-epoch-resume
 ```

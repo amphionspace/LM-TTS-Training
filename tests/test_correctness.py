@@ -4,10 +4,10 @@ import unittest
 import torch
 from reference_model import ReferenceTTSModel
 
-from qwen3_train.data.batch import collate
-from qwen3_train.evaluation.metrics import aggregate_content, content_metrics
-from qwen3_train.models.qwen import make_config
-from qwen3_train.objectives.tts import loss_normalizers
+from lm_tts.data.batch import collate
+from lm_tts.evaluation.metrics import aggregate_content, content_metrics
+from lm_tts.models.qwen import make_config
+from lm_tts.objectives.tts import loss_normalizers
 
 
 def row(length, text=(12, 34, 56)):

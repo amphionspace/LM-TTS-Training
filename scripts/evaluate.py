@@ -3,7 +3,7 @@
 import argparse
 import json
 
-from qwen3_train.evaluation.report import evaluate
+from lm_tts.evaluation.report import evaluate
 
 
 def main():

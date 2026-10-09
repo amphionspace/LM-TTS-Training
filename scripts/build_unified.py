@@ -4,8 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
-from qwen3_train.config import read_yaml
-from qwen3_train.data.build import create_build
+from lm_tts.config import read_yaml
+from lm_tts.data.build import create_build
 
 
 def main():

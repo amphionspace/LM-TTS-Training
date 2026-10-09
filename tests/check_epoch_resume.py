@@ -13,7 +13,7 @@ import yaml
 from check_training_resume import prepare
 from safetensors.torch import load_file
 
-from qwen3_train.data.split import split_build
+from lm_tts.data.split import split_build
 
 
 def main():
@@ -73,7 +73,7 @@ def main():
                     "--standalone",
                     "--nproc_per_node=2",
                     "-m",
-                    "qwen3_train.train",
+                    "lm_tts.train",
                     "--config",
                     str(root / f"{name}.yaml"),
                     *extra,

@@ -139,7 +139,7 @@ CONFIG=configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32
 
 新配置显式指定 `train.text_embedding_lr_group: backbone`：预训练 text embedding、Talker layers/norm 使用 `backbone_lr=1e-4`，随机 projector 与音频模块使用 `lr=3e-4`。新增 token 行和原行属于同一个 Parameter，因此整张 embedding 使用同一个 LR；没有按行设置学习率。
 
-[optimizer.py](../../qwen3_train/training/optimizer.py) 保留两组及遍历顺序。未指定这一选项的旧实验继续原分组行为；配置加载器不会向旧配置补入该字段，不改变旧 checkpoint 的签名。显式设置属于训练语义，进入新实验的恢复签名。
+[optimizer.py](../../lm_tts/training/optimizer.py) 保留两组及遍历顺序。未指定这一选项的旧实验继续原分组行为；配置加载器不会向旧配置补入该字段，不改变旧 checkpoint 的签名。显式设置属于训练语义，进入新实验的恢复签名。
 
 ### 数据 build 是否可复用
 

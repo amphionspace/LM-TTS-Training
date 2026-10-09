@@ -6,7 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from qwen3_train.config import read_yaml
+from lm_tts.config import read_yaml
 
 
 def main():

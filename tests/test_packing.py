@@ -6,7 +6,7 @@ import test_qwen_protocol
 import torch
 from transformers.utils import is_flash_attn_2_available
 
-from qwen3_train.data.batch import collate
+from lm_tts.data.batch import collate
 
 
 class PackingTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 import unittest
 
-from qwen3_train.data.sampler import TokenBatchSampler
+from lm_tts.data.sampler import TokenBatchSampler
 
 
 class DynamicBatchingTests(unittest.TestCase):

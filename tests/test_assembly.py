@@ -11,9 +11,9 @@ from reference_model import ReferenceTTSModel
 from safetensors.torch import save_file
 from transformers import Qwen3Config, Qwen3Model
 
-from qwen3_train.artifacts import file_hash
-from qwen3_train.models.assembly import initialize_model, save_model, vocabulary_plan
-from qwen3_train.models.qwen import TTSModel, make_config
+from lm_tts.artifacts import file_hash
+from lm_tts.models.assembly import initialize_model, save_model, vocabulary_plan
+from lm_tts.models.qwen import TTSModel, make_config
 
 
 class AssemblyTests(unittest.TestCase):
@@ -197,7 +197,7 @@ class AssemblyTests(unittest.TestCase):
     def test_deterministic_padding_preserves_values_and_gradients(self):
         import copy
 
-        from qwen3_train.models.speaker import deterministic_speaker_padding
+        from lm_tts.models.speaker import deterministic_speaker_padding
 
         original = torch.nn.Conv1d(
             3, 4, 3, dilation=2, padding="same", padding_mode="reflect"
@@ -218,7 +218,7 @@ class AssemblyTests(unittest.TestCase):
     def test_speaker_changes_predictions_and_receives_updates(self):
         from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
 
-        from qwen3_train.data.batch import collate
+        from lm_tts.data.batch import collate
 
         cfg = Qwen3TTSSpeakerEncoderConfig(enc_dim=64, mel_dim=8, enc_channels=[16, 16, 16, 16, 48])
         model = ReferenceTTSModel(make_config(tiny=True), cfg).eval()

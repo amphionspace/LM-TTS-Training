@@ -4,7 +4,7 @@ import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from qwen3_train.training.distributed import batch_health
+from lm_tts.training.distributed import batch_health
 
 
 def worker(rank, rendezvous):

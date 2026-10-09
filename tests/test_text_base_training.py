@@ -6,13 +6,13 @@ import pytest
 import torch
 from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
 
-from qwen3_train.artifacts import file_hash
-from qwen3_train.data.batch import collate
-from qwen3_train.data.build import tokenizer_identity, verify_tokenizer_compatibility
-from qwen3_train.models.qwen import TTSModel, make_config
-from qwen3_train.objectives.tts import tts_loss
-from qwen3_train.training.config import load_config
-from qwen3_train.training.optimizer import parameter_groups
+from lm_tts.artifacts import file_hash
+from lm_tts.data.batch import collate
+from lm_tts.data.build import tokenizer_identity, verify_tokenizer_compatibility
+from lm_tts.models.qwen import TTSModel, make_config
+from lm_tts.objectives.tts import tts_loss
+from lm_tts.training.config import load_config
+from lm_tts.training.optimizer import parameter_groups
 from scripts.prepare_models import assembly_recipe, verify_assembly
 
 

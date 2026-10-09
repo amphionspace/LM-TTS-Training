@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from qwen3_train.config import read_yaml
-from qwen3_train.training.config import load_config
+from lm_tts.config import read_yaml
+from lm_tts.training.config import load_config
 
 
 def test_inheritance_resolves_child_overrides_lists_and_types(tmp_path):
@@ -60,8 +60,8 @@ def test_train_config_has_one_run_identity_and_detects_conflicting_output(tmp_pa
 def test_training_applies_communication_defaults_before_initialization(monkeypatch):
     import sys
 
-    from qwen3_train import train
-    from qwen3_train.training import engine
+    from lm_tts import train
+    from lm_tts.training import engine
 
     repo = Path(__file__).resolve().parents[1]
     monkeypatch.setenv("NCCL_IB_TIMEOUT", "21")

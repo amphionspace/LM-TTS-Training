@@ -1,6 +1,6 @@
 import pytest
 
-from qwen3_train.training.schedule import finished, learning_rate_factor
+from lm_tts.training.schedule import finished, learning_rate_factor
 
 
 def test_wsd_boundaries_and_epoch_stop():

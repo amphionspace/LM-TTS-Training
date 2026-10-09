@@ -10,8 +10,8 @@ from pathlib import Path
 
 import yaml
 
-from qwen3_train.config import read_yaml
-from qwen3_train.training.config import load_config
+from lm_tts.config import read_yaml
+from lm_tts.training.config import load_config
 
 from .api import jobs_url, request
 from .storage import afs_subdir, snapshot

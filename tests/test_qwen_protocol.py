@@ -7,7 +7,7 @@ import torch
 from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
 
-from qwen3_train.data.batch import collate
+from lm_tts.data.batch import collate
 
 
 class QwenProtocolTests(test_protocol.ProtocolTests):

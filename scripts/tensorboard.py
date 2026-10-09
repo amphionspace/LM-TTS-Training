@@ -6,9 +6,9 @@ import os
 import tempfile
 from pathlib import Path
 
-from qwen3_train.config import read_yaml
-from qwen3_train.evaluation.telemetry import write_evaluation
-from qwen3_train.training.telemetry import setup_dashboard, write_training, write_validation
+from lm_tts.config import read_yaml
+from lm_tts.evaluation.telemetry import write_evaluation
+from lm_tts.training.telemetry import setup_dashboard, write_training, write_validation
 
 
 def rebuild(run, destination=None):

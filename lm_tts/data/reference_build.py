@@ -330,7 +330,5 @@ def create_reference_build(recipe, output, tokenizer_info, selection_sha):
             "recipe_sha256": digest(child_recipe),
         }
         (directory / "manifest.json").write_text(json.dumps(manifest, indent=2))
-        (directory / "data_recipe.json").write_text(
-            json.dumps(child_recipe, indent=2)
-        )
+        (directory / "data_recipe.json").write_text(json.dumps(child_recipe, indent=2))
     return manifests["train"]

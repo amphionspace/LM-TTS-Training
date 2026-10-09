@@ -6,10 +6,10 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from qwen3_train.evaluation.audio import load_audio
-from qwen3_train.evaluation.metrics import aggregate_content, content_metrics
-from qwen3_train.evaluation.quality import DNSMOS
-from qwen3_train.evaluation.report import read_pairs
+from lm_tts.evaluation.audio import load_audio
+from lm_tts.evaluation.metrics import aggregate_content, content_metrics
+from lm_tts.evaluation.quality import DNSMOS
+from lm_tts.evaluation.report import read_pairs
 
 
 class EvaluationTests(unittest.TestCase):

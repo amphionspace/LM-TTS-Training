@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from qwen3_train.training.checkpoint import prune_checkpoints
+from lm_tts.training.checkpoint import prune_checkpoints
 
 
 class CheckpointRetentionTests(unittest.TestCase):

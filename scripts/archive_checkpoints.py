@@ -11,7 +11,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from qwen3_train.artifacts import file_hash
+from lm_tts.artifacts import file_hash
 
 RECEIPT = "ARCHIVE_COMPLETE.json"
 

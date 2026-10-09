@@ -10,14 +10,14 @@ import torch
 from test_merged_data import merged_fixture
 from test_unified_data import Tokenizer
 
-from qwen3_train.artifacts import digest, file_hash
-from qwen3_train.data.batch import collate
-from qwen3_train.data.build import open_snapshot
-from qwen3_train.data.merged import bind_merged
-from qwen3_train.data.reader import FeatureDataset
-from qwen3_train.data.reference_build import aligned_cache, create_reference_build
-from qwen3_train.data.split import split_build
-from qwen3_train.objectives.tts import loss_normalizers, tts_loss
+from lm_tts.artifacts import digest, file_hash
+from lm_tts.data.batch import collate
+from lm_tts.data.build import open_snapshot
+from lm_tts.data.merged import bind_merged
+from lm_tts.data.reader import FeatureDataset
+from lm_tts.data.reference_build import aligned_cache, create_reference_build
+from lm_tts.data.split import split_build
+from lm_tts.objectives.tts import loss_normalizers, tts_loss
 
 
 def reference_fixture(
@@ -176,7 +176,7 @@ def test_reference_build_keeps_ids_tokens_and_holdout(tmp_path):
     with pytest.raises(ValueError, match="requires train.mask_reference"):
         FeatureDataset(build / "train/manifest.json", (200, 201))
     row = open_snapshot(train.bindings[0]["merged"]).take([0]).to_pylist()[0]
-    from qwen3_train.data.merged import validate_row
+    from lm_tts.data.merged import validate_row
 
     row["speaker_reference_codec_end"] += 1
     with pytest.raises(ValueError, match="reference-to-codec"):

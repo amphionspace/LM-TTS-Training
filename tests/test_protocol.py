@@ -5,8 +5,8 @@ from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderC
 from reference_model import ReferenceTTSModel
 from torch.nn import functional as F
 
-from qwen3_train.data.batch import collate
-from qwen3_train.models.qwen import make_config
+from lm_tts.data.batch import collate
+from lm_tts.models.qwen import make_config
 
 
 class ProtocolTests(unittest.TestCase):
