@@ -1,0 +1,63 @@
+extends: base.yaml
+
+# ---- Cropped speaker references; full text and codec remain unchanged ----
+root: ${paths.features}
+selection_manifest: selections/tts-selection-supervised-tts-20260929T151539bjt-01/manifest.json
+tokenizer: ${paths.assembled_model}
+workers: 4  # Reuse tokenization and preserve baseline holdout membership by target ID.
+reuse_build: ${paths.project}/data/builds/supervised-tts-20260929-merged-20261001-all16/manifest.json
+
+reference_policy: self
+speaker_conditioning_mode: frozen_embedding
+evaluation: no_holdout  # The source build is partitioned into train / validation below.
+# Train/validation membership comes from reuse_build; do not draw a new holdout.
+
+# ---- All 16 datasets; each manifest pins its own codec / speaker / text provenance ----
+bindings:
+  - dataset_id: aishell3
+    merged_manifest: datasets/aishell3/v0.1/features/merged/aishell3-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: csemotions
+    merged_manifest: datasets/csemotions/v0.1/features/merged/csemotions-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: emilia
+    merged_manifest: datasets/emilia/v0.1/features/merged/emilia-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: emilia_yodas
+    merged_manifest: datasets/emilia_yodas/v0.1/features/merged/emilia_yodas-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: galgame
+    merged_manifest: datasets/galgame/v0.1/features/merged/galgame-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: genshin_voice
+    merged_manifest: datasets/genshin_voice/v0.1/features/merged/genshin_voice-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: hifitts
+    merged_manifest: datasets/hifitts/v0.1/features/merged/hifitts-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: hifitts2
+    merged_manifest: datasets/hifitts2/v0.1/features/merged/hifitts2-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: libriheavy
+    merged_manifest: datasets/libriheavy/v0.1/features/merged/libriheavy-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: libritts_r
+    merged_manifest: datasets/libritts_r/v0.1/features/merged/libritts_r-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: ljspeech
+    merged_manifest: datasets/ljspeech/v0.1/features/merged/ljspeech-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: mls_sidon
+    merged_manifest: datasets/mls_sidon/v0.1/features/merged/mls_sidon-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: starrail_voice
+    merged_manifest: datasets/starrail_voice/v0.1/features/merged/starrail_voice-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: vctk
+    merged_manifest: datasets/vctk/v0.1/features/merged/vctk-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: wenetspeech4tts
+    merged_manifest: datasets/wenetspeech4tts/v0.1/features/merged/wenetspeech4tts-merged-reference-features-v1-20261009T000157bjt-01/manifest.json
+
+  - dataset_id: wutheringwaves
+    merged_manifest: datasets/wutheringwaves/v0.1/features/merged/wutheringwaves-merged-reference-features-v1-20261009T000157bjt-01/manifest.json

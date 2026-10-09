@@ -4,7 +4,7 @@
 
 日常流程：**修改实验配置 → 准备模型 → 构建数据索引 → 本地或 ACP 训练 → 查看日志与评分**。下面的命令均在仓库根目录执行。
 
-当前配置绑定已发布的 **16 个 merged features 数据集，共 128,220,178 条样本**。正式实验使用 BF16、32 卡、token loss、3 个 epoch，并按数据集固定抽取约 0.1% 作为验证集。
+原始 all16 配置绑定 **128,220,178 条样本**，使用 BF16、32 卡、token loss、3 个 epoch，固定抽取约 0.1% 验证。新增的 reference 配置绑定 **128,094,617 条样本**，使用裁剪参考音频的 speaker embedding，并屏蔽对应 codec 帧的 loss；原始实验与数据索引保留。
 
 数据明细、两轮模型的初始化与冻结、完整 Seed-TTS 成绩、历史 Qwen 对比及 greedy 进度统一见 [训练与评测报告](docs/training/all16-training-and-seedtts-evaluation.md)。
 
@@ -24,9 +24,10 @@ CFG=configs/train-bf16.yaml
 | --- | --- |
 | 实验名称、精度、学习率、batch 预算 | 实验 YAML 的 `train` 区块 |
 | 是否输入 speaker embedding | 实验 YAML 的 `model.use_speaker_embedding`，默认 `true` |
+| 是否屏蔽参考片段的 codec 监督 | 实验 YAML 的 `train.mask_reference`，默认 `false`；新 reference 实验设为 `true` |
 | ACP 节点数、镜像 | 同一实验 YAML 的 `acp` 区块；提交时也可用 `--nodes` |
 | 公共路径、通信设置、训练默认值 | `configs/base.yaml` |
-| selection、各数据集 merged manifest、验证比例 | [configs/data.yaml](configs/data.yaml) |
+| selection、各数据集 merged manifest、验证划分 | `data.config` 指向的数据 YAML；原始版为 [data.yaml](configs/data.yaml)，参考片段版为 [data-reference.yaml](configs/data-reference.yaml) |
 | 新数据索引的名称 | 实验 YAML 的 `data.build_id` |
 | 生成参数、生成设备和精度 | [configs/synthesis.yaml](configs/synthesis.yaml) |
 | 评分项目、评分模型、试听数量 | [configs/evaluation.yaml](configs/evaluation.yaml) |
@@ -51,6 +52,8 @@ acp:
 无 speaker 条件实验在 `model` 下设置 `use_speaker_embedding: false`，保留完整文本与 codec，移除 speaker 输入位置，并跳过 embedding 向量读取和 encoder 计算。复用原来的训练索引和样本划分；不是重新接纳旧 build 已排除的样本。省略该设置时维持原行为；更改它需要创建新 run，不能跨模式 resume。
 
 完整的 16 卡、累积 2、3 epoch 配置为 [no-spk 实验](configs/supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd.yaml)，初始化与运行记录见[实验说明](docs/training/all16-no-speaker-20261008.md)。这种模型的指定音色生成需要参考 codec；官方原样的 speaker-only 生成入口不适用，ICL 推理也必须省去 speaker 位置。
+
+裁剪参考音频实验使用 [refmask 配置](configs/supervised-tts-20260929-all16-refmask-20261009-bf16-16gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd.yaml)：16 卡、累积 2，重新从冻结文本前端的组装模型开始训练。完整文本与 codec 仍作为输入，参考片段对应的 16 个码本目标不计 CE，EOS 保留监督。参考片段固定于已发布的数据，不会每个 epoch 重抽，也不会移到序列开头。配置、损失语义及验证见[本轮说明](docs/training/all16-reference-20261009.md)。
 
 **输出目录统一为 `paths.runs / train.run_name`**。默认是 `/workspace/LM-TTS-Training-Runs/<run_name>/`，checkpoint、TensorBoard 和日志自动派生，不用重复填写路径。`yanglin/LM-TTS-Training-Runs` 是指向该目录的软链接。
 
@@ -100,7 +103,7 @@ $PY -m scripts.acp.submit --config "$CONFIG" --submit   # Submit once.
 
 ## 3. 构建训练数据
 
-检查 `configs/data.yaml` 的 `selection_manifest` 和 `bindings`。每个绑定指向一个已发布的 merged manifest，必须为 `status: complete`。该表已经合并 codec、speaker embedding 和 text，训练无需再次 join。
+检查实验 `data.config` 指向的 YAML 中的 `selection_manifest` 和 `bindings`。每个绑定指向一个已发布的 merged manifest，必须为 `status: complete`。该表已经合并 codec、speaker embedding 和 text，训练无需再次 join。
 
 - **text / language** 来自 merged 表中的独立文本特征，发布 manifest 固定其来源；训练侧不生成转写。
 - **codec** 是每帧 16 个码本的离散 token。
@@ -112,6 +115,8 @@ $PY -m scripts.build_unified --config "$CFG"
 
 `data.yaml` 是数据选择配置；`data/builds/<build_id>/` 是由它生成的训练缓存，包含固定版本引用、text token、长度索引和训练 / 验证划分。codec 和 speaker 大字段仍引用 unified 源文件，因此源文件需要保留。整个 build 只写本仓库，不写 unified；同一 build 可以复用于 BF16 和 FP32。
 
+文本 tokenizer 在构建时生成并缓存 token ID；训练 forward 仍计算 embedding 和 projector，是否更新参数由模型冻结配置决定。`data-reference.yaml` 的 `reuse_build` 指向原始完整 build：校验 tokenizer、文本、音频身份及 codec/text 来源一致后复用 token ID，按原 target ID 保留训练 / 验证归属。新 merged 过滤掉的样本也从对应划分移除，不重新抽验证集。构建时需要原始 build，构建完成后训练直接读取新 build。
+
 | build 内的位置 | 用途 |
 | --- | --- |
 | `manifest.json` | 完整数据的版本与覆盖记录 |
@@ -120,6 +125,8 @@ $PY -m scripts.build_unified --config "$CFG"
 | 数据集目录、`sampling-*.npy` | token 缓存、采样长度与行定位，自动生成 |
 
 默认按每个数据集的固定快照、`split_seed: 42` 抽取 `validation_fraction: 0.001`。训练约 128,091,959 条，验证约 128,219 条；两者的行不重叠。这是**样本级划分**，不承诺说话人或文本完全不重叠。每个 epoch 不放回遍历训练集，多卡尾部不足每卡一条时丢弃少于 world size 条样本。
+
+Reference loss 按实际参与监督的 token 数在所有卡、所有累积 microbatch 间归一化：首码本包含 EOS，residual 除以有效帧数 × 15。输入长度和组批预算仍按完整序列计算；`codec_tokens` 统计有效监督 token，因此不能用它直接比较两种实验的计算吞吐。训练与验证使用相同 mask，数值不宜与旧版全帧 CE 直接比较；更改 mask 需要新 run，不能跨模式 resume。
 
 `train_isolated` / `heldout` 表示这一对训练 / 验证 build；`no_holdout` 表示尚未划分的源 build。仅修改这个标签不会产生验证集。更换 selection、feature、tokenizer 或划分方式时创建新 `build_id`，已有 build 不会覆盖。
 

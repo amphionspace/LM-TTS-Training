@@ -56,7 +56,9 @@ def validate(
             totals[3] += out["frame_count"]
             totals[4:19] += out["group_sums"]
             totals[19:21] += torch.stack([out["first_reduced_sum"], out["residual_reduced_sum"]])
-            totals[21:23] += loss_normalizers(batch["frame_lengths"], loss_reduction)
+            totals[21:23] += loss_normalizers(
+                batch.get("supervised_frame_lengths", batch["frame_lengths"]), loss_reduction
+            )
     dist.all_reduce(totals)
     if totals[1] == 0:
         raise ValueError("No usable validation samples remain")

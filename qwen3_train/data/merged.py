@@ -11,6 +11,7 @@ import pyarrow as pa
 
 from ..artifacts import digest, file_hash
 from .build import INDEX_DTYPE, feature_reference, read_complete
+from .reference import is_reference, validate_reference
 
 METADATA_COLUMNS = [
     "target_id",
@@ -45,7 +46,7 @@ def validate_row(row, binding):
             row[f"{kind}_parent_sample_id"] != row["target_id"]
             or row[f"{kind}_status"] != "ok"
             or row[f"{kind}_profile_id"] != binding[kind]["profile_id"]
-            or row[f"{kind}_start_frame"] != 0
+            or (row[f"{kind}_start_frame"] != 0 and (kind == "codec" or not is_reference(binding)))
         ):
             raise ValueError("Merged feature identity, status or profile differs")
     rate = row["codec_native_sample_rate"]
@@ -53,13 +54,15 @@ def validate_row(row, binding):
     if rate <= 0 or row["speaker_native_sample_rate"] != rate or min(codec_end, speaker_end) <= 0:
         raise ValueError("Invalid merged native audio range")
     profile = binding["merged_profile"]
+    if is_reference(binding):
+        validate_reference(row)
     # Published runs pin either the original two-frame tolerance or the later 20 ms policy.
     tolerance = (
         max(2, math.ceil(rate * profile["native_duration_tolerance_seconds"]))
         if "native_duration_tolerance_seconds" in profile
         else profile["native_frame_tolerance"]
     )
-    if abs(codec_end - speaker_end) > tolerance:
+    if not is_reference(binding) and abs(codec_end - speaker_end) > tolerance:
         raise ValueError("Merged codec/speaker intervals exceed the published tolerance")
     if (
         not isinstance(row["text"], str)

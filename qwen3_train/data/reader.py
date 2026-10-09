@@ -10,6 +10,7 @@ import torch
 
 from ..artifacts import file_hash
 from .build import open_snapshot, read_complete
+from .reference import REFERENCE_COLUMNS, is_reference, validate_reference
 
 
 class MetadataColumn:
@@ -35,6 +36,7 @@ class FeatureDataset:
         *,
         verify_integrity=True,
         use_speaker_embedding=True,
+        mask_reference=False,
     ):
         self.path = Path(build_path).resolve()
         self.manifest = read_complete(self.path)
@@ -45,7 +47,16 @@ class FeatureDataset:
         self.fingerprint = file_hash(self.path)
         self.text_special_tokens = text_special_tokens
         self.use_speaker_embedding = use_speaker_embedding
+        self.mask_reference = mask_reference
         self.bindings = self.manifest["bindings"]
+        if mask_reference and not all(is_reference(b) for b in self.bindings):
+            raise ValueError("Reference masking requires reference features for every binding")
+        if (
+            use_speaker_embedding
+            and any(is_reference(b) for b in self.bindings)
+            and not mask_reference
+        ):
+            raise ValueError("Reference speaker conditioning requires train.mask_reference=true")
         self.indices, lengths = [], []
         for binding in self.bindings:
             path = self.path.parent / binding["sampling_index"]
@@ -92,6 +103,7 @@ class FeatureDataset:
             "text_special_tokens": self.text_special_tokens,
             "fingerprint": self.fingerprint,
             "use_speaker_embedding": self.use_speaker_embedding,
+            "mask_reference": self.mask_reference,
         }
 
     def __setstate__(self, state):
@@ -101,6 +113,7 @@ class FeatureDataset:
             state["text_special_tokens"],
             verify_integrity=False,
             use_speaker_embedding=state["use_speaker_embedding"],
+            mask_reference=state["mask_reference"],
         )
         if self.fingerprint != state["fingerprint"]:
             raise ValueError("Training build changed while starting workers")
@@ -162,7 +175,8 @@ class FeatureDataset:
                 .take(
                     list(locators),
                     columns=[*METADATA_COLUMNS, "codec_codes", "text_ids"]
-                    + (["speaker_embedding"] if self.use_speaker_embedding else []),
+                    + (["speaker_embedding"] if self.use_speaker_embedding else [])
+                    + (REFERENCE_COLUMNS if is_reference(binding) else []),
                 )
                 .to_pylist()
             )
@@ -255,6 +269,8 @@ class FeatureDataset:
         )
         if "merged" in binding:
             keys = tuple(k for k in keys if k != "end_frame")
+        if is_reference(binding):
+            keys = tuple(k for k in keys if k != "start_frame")
         if any(c[k] != s[k] for k in keys) or c["status"] != "ok" or s["status"] != "ok":
             raise ValueError("Cached speaker locator has the wrong identity/interval")
         if (
@@ -286,4 +302,6 @@ class FeatureDataset:
             if vector.ndim != 1 or not torch.isfinite(vector).all() or vector.norm() == 0:
                 raise ValueError("Invalid cached speaker embedding")
             sample["speaker_embedding"] = vector
+        if self.mask_reference:
+            sample["reference_interval"] = validate_reference(c)
         return sample

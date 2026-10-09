@@ -25,7 +25,15 @@ from qwen3_train.models.assembly import save_model
 from qwen3_train.models.qwen import make_config
 
 
-def prepare(root, precision, num_rows=8, *, train_text_frontend=False, use_speaker_embedding=True):
+def prepare(
+    root,
+    precision,
+    num_rows=8,
+    *,
+    train_text_frontend=False,
+    use_speaker_embedding=True,
+    reference_masking=False,
+):
     root.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(2)
     torch.manual_seed(123)
@@ -123,6 +131,27 @@ def prepare(root, precision, num_rows=8, *, train_text_frontend=False, use_speak
         )
     if not use_speaker_embedding:
         experiment["model"]["use_speaker_embedding"] = False
+    if reference_masking:
+        from test_reference_training import reference_fixture
+
+        build, _, _ = reference_fixture(
+            root / "reference-case",
+            speaker_profile=profile,
+            tokenizer_info=tokenizer_identity(assembled),
+            tokenizer=tokenizer,
+        )
+        experiment["data"] = {
+            "build": str(build / "train/manifest.json"),
+            "val_build": str(build / "validation/manifest.json"),
+            "evaluation": "train_isolated",
+        }
+        experiment["train"].update(
+            mask_reference=True,
+            max_batch_frames=64,
+            max_batch_tokens=128,
+            eval_every=2,
+            keep_checkpoints=None,
+        )
     for name in ("continuous", "resumed"):
         experiment["train"]["runs_root"] = str(root)
         experiment["train"]["run_name"] = name
@@ -204,10 +233,17 @@ def main():
     parser.add_argument("--world-size", type=int, default=2)
     parser.add_argument("--train-text-frontend", action="store_true")
     parser.add_argument("--no-speaker-embedding", action="store_true")
+    parser.add_argument("--reference-masking", action="store_true")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare-only", action="store_true")
     mode.add_argument("--compare-only", action="store_true")
     args = parser.parse_args()
+    if args.reference_masking and (
+        args.rows != 8 or args.world_size > 5 or args.no_speaker_embedding
+    ):
+        parser.error(
+            "reference masking requires 8 fixture rows, at most 5 ranks and speaker conditioning"
+        )
     if (
         not 8 <= args.rows <= 128
         or args.world_size < 1
@@ -224,6 +260,7 @@ def main():
         args.rows,
         train_text_frontend=args.train_text_frontend,
         use_speaker_embedding=not args.no_speaker_embedding,
+        reference_masking=args.reference_masking,
     )
     if args.prepare_only:
         print(json.dumps({"prepared": str(root), "rows": args.rows}))

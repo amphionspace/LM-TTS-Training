@@ -26,9 +26,16 @@ def tts_loss(predictions, batch, eos, reduction="token"):
             for group, logits in enumerate(predictions["residual_logits"])
         ]
     )
+    supervised = batch.get("supervised_frame_lengths", lengths)
+    if "codec_loss_mask" in batch:
+        mask = batch["codec_loss_mask"]
+        first_mask = torch.ones_like(labels, dtype=torch.bool)
+        first_mask[valid] = mask  # EOS remains supervised for every utterance.
+        first_losses = first_losses.masked_fill(~first_mask, 0)
+        group_losses = group_losses.masked_fill(~mask.unsqueeze(0), 0)
     exponent = LOSS_REDUCTION_EXPONENTS[reduction] - 1
-    first_weights = (lengths + 1).float().pow(exponent).repeat_interleave(lengths + 1)
-    residual_weights = (lengths * groups).float().pow(exponent).repeat_interleave(lengths)
+    first_weights = (supervised + 1).float().pow(exponent).repeat_interleave(lengths + 1)
+    residual_weights = (supervised * groups).float().pow(exponent).repeat_interleave(lengths)
     group_sums = group_losses.sum(dim=1)
     return {
         "first_sum": first_losses.sum(),
@@ -36,6 +43,6 @@ def tts_loss(predictions, batch, eos, reduction="token"):
         "first_reduced_sum": (first_losses * first_weights).sum(),
         "residual_reduced_sum": (group_losses.sum(dim=0) * residual_weights).sum(),
         "group_sums": group_sums.detach(),
-        "first_count": codes.new_tensor(len(labels)),
-        "frame_count": codes.new_tensor(len(codes)),
+        "first_count": (supervised + 1).sum(),
+        "frame_count": supervised.sum(),
     }

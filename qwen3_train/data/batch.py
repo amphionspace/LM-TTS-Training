@@ -17,6 +17,17 @@ def collate(rows):
         text_lengths=text_lengths,
         frame_lengths=torch.tensor([len(r["codes"]) for r in rows]),
     )
+    if any("reference_interval" in row for row in rows):
+        masks = []
+        for row in rows:
+            a, b = row["reference_interval"]
+            if not 0 <= a < b <= len(row["codes"]) or b - a == len(row["codes"]):
+                raise ValueError("Reference must leave supervised codec frames")
+            mask = torch.ones(len(row["codes"]), dtype=torch.bool)
+            mask[a:b] = False
+            masks.append(mask)
+        batch["codec_loss_mask"] = torch.cat(masks)
+        batch["supervised_frame_lengths"] = torch.tensor([int(m.sum()) for m in masks])
     if "speaker_mels" in rows[0]:
         batch["speaker_lengths"] = torch.tensor([len(r["speaker_mels"]) for r in rows])
         batch["speaker_mels"] = torch.cat([r["speaker_mels"] for r in rows])

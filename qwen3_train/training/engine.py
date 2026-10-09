@@ -77,6 +77,7 @@ def run(config, resume=None, eval_only=False):
             specials,
             verify_integrity=rank == 0,
             use_speaker_embedding=use_speaker,
+            mask_reference=settings.get("mask_reference", False),
         )
         if rank == 0:
             train_data.validate_budgets(settings["max_batch_frames"], settings["max_batch_tokens"])
@@ -87,6 +88,7 @@ def run(config, resume=None, eval_only=False):
                 specials,
                 verify_integrity=rank == 0,
                 use_speaker_embedding=use_speaker,
+                mask_reference=settings.get("mask_reference", False),
             )
             if config["data"].get("val_build")
             else None
@@ -212,6 +214,7 @@ def run(config, resume=None, eval_only=False):
                         "attention": backend,
                         "predictor_attention": model.config.code_predictor_config._attn_implementation,
                         "use_speaker_embedding": use_speaker,
+                        "mask_reference": settings.get("mask_reference", False),
                         "train_samples": len(train_data),
                         "progress": progress,
                     }
@@ -306,13 +309,24 @@ def run(config, resume=None, eval_only=False):
                 break
             prepare_seconds = time.perf_counter() - started
             denominators = sum(
-                loss_normalizers(b["frame_lengths"], settings["loss_reduction"]) for b in batches
+                loss_normalizers(
+                    b.get("supervised_frame_lengths", b["frame_lengths"]),
+                    settings["loss_reduction"],
+                )
+                for b in batches
             ).to(device)
             dist.all_reduce(denominators)
             counts = torch.tensor(
                 [
-                    sum(b["frame_lengths"].sum().item() + len(b["frame_lengths"]) for b in batches),
-                    sum(b["frame_lengths"].sum().item() * 15 for b in batches),
+                    sum(
+                        b.get("supervised_frame_lengths", b["frame_lengths"]).sum().item()
+                        + len(b["frame_lengths"])
+                        for b in batches
+                    ),
+                    sum(
+                        b.get("supervised_frame_lengths", b["frame_lengths"]).sum().item() * 15
+                        for b in batches
+                    ),
                     sum(len(b["frame_lengths"]) for b in batches),
                     sum(b["audio_seconds"].sum().item() for b in batches),
                     skipped_since_log,

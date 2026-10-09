@@ -154,6 +154,7 @@ def create_build(recipe_path, output, *, paths=None):
             "workers",
             "validation_fraction",
             "split_seed",
+            "reuse_build",
         ),
     )
     root = Path(recipe["root"]).resolve()
@@ -170,6 +171,10 @@ def create_build(recipe_path, output, *, paths=None):
             "Use an independently isolated evaluation build; this selection has no holdout"
         )
     tokenizer_info = tokenizer_identity(recipe["tokenizer"])
+    if recipe.get("reuse_build"):
+        from .reference_build import create_reference_build
+
+        return create_reference_build(recipe, output, tokenizer_info, selection_hash)
     tokenizer = AutoTokenizer.from_pretrained(
         tokenizer_info["path"], fix_mistral_regex=False, local_files_only=True
     )

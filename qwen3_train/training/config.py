@@ -16,6 +16,10 @@ def load_config(path):
     model, data, train = (config[k] for k in ("model", "data", "train"))
     if type(model.get("use_speaker_embedding", True)) is not bool:
         raise ValueError("model.use_speaker_embedding must be a boolean")
+    if type(train.get("mask_reference", False)) is not bool:
+        raise ValueError("train.mask_reference must be a boolean")
+    if train.get("mask_reference", False) and not model.get("use_speaker_embedding", True):
+        raise ValueError("Reference masking requires speaker conditioning")
     if "run_name" in train or "runs_root" in train:
         name = train.get("run_name")
         if (
