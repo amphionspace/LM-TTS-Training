@@ -70,3 +70,9 @@ CONFIG=configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32
 后台会话为 `seedtts-all16-textbase-s25000-sequence`。具体命令保存在 greedy 结果目录的 `run-sequence.sh`；`sequence-stage.txt` 记录当前阶段，各组 `pipeline_status.json` 记录运行状态，完成后读取 `full/summary.json` 与 `full/audit.json`。若中断，确认该会话和其评测进程均已退出后，可在 UltraEval-Audio 根目录重跑同一脚本，复用已完成音频与评分。
 
 本次是独立的 textbase 实验，不写入 frozen-conditioning 的训练与评测报告。当前已启动，尚无全量成绩；不能用启动验证或少量样本代替完整结果。
+
+### 接续 step 17,500
+
+在同一 textbase run 上追加 `checkpoints/step-00017500`，约 **1.107 epoch**。顺序固定为 **25,000 greedy → 25,000 采样 → 17,500 greedy → 17,500 采样**；只有前序两组完整评分并通过审计后，才会启动 17,500。前序失败则停止接续，避免失败后继续消耗资源。
+
+17,500 沿用上述全部评测设置，独立导出到 `UltraEval-Audio/init_model/all16-textbase-step-00017500`。结果目录为 `res/all16-textbase-step17500-seedtts-{greedy,sampling}-20261009-8gpu`；调度日志为 `log/seed-tts-textbase-step17500-sequence.log`，后台会话为 `seedtts-all16-textbase-s17500-sequence`。接续脚本和阶段文件同样保存在该组 greedy 目录。此处的 17,500 属于可训练文本前端实验，与此前 frozen-conditioning 的同一步数评测分别保存。
