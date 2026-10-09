@@ -21,9 +21,16 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--precision", choices=["bf16", "fp32"], default="bf16")
     parser.add_argument("--model-family", choices=["qwen", "lfm"], default="qwen")
+    parser.add_argument("--lfm-text-frontend", choices=["native", "qwen-mlp"], default="native")
     args = parser.parse_args()
     root = args.output.resolve()
-    prepare(root, args.precision, 16, model_family=args.model_family)
+    prepare(
+        root,
+        args.precision,
+        16,
+        model_family=args.model_family,
+        lfm_text_frontend=args.lfm_text_frontend,
+    )
     manifest_path = root / "build/manifest.json"
     manifest = json.loads(manifest_path.read_text())
     binding = manifest["bindings"][0]
@@ -181,6 +188,7 @@ if __name__ == "__main__":
     report = {
         "status": "passed",
         "model_family": args.model_family,
+        "lfm_text_frontend": args.lfm_text_frontend if args.model_family == "lfm" else None,
         "validation_failure_retried_without_repeated_update": True,
         "export_reload_verified": True,
         "precision": args.precision,

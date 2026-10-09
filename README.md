@@ -1,6 +1,6 @@
 # LM-TTS-Training
 
-非流式 TTS 训练框架，支持 Qwen3 和 LFM2 主干，读取 `tts-data-pipeline` 发布的 unified Lance features。默认 Qwen 实验冻结 text frontend 和 speaker encoder；LFM pure codec 实验训练原生文本 embedding 和主干，不使用 speaker embedding。支持 FSDP2 多机多卡、BF16 / FP32、断点恢复，以及独立的生成音频评分。
+非流式 TTS 训练框架，支持 Qwen3 和 LFM2 主干，读取 `tts-data-pipeline` 发布的 unified Lance features。默认 Qwen 实验冻结 text frontend 和 speaker encoder；LFM pure codec 实验训练由原生权重初始化的文本 embedding 和主干，不使用 speaker embedding。支持 FSDP2 多机多卡、BF16 / FP32、断点恢复，以及独立的生成音频评分。
 
 日常流程：**修改实验配置 → 准备模型 → 构建数据索引 → 本地或 ACP 训练 → 查看日志与评分**。下面的命令均在仓库根目录执行。
 
@@ -80,6 +80,8 @@ $PY -m scripts.prepare_models --config "$CFG"
 ### 可训练文本前端实验
 
 LFM 使用同一准备入口：`$PY -m scripts.prepare_models --config configs/lfm2.5-230m-pure-codec.yaml`。配置中的 `assembly.family: lfm2` 选择本地 LFM 来源；不填写时沿用 Qwen 组装。已有产物会校验来源、配方和文件哈希，类型不匹配时在复制或组装前报错。需要自定义来源路径时，也可使用 `$PY -m scripts.assemble_lfm_tts --help`。LFM tokenizer 不同，必须重新构建文本 token；详见 [LFM pure codec 说明](docs/design/lfm-pure-codec.md)。
+
+需要与 Qwen3-TTS 0.6B 相同的 **2048 维文本 embedding + 两层 SiLU projector** 时，改用 `configs/lfm2.5-230m-text2048-pure-codec.yaml` 执行上述准备命令。它从 LFM 权重做保留初始表示的扩展，生成独立的 `assets/assembled/lfm2.5-230m-base-text2048-pure-codec/`；两版 tokenizer 相同，可共用 LFM 数据 build。配置与初始化细节见 [2048 维变体](docs/design/lfm-pure-codec.md#2048-维文本前端变体)。
 
 `configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml` 使用文本 Base 的 embedding、新 TTS token 行和随机 text projector，文本端参与训练。该 YAML 的 `assembly` 区块用于离线准备，`train` / `acp` 区块用于训练和提交：
 
@@ -293,7 +295,7 @@ $PY -m scripts.evaluate --config configs/evaluation.yaml --pairs "$RUN/generated
 | 数据构建、读取、动态组批 | `lm_tts/data/` |
 | 离线初始化、模型来源与组装校验 | `lm_tts/models/assembly/`（common / qwen / lfm / preparation） |
 | Qwen 适配器 | `lm_tts/models/qwen.py` |
-| LFM 适配器、packed 主干与配置 | `lm_tts/models/lfm/`（model / backbone / configuration） |
+| LFM 适配器、packed 主干与配置 | `lm_tts/models/lfm/`（model / backbone / configuration / frontend） |
 | 共用输入协议、预测接口与产物加载 | `lm_tts/models/protocol.py`、`codec.py`、`loading.py` |
 | Loss | `lm_tts/objectives/` |
 | 分布式更新、保存恢复与 eval 调度 | `lm_tts/training/` |

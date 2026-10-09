@@ -14,7 +14,7 @@ from lm_tts.objectives.tts import tts_loss
 from lm_tts.training.optimizer import parameter_groups
 
 
-def tiny_config():
+def tiny_config(text_frontend="native"):
     config = make_config(tiny=True)
     base = Lfm2Config(
         hidden_size=64,
@@ -36,6 +36,9 @@ def tiny_config():
     config.codec_nothink_id = 21
     config.codec_think_bos_id = 22
     config.codec_think_eos_id = 23
+    if text_frontend == "qwen-mlp":
+        config.text_hidden_size = 2 * config.hidden_size
+        config.lm_tts_text_projection = "mlp"
     return config
 
 
@@ -118,7 +121,7 @@ def test_checkpointing_and_state_roundtrip(model):
     expected = objective(model, collate(rows()))
     expected.backward()
     grads = {n: p.grad.clone() for n, p in model.named_parameters()}
-    other = LfmTTSModel(tiny_config()).train()
+    other = LfmTTSModel(copy.deepcopy(model.config)).train()
     other.load_state_dict(model.state_dict(), strict=True)
     for module in (other.talker.model, other.talker.code_predictor.model):
         module.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
@@ -142,7 +145,8 @@ def test_pretrained_lr_and_no_duplicate_embedding(model):
 
 
 @pytest.mark.parametrize("capacity", [8, 16])
-def test_offline_assembly_preserves_vocab_and_reloads(tmp_path, capacity):
+@pytest.mark.parametrize("text_frontend", ["native", "qwen-mlp"])
+def test_offline_assembly_preserves_vocab_and_reloads(tmp_path, capacity, text_frontend):
     from safetensors.torch import save_file
     from tokenizers import Tokenizer
     from tokenizers.models import WordLevel
@@ -197,9 +201,11 @@ def test_offline_assembly_preserves_vocab_and_reloads(tmp_path, capacity):
     (codec / "config.json").write_text("{}")
     save_file({"fixture": torch.ones(1)}, codec / "model.safetensors")
     output = tmp_path / "assembled"
-    report = assemble(backbone, template, codec, output, dtype=torch.bfloat16)
+    report = assemble(
+        backbone, template, codec, output, dtype=torch.bfloat16, text_frontend=text_frontend
+    )
     loaded = load_model(output, attn_implementation="sdpa")
-    actual = loaded.talker.model.embed_tokens.weight[: len(vocab)]
+    actual = loaded.talker.model.embed_tokens.weight[: len(vocab), : base_config.hidden_size]
     torch.testing.assert_close(
         actual, source.model.embed_tokens.weight[: len(vocab)].bfloat16().float(), rtol=0, atol=0
     )
@@ -207,6 +213,17 @@ def test_offline_assembly_preserves_vocab_and_reloads(tmp_path, capacity):
     assert all(reloaded_tokenizer.get_vocab()[s] == i for s, i in vocab.items())
     assert loaded.config.text_vocab_size == max(capacity, len(vocab) + 3)
     assert report["verification"]["exact_reload"]
+    assert report["text_frontend"] == text_frontend
+    if text_frontend == "qwen-mlp":
+        weights = loaded.talker.model.embed_tokens.weight
+        torch.testing.assert_close(
+            weights[:, base_config.hidden_size :],
+            -weights[:, : base_config.hidden_size],
+            atol=0,
+            rtol=0,
+        )
+        projected = loaded.talker.text_projection(weights[: len(vocab)])
+        torch.testing.assert_close(projected, actual, atol=1e-6, rtol=1e-5)
     with pytest.raises(ValueError, match="pure codec"):
         config = tiny_config()
         config.lm_tts_use_speaker_embedding = True

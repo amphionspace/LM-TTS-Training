@@ -15,7 +15,9 @@ from ..lfm.configuration import LfmTTSConfig
 from .common import TEXT_SPECIALS, copy_codec, load_prefix
 
 
-def prepare_config(backbone, template):
+def prepare_config(backbone, template, text_frontend="native"):
+    if text_frontend not in {"native", "qwen-mlp"}:
+        raise ValueError("text_frontend must be native or qwen-mlp")
     backbone, template = Path(backbone), Path(template)
     base = AutoConfig.from_pretrained(backbone, local_files_only=True)
     raw = json.loads((template / "config.json").read_text())
@@ -47,11 +49,10 @@ def prepare_config(backbone, template):
     # LFM config is authoritative for the hybrid backbone's heads, FFN and norms.
     talker = raw["talker_config"]
     talker.update(
-        text_hidden_size=base.hidden_size,
+        text_hidden_size=base.hidden_size * (2 if text_frontend == "qwen-mlp" else 1),
         text_vocab_size=rows,
-        num_hidden_layers=base.num_hidden_layers,
         lm_tts_lfm_config=base.to_dict(),
-        lm_tts_text_projection="identity",
+        lm_tts_text_projection="mlp" if text_frontend == "qwen-mlp" else "identity",
         lm_tts_input_protocol="qwen3_non_streaming",
         lm_tts_use_speaker_embedding=False,
         lm_tts_freeze_text_frontend=False,
@@ -71,11 +72,15 @@ def prepare_config(backbone, template):
     return config, artifact, tokenizer, added, len(source_vocab)
 
 
-def assemble(backbone, template, codec, output, seed=42, dtype=torch.float32):
+def assemble(
+    backbone, template, codec, output, seed=42, dtype=torch.float32, *, text_frontend="native"
+):
     output = Path(output).resolve()
     if output.exists():
         raise ValueError(f"Output already exists: {output}")
-    config, artifact, tokenizer, added, source_tokens = prepare_config(backbone, template)
+    config, artifact, tokenizer, added, source_tokens = prepare_config(
+        backbone, template, text_frontend
+    )
     torch.manual_seed(seed)
     model = LfmTTSModel(config)
     source = load_prefix(backbone, "model.")
@@ -87,10 +92,15 @@ def assemble(backbone, template, codec, output, seed=42, dtype=torch.float32):
         raise ValueError(f"Unexpected backbone weights: {incompatible.unexpected_keys}")
     with torch.no_grad():
         target = model.talker.model.embed_tokens.weight
-        target[: len(original_embedding)].copy_(original_embedding)
+        native = target[:, : config.hidden_size]
+        native[: len(original_embedding)].copy_(original_embedding)
         fresh_ids = torch.tensor(sorted(added.values()), dtype=torch.long)
-        fresh = torch.empty(len(fresh_ids), target.shape[1]).normal_(std=config.initializer_range)
-        target[fresh_ids] = fresh
+        fresh = torch.empty(len(fresh_ids), config.hidden_size).normal_(
+            std=config.initializer_range
+        )
+        native[fresh_ids] = fresh
+        if text_frontend == "qwen-mlp":
+            target[:, config.hidden_size :].copy_(-native)
     model.to(dtype=dtype)
     # Check every reused tensor, not just a few representative layers.
     reused = model.talker.model.state_dict()
@@ -100,8 +110,26 @@ def assemble(backbone, template, codec, output, seed=42, dtype=torch.float32):
     shared = torch.ones(len(original_embedding), dtype=torch.bool)
     shared[fresh_ids[fresh_ids < len(shared)]] = False
     target = model.talker.model.embed_tokens.weight
-    if not torch.equal(target[: len(shared)][shared], original_embedding[shared].to(dtype)):
+    if not torch.equal(
+        target[: len(shared), : config.hidden_size][shared], original_embedding[shared].to(dtype)
+    ):
         raise ValueError("Pretrained text embedding rows changed")
+    if text_frontend == "qwen-mlp":
+        if not torch.equal(target[:, config.hidden_size :], -target[:, : config.hidden_size]):
+            raise ValueError("Paired text embedding initialization changed")
+    # Probe the actual computation in bounded batches; all reused rows are checked
+    # exactly above, including the negative half for the wider frontend.
+    probe_ids = torch.linspace(0, len(target) - 1, min(len(target), 256)).long()
+    with torch.no_grad():
+        projected = model.talker.text_projection(target[probe_ids])
+        expected = target[probe_ids, : config.hidden_size]
+        projection_error = (projected.float() - expected.float()).abs().max().item()
+        torch.testing.assert_close(
+            projected,
+            expected,
+            atol=1e-6 if dtype == torch.float32 else 0.01,
+            rtol=1e-5 if dtype == torch.float32 else 0.01,
+        )
     del source, original_embedding, reused
     report = {
         "format_version": 1,
@@ -109,7 +137,8 @@ def assemble(backbone, template, codec, output, seed=42, dtype=torch.float32):
         "seed": seed,
         "dtype": str(dtype).removeprefix("torch."),
         "text_initialization": "lfm-base",
-        "text_projection_init": "identity",
+        "text_frontend": text_frontend,
+        "text_projection_init": "paired-silu" if text_frontend == "qwen-mlp" else "identity",
         "freeze_text_frontend": False,
         "use_speaker_embedding": False,
         "sources": {
@@ -131,12 +160,21 @@ def assemble(backbone, template, codec, output, seed=42, dtype=torch.float32):
         },
         "loaded_modules": ["LFM layers", "LFM final norm", "LFM text embedding (shared rows)"],
         "new_modules": ["TTS token rows", "codec embedding/head", "5-layer Code Predictor"],
+        "text_frontend_verification": {
+            "probe_rows": len(probe_ids),
+            "max_projection_error": projection_error,
+            "text_hidden_size": config.text_hidden_size,
+        },
         "parameters": {
             "total": sum(p.numel() for p in model.parameters()),
             "trainable": sum(p.numel() for p in model.parameters() if p.requires_grad),
             "code_predictor": sum(p.numel() for p in model.talker.code_predictor.parameters()),
         },
     }
+    if text_frontend == "qwen-mlp":
+        report["new_modules"].append(
+            f"{config.text_hidden_size}-wide text frontend (paired embedding and SiLU MLP)"
+        )
     temporary = output.with_name(output.name + ".incomplete-" + uuid.uuid4().hex[:8])
     temporary.mkdir(parents=True)
     try:

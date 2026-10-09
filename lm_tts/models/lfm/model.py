@@ -3,8 +3,10 @@
 import json
 from pathlib import Path
 
+import torch
 from qwen_tts.core.models.modeling_qwen3_tts import (
     Qwen3TTSTalkerCodePredictorModelForConditionalGeneration,
+    Qwen3TTSTalkerResizeMLP,
 )
 from torch import nn
 from transformers import Lfm2Config
@@ -14,6 +16,7 @@ from ..assembly.common import load_prefix
 from ..codec import CodecTTSModel
 from .backbone import LfmCodecBackbone
 from .configuration import LfmTTSConfig
+from .frontend import initialize_paired_frontend
 
 
 class LfmTalker(nn.Module):
@@ -28,6 +31,22 @@ class LfmTalker(nn.Module):
         self.code_predictor = Qwen3TTSTalkerCodePredictorModelForConditionalGeneration(
             config.code_predictor_config, config
         )
+        if config.lm_tts_text_projection == "mlp":
+            native = self.model.embed_tokens
+            # Keep audio-module and new-token RNG streams identical to the native
+            # recipe, so frontend ablations start from the same remaining weights.
+            with torch.random.fork_rng(devices=[]):
+                self.model.embed_tokens = nn.Embedding(
+                    config.text_vocab_size, config.text_hidden_size
+                )
+                self.text_projection = Qwen3TTSTalkerResizeMLP(
+                    config.text_hidden_size,
+                    config.text_hidden_size,
+                    config.hidden_size,
+                    "silu",
+                    bias=True,
+                )
+            initialize_paired_frontend(self.model.embed_tokens, self.text_projection, native.weight)
 
 
 class LfmTTSModel(CodecTTSModel):
@@ -46,17 +65,20 @@ class LfmTTSModel(CodecTTSModel):
             config.code_predictor_config._attn_implementation = "sdpa"
         if getattr(config, "lm_tts_use_speaker_embedding", False):
             raise ValueError("LFM assembly supports pure codec conditioning only")
-        if config.lm_tts_freeze_text_frontend or config.lm_tts_text_projection != "identity":
-            raise ValueError(
-                "LFM requires a trainable native text embedding and identity projection"
-            )
+        if config.lm_tts_freeze_text_frontend:
+            raise ValueError("LFM requires a trainable text frontend")
+        if config.lm_tts_text_projection not in {"identity", "mlp"}:
+            raise ValueError("LFM text projection must be identity or mlp")
         if (
             config.hidden_size != config.lm_tts_lfm_config["hidden_size"]
             or config.text_vocab_size != config.lm_tts_lfm_config["vocab_size"]
         ):
             raise ValueError("LFM text dimensions disagree with the native backbone config")
-        if config.hidden_size != config.text_hidden_size:
-            raise ValueError("LFM text embeddings must match the Talker width")
+        multiplier = 2 if config.lm_tts_text_projection == "mlp" else 1
+        if config.text_hidden_size != multiplier * config.hidden_size:
+            raise ValueError(
+                "LFM text width must be native for identity or doubled for the SiLU MLP"
+            )
         self.config = config
         self.talker = LfmTalker(config)
         self.speaker_encoder = None

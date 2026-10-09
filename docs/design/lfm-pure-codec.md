@@ -1,6 +1,6 @@
 # LFM Base 的 pure codec 组装
 
-本方案使用本地 `assets/base/LFM2.5-230M-Base` 的 tokenizer、文本 embedding 和完整主干，保留 Qwen 12Hz 的 16 码本协议与 5 层 Code Predictor。Pure codec 指保留文本和 codec、关闭 speaker embedding；指定音色需要参考 codec 条件。
+默认 `native` 配方使用本地 `assets/base/LFM2.5-230M-Base` 的 tokenizer、文本 embedding 和完整主干，保留 Qwen 12Hz 的 16 码本协议与 5 层 Code Predictor。Pure codec 指保留文本和 codec、关闭 speaker embedding；指定音色需要参考 codec 条件。
 
 ## 初始化和更新范围
 
@@ -15,6 +15,41 @@
 | Codec encoder/decoder | Qwen3-TTS-Tokenizer-12Hz，独立存放 | 否 |
 
 组装模型约 378M 参数，不含独立 codec。没有复用 LFM 的文本输出 head；文本 embedding 直接作为输入，与音频输出 head 不绑定。残差 embedding 仍同时用于 Talker 的帧输入求和与 Predictor 的 teacher forcing。
+
+## 2048 维文本前端变体
+
+`qwen-mlp` 配方保留 LFM tokenizer、主干和音频模块，文本前端对齐 Qwen3-TTS 0.6B 的结构：
+
+```text
+65536 × 2048 embedding
+  → Linear(2048, 2048, bias=True)
+  → SiLU
+  → Linear(2048, 1024, bias=True)
+  → LFM 主干
+```
+
+初始化仍来自 LFM。将原 embedding `e` 扩成 `[e, -e]`，第一层权重设为单位矩阵，第二层设为 `[I, -I]`，两个 bias 均为 0。因为 `SiLU(e) - SiLU(-e) = e`，初始投影在数学上保留原始表示；浮点计算允许舍入误差。两半 embedding 是独立可训练参数，projector 也全部参与训练，训练后不约束它们维持上述关系。新增 TTS token 先在 1024 维空间随机初始化，再做同样的扩展。
+
+该变体不复制 Qwen 的文本权重。音频模块保持原配方的随机数序列，同 seed 下初始权重一致。总参数 **450,958,336**，其中 projector 为 **6,294,528**；默认 embedding 和主干使用 `backbone_lr`，projector 和音频模块使用 `lr`。
+
+使用独立配置准备：
+
+```bash
+PY=/workspace/workspace/yanglin/envs/lm-tts/bin/python
+$PY -m scripts.prepare_models --config configs/lfm2.5-230m-text2048-pure-codec.yaml
+# 或直接指定组装配方；默认输出目录会按配方区分。
+$PY -m scripts.assemble_lfm_tts --text-frontend qwen-mlp
+```
+
+新产物为 `assets/assembled/lfm2.5-230m-base-text2048-pure-codec/`。配置中的 `assembly.text_frontend: qwen-mlp` 选择这个变体；缺省 `native` 保留原 1024 维版本。准备入口拒绝复用不同前端的已有产物。
+
+两版 tokenizer、特殊 token 和输入协议相同，可以复用已完成的 **LFM** 数据 build；不能复用 Qwen text IDs。新配置使用独立 run 名并保留全部 checkpoint。前端参数形状不同，不能直接 resume 原 1024 维实验；旧组装产物和运行任务保持不变。
+
+2048 维变体已完成本地组装，119 项完整回归通过（含两版 FA2 packed 检查）。组装对 256 行执行实际 FP32 投影，最大误差 **7.45e-9**；完整权重保存后重载逐张相等。与已有 native 产物比较，**219 张非文本权重逐张相等**，全部 embedding 行的前半部与旧版一致，后半部为其相反数；tokenizer 与旧 LFM build 兼容。完整 451M 产物通过双卡 BF16/FSDP2 更新及恢复验证，恢复后权重最大差 **0**，本次小 batch 单卡峰值显存 **4.24 GiB**；该显存数值不代表正式训练预算。
+
+组装校验在产物的 `assembly_report.json`；跨版本权重比较记录在 `artifacts/lfm-text2048-audit-20261009/result.json`，完整模型双卡验证在 `artifacts/lfm-text2048-real-20261009/validation-rank-*.json`。新前端还通过实际 engine 的双卡 3 epoch WSD 验证：动态 batching、坏样本跳过、eval 故障恢复及 worker/prefetch 变化后，逐步 loss/LR/样本数与连续训练一致，最终权重最大差 **0**；导出重载和 codec 生成通过。记录在 `artifacts/lfm-text2048-epoch-20261009/result.json`，可用 `tests/check_epoch_resume.py --model-family lfm --lfm-text-frontend qwen-mlp --output <新目录>` 复现。
+
+本次只准备模型和配置，未提交正式训练。
 
 ## 组装和加载
 
@@ -61,7 +96,7 @@ $PY -m scripts.build_unified --config configs/lfm2.5-230m-pure-codec.yaml
 
 本次模型接入不执行全量数据构建或提交训练。旧 Qwen 的 checkpoint、组装目录与 submission 代码快照均保持原样；包名调整为 `lm_tts`，旧 submission 快照保留原包名及启动命令。
 
-## 本次验证（2026-10-09）
+## Native 配方验证（2026-10-09）
 
 - 组装参数总数 **377,554,944**，其中 Code Predictor 为 **141,570,304**；组装模型内全部参数参与训练，独立 codec 不计入其中。
 - 原生 LFM 与适配主干的 FP32 输出、梯度一致；packed 与逐样本 loss/梯度一致，跨样本和未来音频隔离通过。

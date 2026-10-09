@@ -18,15 +18,17 @@ def assembly_recipe(config):
         raise ValueError("assembly must be a mapping")
     family = overrides.get("family", "qwen3")
     if family == "lfm2":
-        recipe = {"family": "lfm2", "seed": 42, "dtype": "float32"}
+        recipe = {"family": "lfm2", "seed": 42, "dtype": "float32", "text_frontend": "native"}
         overrides = config["assembly"]
         if set(overrides) - set(recipe):
-            raise ValueError("LFM assembly only accepts family, seed and dtype")
+            raise ValueError("LFM assembly only accepts family, seed, dtype and text_frontend")
         recipe.update(overrides)
         if type(recipe["seed"]) is not int or recipe["seed"] < 0:
             raise ValueError("assembly.seed must be a nonnegative integer")
         if recipe["dtype"] not in {"float32", "bfloat16"}:
             raise ValueError("Invalid assembly dtype")
+        if recipe["text_frontend"] not in {"native", "qwen-mlp"}:
+            raise ValueError("LFM text_frontend must be native or qwen-mlp")
         return recipe
     if family != "qwen3":
         raise ValueError(f"Unsupported assembly family: {family}")
@@ -95,6 +97,7 @@ def prepare_lfm(config, recipe):
 
     from .lfm import assemble
 
+    torch.set_num_threads(4)
     target = Path(config["paths"]["project"]) / "assets/base"
     sources = {
         "backbone": target / "LFM2.5-230M-Base",
@@ -113,8 +116,11 @@ def prepare_lfm(config, recipe):
             assembled,
             seed=recipe["seed"],
             dtype=getattr(torch, recipe["dtype"]),
+            text_frontend=recipe["text_frontend"],
         )
     report = json.loads((assembled / "assembly_report.json").read_text())
+    if report.get("text_frontend", "native") != recipe["text_frontend"]:
+        raise ValueError(f"Assembled text frontend differs: {assembled}")
     for key, value in {
         "model_type": "lfm2_tts",
         "seed": recipe["seed"],

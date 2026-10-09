@@ -34,6 +34,7 @@ def prepare(
     use_speaker_embedding=True,
     reference_masking=False,
     model_family="qwen",
+    lfm_text_frontend="native",
 ):
     root.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(2)
@@ -63,7 +64,7 @@ def prepare(
 
         from lm_tts.models.lfm import LfmTTSModel
 
-        talker = tiny_config()
+        talker = tiny_config(lfm_text_frontend)
         model = LfmTTSModel(talker)
         assembled.mkdir()
         save_file(model.state_dict(), assembled / "model.safetensors")
