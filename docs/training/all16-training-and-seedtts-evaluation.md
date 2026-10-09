@@ -366,3 +366,31 @@ envs/tts/bin/python -u scripts/run_seed_tts.py \
 | Textbase / 17,500 / 采样 | 2026-10-09 07:18:23 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step17500-seedtts-sampling-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step17500-seedtts-sampling-20261009-8gpu/full/audit.json) |
 | Textbase / 25,000 / Greedy | 2026-10-09 03:56:09 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-greedy-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-greedy-20261009-8gpu/full/audit.json) |
 | Textbase / 25,000 / 采样 | 2026-10-09 05:00:28 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-sampling-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-sampling-20261009-8gpu/full/audit.json) |
+
+## 9. 文本维度与 projector 差异：当前结论和待验证问题
+
+**Textbase 的 1024 维与 frozen-conditioning 的 2048 维差异是真实的结构差异，不是文档笔误或维度接错。** 已直接核对本地基础模型、组装模型及 textbase step 25,000 导出权重；两种方案经过 text projector 后都输出 1024 维，与 Talker 匹配。
+
+| 项目 | Frozen-conditioning | Textbase |
+| --- | --- | --- |
+| Text embedding | TTS 0.6B：151,936 × **2,048**，冻结 | 纯文本 Qwen3 0.6B Base：151,936 × **1,024**，扩充有效 token 后参与训练 |
+| Text projector | **2,048 → 2,048 → 1,024**，继承 TTS 预训练权重，冻结 | **1,024 → 1,024 → 1,024**，随机初始化，参与训练 |
+| Projector 参数量 | 6,294,528 | 2,099,200 |
+| Talker → Code Predictor projector | **Identity**，1024 维直接传递 | **Identity**，1024 维直接传递 |
+
+两边的 **text projector 都是带 bias 的两层 Linear，中间 SiLU，没有残差连接或 LayerNorm**，计算为 `Linear₂(SiLU(Linear₁(x)))`。Textbase 的输入输出同宽，不代表它是 Identity。此前提到的 Identity 位于 **Talker → Code Predictor**；代码支持 text projector 的 Identity / near-identity 选项，但本次 `textbase-randproj` 训练没有使用它们，见[原组装设计](../design/text-base-trainable-assembly.md)。
+
+### 为什么可能影响结果
+
+Textbase 同时改变了**文本表示维度、初始化来源、projector 初始化和文本前端是否冻结**，并非只比较“冻结或解冻”。更窄的 embedding 和 projector 减少了容量；替换前端也失去了原 TTS embedding 与 projector 共同训练形成的适配。
+
+另一个值得验证的因素是随机 projector：textbase 的共享 embedding 行与 Talker layers 原本来自同一个纯文本 Base，中间插入无残差的随机非线性映射，会改变进入预训练 layers 的向量方向和尺度，可能增加重新适配的难度。Frozen-conditioning 继承的是一对预训练 TTS embedding / projector，但其 Talker layers 同样换成了纯文本 Base，因此也不能声称整个输入到主干的链路已经预训练对齐。
+
+**这些是可能原因，现有结果无法单独证明维度缩小或随机 projector 导致了性能差距。** 同为 17,500 时 textbase 的 SIM 明显更低，但采样英文 WER 更好，并非所有指标都退化。第 6 节的 speaker 条件训推差异也仍然存在，不能用文本维度解释全部问题。
+
+### 后续可做的独立对照
+
+- **检验随机映射的影响**：保留 textbase 的 embedding、数据和训练设置，只将 text projector 换为 Identity，或保留 MLP 结构并改用 near-identity 初始化。前者同时去掉了 projector 参数，后者更适合对照初始化方式；两者均不能直接证明维度效应。
+- **检验开放文本前端训练的影响**：保留原 TTS 的 2048 维 embedding 和预训练 projector，仅开放这两者训练，并明确记录文本参数组的 LR。
+
+若要隔离维度本身，还需要控制初始化来源、训练范围和映射方式；直接给 1024 维补零或增加升维层，不等于恢复了原 TTS 的 2048 维表示。以上仅记录后续对照建议，本次未修改现有模型、训练或评测结果。
