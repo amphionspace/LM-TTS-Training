@@ -12,7 +12,7 @@ from safetensors.torch import save_file
 from transformers import Qwen3Config, Qwen3Model
 
 from lm_tts.artifacts import file_hash
-from lm_tts.models.assembly import initialize_model, save_model, vocabulary_plan
+from lm_tts.models.assembly.qwen import initialize_model, save_model, vocabulary_plan
 from lm_tts.models.qwen import TTSModel, make_config
 
 

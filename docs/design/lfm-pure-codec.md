@@ -22,10 +22,10 @@
 
 ```bash
 PY=/workspace/workspace/yanglin/envs/lm-tts/bin/python
-$PY -m scripts.assemble_lfm_tts
+$PY -m scripts.prepare_models --config configs/lfm2.5-230m-pure-codec.yaml
 ```
 
-默认输出 `assets/assembled/lfm2.5-230m-base-pure-codec/`。可通过 `--backbone`、`--tts-template`、`--codec`、`--output` 覆盖路径，已有输出不会被覆盖。默认 FP32 保存，BF16 由训练精度配置控制；LFM 来源权重本身为 BF16。组装器逐张核对预训练权重、特殊 token 行和保存后的完整重载，完成后才发布目录及 `ASSEMBLY_COMPLETE`。
+默认输出 `assets/assembled/lfm2.5-230m-base-pure-codec/`。若需自定义来源，使用 `scripts.assemble_lfm_tts` 的 `--backbone`、`--tts-template`、`--codec`、`--output` 覆盖路径，已有输出不会被覆盖。默认 FP32 保存，BF16 由训练精度配置控制；LFM 来源权重本身为 BF16。组装器逐张核对预训练权重、特殊 token 行和保存后的完整重载，完成后才发布目录及 `ASSEMBLY_COMPLETE`。
 
 产物包含模型权重、配置、可由当前 AutoTokenizer 加载的 tokenizer、独立 `speech_tokenizer/` 和记录来源哈希的 `assembly_report.json`。这是本仓库的 `lfm2_tts` 格式，不是官方 Qwen3-TTS 模型格式：
 
@@ -39,7 +39,9 @@ model = load_model(
 )
 ```
 
-训练入口与 checkpoint 导出按组装配置选择模型；FSDP、loss、优化器和恢复流程共用。已有 `scripts/synthesize.py` 是官方 Qwen speaker-only 入口，不适用于该模型。公共 `mode="next_frame"` 支持完整前缀的 greedy codec 生成，用于正确性验证；尚未提供 LFM 缓存加速的生成服务。
+运行时代码位于 `models/lfm/`，离线组装位于 `models/assembly/lfm.py`。LFM 配置只保留实际使用的 codec 协议、Predictor 和原生 LFM 主干字段；可直接读取早期组装产物中的 Qwen 外层容器，无需重写权重或配置文件。模型架构、初始化规则及参数名称不变。
+
+训练入口与 checkpoint 导出按组装配置选择模型；FSDP、loss、优化器和恢复流程共用。`scripts/synthesize.py` 自动识别无 speaker 的导出产物，使用完整前缀生成 codec，支持 greedy 和首码本／残差采样。ICL prompts 需同时提供 `reference_audio` 与 `reference_text`，也可同时省略以验证纯文本生成。导出通过 `load_model` 重载并核对哈希；不要求 `ASSEMBLY_COMPLETE`。尚无 KV cache 加速，长音频生成不宜据此估算生产吞吐。
 
 ## Packed 正确性和精度
 

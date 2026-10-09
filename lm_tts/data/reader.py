@@ -2,6 +2,7 @@
 
 import warnings
 from collections import defaultdict
+from numbers import Integral
 from pathlib import Path
 
 import numpy as np
@@ -37,6 +38,7 @@ class FeatureDataset:
         verify_integrity=True,
         use_speaker_embedding=True,
         mask_reference=False,
+        text_vocab_size=None,
     ):
         self.path = Path(build_path).resolve()
         self.manifest = read_complete(self.path)
@@ -46,6 +48,11 @@ class FeatureDataset:
             raise ValueError("FeatureDataset requires frozen_embedding")
         self.fingerprint = file_hash(self.path)
         self.text_special_tokens = text_special_tokens
+        self.text_vocab_size = text_vocab_size
+        if text_vocab_size is not None and (
+            text_vocab_size < 1 or any(not 0 <= t < text_vocab_size for t in text_special_tokens)
+        ):
+            raise ValueError("Text special tokens must be inside the model vocabulary")
         self.use_speaker_embedding = use_speaker_embedding
         self.mask_reference = mask_reference
         self.bindings = self.manifest["bindings"]
@@ -104,6 +111,7 @@ class FeatureDataset:
             "fingerprint": self.fingerprint,
             "use_speaker_embedding": self.use_speaker_embedding,
             "mask_reference": self.mask_reference,
+            "text_vocab_size": self.text_vocab_size,
         }
 
     def __setstate__(self, state):
@@ -114,6 +122,7 @@ class FeatureDataset:
             verify_integrity=False,
             use_speaker_embedding=state["use_speaker_embedding"],
             mask_reference=state["mask_reference"],
+            text_vocab_size=state["text_vocab_size"],
         )
         if self.fingerprint != state["fingerprint"]:
             raise ValueError("Training build changed while starting workers")
@@ -259,6 +268,14 @@ class FeatureDataset:
             raise ValueError("Sampling index selected an unready row")
         if not c["text_ids"] or not isinstance(c["text"], str) or not c["text"].strip():
             raise ValueError("Empty training text")
+        if any(
+            isinstance(token, bool)
+            or not isinstance(token, Integral)
+            or token < 0
+            or (self.text_vocab_size is not None and token >= self.text_vocab_size)
+            for token in c["text_ids"]
+        ):
+            raise ValueError("Invalid text token type or vocabulary range")
         keys = (
             "target_id",
             "parent_sample_id",

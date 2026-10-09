@@ -6,7 +6,7 @@ from pathlib import Path
 
 import torch
 
-from lm_tts.models.lfm_assembly import assemble
+from lm_tts.models.assembly.lfm import assemble
 
 
 def main():

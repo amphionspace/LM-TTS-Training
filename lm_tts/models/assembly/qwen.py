@@ -3,14 +3,14 @@
 import copy
 import gc
 import json
-import shutil
 from pathlib import Path
 
 import torch
 from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
-from safetensors import safe_open
 from transformers import AutoConfig, AutoModel, AutoTokenizer
+
+from .common import TEXT_SPECIALS, load_prefix
 
 BACKBONE_FIELDS = (
     "hidden_size",
@@ -26,13 +26,6 @@ BACKBONE_FIELDS = (
     "attention_dropout",
     "sliding_window",
 )
-TEXT_SPECIALS = {
-    "tts_pad_token_id": "<tts_pad>",
-    "tts_bos_token_id": "<tts_text_bos>",
-    "tts_eos_token_id": "<tts_text_eod>",
-    "im_start_token_id": "<|im_start|>",
-    "im_end_token_id": "<|im_end|>",
-}
 
 
 def vocabulary_plan(source_vocab, target_vocab, embedding_rows):
@@ -169,28 +162,6 @@ def audit_sources(
     return config, target_tokenizer, report
 
 
-def load_prefix(directory, prefix):
-    directory = Path(directory)
-    index_path = directory / "model.safetensors.index.json"
-    if index_path.exists():
-        index = json.loads(index_path.read_text())["weight_map"]
-        filenames = sorted({name for key, name in index.items() if key.startswith(prefix)})
-    else:
-        filenames = [p.name for p in sorted(directory.glob("model*.safetensors"))]
-    values = {}
-    for name in filenames:
-        with safe_open(directory / name, framework="pt", device="cpu") as f:
-            for key in f.keys():
-                if key.startswith(prefix):
-                    short = key[len(prefix) :]
-                    if short in values:
-                        raise ValueError(f"Duplicate checkpoint tensor: {key}")
-                    values[short] = f.get_tensor(key)
-    if not values:
-        raise ValueError(f"No {prefix} weights found in {directory}")
-    return values
-
-
 def initialize_model(
     config,
     backbone,
@@ -274,15 +245,6 @@ def initialize_model(
     return model
 
 
-def copy_codec(source, destination):
-    source, destination = Path(source), Path(destination)
-    if not (source / "config.json").exists() or not list(source.glob("*.safetensors")):
-        raise ValueError("Codec directory needs config.json and safetensors weights")
-    shutil.copytree(
-        source, destination, ignore=shutil.ignore_patterns(".cache", ".git", ".ipynb_checkpoints")
-    )
-
-
 def save_model(model, directory):
     model.save_pretrained(directory, safe_serialization=True, max_shard_size="2GB")
     path = Path(directory) / "config.json"
@@ -300,7 +262,7 @@ def validate_saved(directory, dtype=torch.bfloat16):
     if getattr(config.talker_config, "lm_tts_text_projection", "mlp") == "identity":
         from qwen_tts import Qwen3TTSTokenizer
 
-        from .qwen import TTSModel
+        from ..qwen import TTSModel
 
         config.talker_config._attn_implementation = "flash_attention_2"
         config.talker_config.code_predictor_config._attn_implementation = "flash_attention_2"

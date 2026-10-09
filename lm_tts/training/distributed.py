@@ -33,9 +33,8 @@ def initialize(seed):
 def shard(model, device, policy):
     mesh = init_device_mesh("cuda", (dist.get_world_size(),))
     model.float().to(device)
-    for blocks in [model.talker.model.layers, model.talker.code_predictor.model.layers]:
-        for block in blocks:
-            fully_shard(block, mesh=mesh, mp_policy=policy, reshard_after_forward=True)
+    for block in model.sharding_modules():
+        fully_shard(block, mesh=mesh, mp_policy=policy, reshard_after_forward=True)
     fully_shard(model, mesh=mesh, mp_policy=policy, reshard_after_forward=True)
 
 

@@ -20,9 +20,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--precision", choices=["bf16", "fp32"], default="bf16")
+    parser.add_argument("--model-family", choices=["qwen", "lfm"], default="qwen")
     args = parser.parse_args()
     root = args.output.resolve()
-    prepare(root, args.precision, 16)
+    prepare(root, args.precision, 16, model_family=args.model_family)
     manifest_path = root / "build/manifest.json"
     manifest = json.loads(manifest_path.read_text())
     binding = manifest["bindings"][0]
@@ -31,6 +32,7 @@ def main():
     )
     rows = table.to_table().to_pylist()
     rows[0]["codec_codes"][0][0] = 2048
+    rows[1]["text_ids"][0] = 256
     updated = lance.write_dataset(
         pa.Table.from_pylist(rows, schema=table.schema),
         binding["merged"]["table_path"],
@@ -61,31 +63,57 @@ def main():
         )
         path.write_text(yaml.safe_dump(config))
 
-    def train(name, extra=()):
-        with (root / (name + ("-partial" if "--max-steps" in extra else "") + ".log")).open(
-            "w"
-        ) as log:
-            subprocess.run(
+    launcher = root / "fail_validation.py"
+    launcher.write_text("""from lm_tts.training import validation
+from lm_tts.train import main
+
+def fail(*args, **kwargs):
+    raise RuntimeError('injected validation failure')
+
+if __name__ == "__main__":
+    validation.validate = fail
+    main()
+""")
+
+    def train(name, extra=(), *, fail_validation=False):
+        with (
+            root
+            / (
+                name
+                + ("-failure" if fail_validation else "-partial" if "--max-steps" in extra else "")
+                + ".log"
+            )
+        ).open("w") as log:
+            result = subprocess.run(
                 [
                     sys.executable,
                     "-m",
                     "torch.distributed.run",
                     "--standalone",
                     "--nproc_per_node=2",
-                    "-m",
-                    "lm_tts.train",
+                    *([str(launcher)] if fail_validation else ["-m", "lm_tts.train"]),
                     "--config",
                     str(root / f"{name}.yaml"),
                     *extra,
                 ],
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                check=True,
+                check=not fail_validation,
                 timeout=900,
             )
 
+        if fail_validation:
+            assert result.returncode != 0
+            checkpoint = root / name / "checkpoints/step-00000001"
+            assert (checkpoint / "COMPLETE").is_file()
+            metadata = json.loads((checkpoint / "metadata.json").read_text())
+            assert metadata["progress"]["step"] == 1 and metadata["validation_pending"]
+            status = json.loads((root / name / "validation/step-00000001.json").read_text())
+            assert status["status"] == "failed"
+
     train("continuous")
-    train("resumed", ["--max-steps", "2"])
+    train("resumed", fail_validation=True)
+    train("resumed", ["--max-steps", "2", "--resume", "latest"])
     path = root / "resumed.yaml"
     config = yaml.safe_load(path.read_text())
     # Loader queues are disposable: only batches consumed by completed updates are committed.
@@ -112,6 +140,21 @@ def main():
             check=True,
         )
         weights.append(load_file(destination / "model.safetensors"))
+        from lm_tts.models.loading import load_model
+
+        restored = load_model(destination, attn_implementation="sdpa")
+        for key, value in restored.state_dict().items():
+            torch.testing.assert_close(value, weights[-1][key], atol=0, rtol=0)
+        if args.model_family == "lfm":
+            from lm_tts.inference.codec import generate_codes
+
+            codes = generate_codes(restored, [200, 2, 201], max_new_tokens=2, min_new_tokens=2)
+            assert codes.shape == (2, 16)
+            continuation = generate_codes(
+                restored, [200, 2, 201], codes, max_new_tokens=1, min_new_tokens=1
+            )
+            assert continuation.shape == (1, 16)
+        del restored
         progress = json.loads((root / name / "completion.json").read_text())
         assert progress["epoch"] == 3
         metrics = [
@@ -137,6 +180,9 @@ def main():
             assert left["train"][key] == right["train"][key], (left["step"], key)
     report = {
         "status": "passed",
+        "model_family": args.model_family,
+        "validation_failure_retried_without_repeated_update": True,
+        "export_reload_verified": True,
         "precision": args.precision,
         "world_size": 2,
         "epochs": 3,

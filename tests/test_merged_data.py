@@ -202,3 +202,28 @@ def test_holdout_is_deterministic_disjoint_and_covers_every_source_row(tmp_path)
     np.testing.assert_array_equal(
         validation.indices[0], np.load(other / "validation/sampling-000.npy")
     )
+
+
+@pytest.mark.parametrize("bad_token", [-1, 256, True, 3.5, "12", None])
+def test_bad_text_tokens_are_skipped_before_collation(tmp_path, monkeypatch, bad_token):
+    import pickle
+
+    dataset = make_build(tmp_path / "features", tmp_path / "build")
+    dataset = FeatureDataset(dataset.path, (200, 201), text_vocab_size=256)
+    # Spawned workers must preserve the vocabulary bound.
+    dataset = pickle.loads(pickle.dumps(dataset))
+    original = dataset._read_rows
+
+    def corrupt(slot, locators):
+        rows = original(slot, locators)
+        for locator, (codec, _) in zip(locators, rows):
+            if locator == 1:
+                codec["text_ids"] = [bad_token]
+        return rows
+
+    monkeypatch.setattr(dataset, "_read_rows", corrupt)
+    with pytest.warns(RuntimeWarning, match="Invalid text token"):
+        batch = collate(dataset.__getitems__([0, 1, 2]))
+    assert batch["skipped_samples"].item() == 1
+    assert batch["frame_lengths"].tolist() == [1, 3]
+    assert batch["text_ids"].max().item() < 256

@@ -6,13 +6,13 @@ import uuid
 from pathlib import Path
 
 import torch
-from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSTalkerConfig
 from safetensors.torch import save_file
 from transformers import AutoConfig, AutoTokenizer, PreTrainedTokenizerFast
 
-from ..artifacts import file_hash
-from .assembly import TEXT_SPECIALS, copy_codec, load_prefix
-from .lfm import LfmTTSModel
+from ...artifacts import file_hash
+from ..lfm import LfmTTSModel
+from ..lfm.configuration import LfmTTSConfig
+from .common import TEXT_SPECIALS, copy_codec, load_prefix
 
 
 def prepare_config(backbone, template):
@@ -58,7 +58,7 @@ def prepare_config(backbone, template):
         lm_tts_role_ids=tokenizer.encode("<|im_start|>assistant\n", add_special_tokens=False),
         lm_tts_pad_token_id=tokenizer.convert_tokens_to_ids("<tts_pad>"),
     )
-    config = Qwen3TTSTalkerConfig.from_dict(talker)
+    config = LfmTTSConfig.from_dict(talker)
     config._attn_implementation = "sdpa"
     config.code_predictor_config._attn_implementation = "sdpa"
     artifact = {

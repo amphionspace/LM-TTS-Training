@@ -79,7 +79,7 @@ $PY -m scripts.prepare_models --config "$CFG"
 
 ### 可训练文本前端实验
 
-LFM Base 使用独立的本地组装入口：`$PY -m scripts.assemble_lfm_tts`，默认生成 `assets/assembled/lfm2.5-230m-base-pure-codec/`。它保留 5 层 Code Predictor，使用 LFM tokenizer 和文本 embedding；数据需要重新构建文本 token。初始化、packed 卷积隔离及准备命令见 [LFM pure codec 说明](docs/design/lfm-pure-codec.md)。LFM 不使用下面的 Qwen `prepare_models` 组装流程。
+LFM 使用同一准备入口：`$PY -m scripts.prepare_models --config configs/lfm2.5-230m-pure-codec.yaml`。配置中的 `assembly.family: lfm2` 选择本地 LFM 来源；不填写时沿用 Qwen 组装。已有产物会校验来源、配方和文件哈希，类型不匹配时在复制或组装前报错。需要自定义来源路径时，也可使用 `$PY -m scripts.assemble_lfm_tts --help`。LFM tokenizer 不同，必须重新构建文本 token；详见 [LFM pure codec 说明](docs/design/lfm-pure-codec.md)。
 
 `configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml` 使用文本 Base 的 embedding、新 TTS token 行和随机 text projector，文本端参与训练。该 YAML 的 `assembly` 区块用于离线准备，`train` / `acp` 区块用于训练和提交：
 
@@ -188,8 +188,11 @@ Dynamic batching 的 checkpoint 保存 epoch、已完成的 microbatch 位置和
 | `logs/` | 节点输出，以及每节点所有 GPU 每 10 秒的利用率 / 显存 CSV |
 | `completion.json` | 训练正常结束后的最终步数和 epoch |
 | `metrics.jsonl` | 可用于重建曲线的指标记录 |
+| `validation/step-XXXXXXXX.json` | 该步 eval 的 running / complete / failed 状态及结果或错误 |
 | `config.json`、`config.yaml` | 有效配置和源实验 YAML |
 | `submissions/` | ACP 提交记录及代码快照 |
+
+每次训练内 eval 前先保存该步完整 checkpoint；即使 `eval_every` 与 `save_every` 不同，也会保存待评估步。eval 失败后，用原命令加 `--resume latest` 恢复，会先补做未完成的 eval，再继续优化器更新。checkpoint 保持不可变，eval 状态单独记录。
 
 平台 TensorBoard 挂载统一的 Runs 目录，页面中按 run 名选择实验。也可以在开发机打开单个 run：
 
@@ -265,8 +268,11 @@ $PY -m scripts.evaluate --config configs/evaluation.yaml --pairs "$RUN/generated
 
 外部评测也使用仓库内的 `scripts/export_checkpoint.py` 转换脚本；`--checkpoint` 可直接指向
 `archived-checkpoints/step-XXXXXXXX`。增加 `--copy-tokenizer` 会复制音频 tokenizer，生成自包含的
-Qwen3-TTS 模型目录；默认使用软链接。转换只读取训练 checkpoint，不影响训练或 resume。
-导出默认保留 FP32 权重，推理时可以 BF16 加载；`export.json` 记录来源步数及权重 SHA-256。
+模型目录；默认使用软链接。转换只读取训练 checkpoint，不影响训练或 resume。
+导出默认保留 FP32 权重，推理时可以 BF16 加载；`export.json` 记录来源步数，以及权重、配置与文本 tokenizer 的 SHA-256。通过 `lm_tts.models.loading.load_model` 加载导出产物，无需添加组装完成标记。
+
+**Pure-codec 生成（Qwen / LFM）**：仍使用上面的 `scripts.synthesize`。有 `reference_audio` 时，必须同时填写准确的 `reference_text`，执行 codec-prefix ICL；两项均省略时为纯文本生成，不能指定音色。speaker-conditioned Qwen 继续使用官方 speaker-only 生成路径。Pure-codec 支持 synthesis 配置中的首码本与残差采样参数，目前逐帧重算完整前缀，尚无 KV cache，长音频速度较慢。纯文本生成结果可试听；进行 speaker similarity 评分时仍需独立参考音频。
+
 本轮 all16 step 47382 的 Seed-TTS 评测说明见
 [All16 训练与评测汇总](docs/training/all16-training-and-seedtts-evaluation.md)。
 
@@ -280,14 +286,31 @@ Qwen3-TTS 模型目录；默认使用软链接。转换只读取训练 checkpoin
 
 ## 开发与验证
 
-代码按职责划分：`lm_tts/data/` 负责构建、读取和组批，`models/` 负责模型与输入协议，`objectives/` 负责 loss，`training/` 负责分布式更新和恢复，`evaluation/` 负责生成音频评分。`scripts/` 是操作入口，`scripts/acp/` 是平台适配层。代码与配置注释使用英文，操作文档使用中文。
+代码与配置注释使用英文，操作文档使用中文。按修改目的查找文件：
+
+| 需要修改 | 位置 |
+| --- | --- |
+| 数据构建、读取、动态组批 | `lm_tts/data/` |
+| 离线初始化、模型来源与组装校验 | `lm_tts/models/assembly/`（common / qwen / lfm / preparation） |
+| Qwen 适配器 | `lm_tts/models/qwen.py` |
+| LFM 适配器、packed 主干与配置 | `lm_tts/models/lfm/`（model / backbone / configuration） |
+| 共用输入协议、预测接口与产物加载 | `lm_tts/models/protocol.py`、`codec.py`、`loading.py` |
+| Loss | `lm_tts/objectives/` |
+| 分布式更新、保存恢复与 eval 调度 | `lm_tts/training/` |
+| 导出模型的 pure-codec 生成 | `lm_tts/inference/` |
+| 验证损失、生成音频评分 | `lm_tts/evaluation/` |
+| 操作入口 / ACP 平台适配 | `scripts/` / `scripts/acp/` |
+
+训练器通过模型接口获取 FSDP 单元、activation checkpointing 和学习率分组；不直接访问具体主干的层或 norm。文件整理保持现有参数名称与优化器分组顺序，原 submission 代码快照不变。
 
 ```bash
 $PY -m pytest -q
 $PY -m ruff check lm_tts scripts tests
 $PY -m ruff format --check lm_tts scripts tests
-# 双卡实际训练：坏样本、3 epoch WSD、预取参数变化后的严格恢复
-PYTHONPATH=.:tests $PY tests/check_epoch_resume.py --output artifacts/check-epoch-resume
+# 双卡实际训练：坏 codec/text、3 epoch WSD、eval 故障恢复、预取变化、导出重载
+CUDA_VISIBLE_DEVICES=2,3 PYTHONPATH=.:tests $PY tests/check_epoch_resume.py \
+  --model-family lfm --output artifacts/check-lfm-epoch-resume
+# --model-family qwen 验证原 Qwen 路径；GPU 编号改成实际空闲设备。
 ```
 
 需要重新验证集群启动和恢复时，可以显式提交微型模型验证任务：
@@ -298,4 +321,4 @@ $PY -m scripts.acp.submit --validate --nodes 4 --run-name check-32gpu --submit
 
 已完成的 ACP 4 节点 32 张 A800 作业 `pt-ughagq38` 验证了 BF16 / FP32 连续训练与 2+2 步恢复：权重逐位一致，冻结模块未变，评分接口通过。报告在 `正式 BF16 run 的 logs/verification/acp32-legacy-result.json`。该结果证明微型模型功能，不代表完整模型吞吐。当前 merged 数据的接入、坏样本跳过和 epoch / WSD 恢复另有回归覆盖；完整模型的预算测试和正式实验记录见 [全量训练记录](docs/training/all16-20261001.md)。
 
-更多证据见[验证记录](docs/training/unified-refactor.md)。历史 run 按[保留规则](runs/README.md)保存，旧实验文档仅作历史记录，当前操作以本 README 为准。
+本轮六项修复及双卡恢复对比见[代码整理验证](docs/training/code-quality-20261009.md)。更多证据见[验证记录](docs/training/unified-refactor.md)。历史 run 按[保留规则](runs/README.md)保存，旧实验文档仅作历史记录，当前操作以本 README 为准。

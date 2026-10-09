@@ -31,8 +31,8 @@ from .telemetry import (
     stop_gpu_logging,
     tensorboard_groups,
     write_training,
-    write_validation,
 )
+from .validation import run_validation, validation_complete
 
 
 def verify_conditioning(model, dataset):
@@ -70,6 +70,8 @@ def run(config, resume=None, eval_only=False):
         rank, world = dist.get_rank(), dist.get_world_size()
         assembled = Path(config["model"]["assembled_model"]).resolve()
         full_config = json.loads((assembled / "config.json").read_text())
+        if not (assembled / "ASSEMBLY_COMPLETE").is_file():
+            raise ValueError("Training requires a completed assembly, not an inference export")
         specials = (full_config["tts_bos_token_id"], full_config["tts_eos_token_id"])
         use_speaker = config["model"].get("use_speaker_embedding", True)
         train_data = FeatureDataset(
@@ -78,6 +80,7 @@ def run(config, resume=None, eval_only=False):
             verify_integrity=rank == 0,
             use_speaker_embedding=use_speaker,
             mask_reference=settings.get("mask_reference", False),
+            text_vocab_size=full_config["talker_config"]["text_vocab_size"],
         )
         if rank == 0:
             train_data.validate_budgets(settings["max_batch_frames"], settings["max_batch_tokens"])
@@ -89,6 +92,7 @@ def run(config, resume=None, eval_only=False):
                 verify_integrity=rank == 0,
                 use_speaker_embedding=use_speaker,
                 mask_reference=settings.get("mask_reference", False),
+                text_vocab_size=full_config["talker_config"]["text_vocab_size"],
             )
             if config["data"].get("val_build")
             else None
@@ -113,12 +117,7 @@ def run(config, resume=None, eval_only=False):
             verify_tokenizer_compatibility(assembled, val_data.manifest["tokenizer"])
             verify_conditioning(model, val_data)
         if config["model"].get("activation_checkpointing", True):
-            model.talker.model.gradient_checkpointing_enable(
-                gradient_checkpointing_kwargs={"use_reentrant": False}
-            )
-            model.talker.code_predictor.model.gradient_checkpointing_enable(
-                gradient_checkpointing_kwargs={"use_reentrant": False}
-            )
+            model.enable_activation_checkpointing()
         output = Path(settings["output"]).resolve()
         if rank == 0:
             output.mkdir(parents=True, exist_ok=True)
@@ -169,6 +168,7 @@ def run(config, resume=None, eval_only=False):
             "sampler": "window_shuffle_token_budget_v2",
             "torch": torch.__version__,
         }
+        validation_pending = False
         if resume:
             checkpoint = (
                 output / "checkpoints" / (output / "checkpoints/latest").read_text().strip()
@@ -176,6 +176,8 @@ def run(config, resume=None, eval_only=False):
                 else Path(resume)
             )
             progress = load_checkpoint(checkpoint, model, optimizer, scheduler, signature)
+            metadata = json.loads((checkpoint / "metadata.json").read_text())
+            validation_pending = metadata.get("validation_pending", False)
         if rank == 0:
             writer = SummaryWriter(
                 str(output / "tensorboard"), purge_step=progress["step"] + 1 if resume else None
@@ -212,7 +214,7 @@ def run(config, resume=None, eval_only=False):
                         "world_size": world,
                         "precision": settings["precision"],
                         "attention": backend,
-                        "predictor_attention": model.config.code_predictor_config._attn_implementation,
+                        "predictor_attention": model.predictor_attention,
                         "use_speaker_embedding": use_speaker,
                         "mask_reference": settings.get("mask_reference", False),
                         "train_samples": len(train_data),
@@ -271,6 +273,21 @@ def run(config, resume=None, eval_only=False):
         skipped_since_log = discarded_since_log = 0
         last_saved_step = progress["step"] if resume else -1
         last_validated_step = -1
+        if resume and val_data is not None:
+            step = progress["step"]
+            state = [validation_complete(output, step) if rank == 0 else None]
+            dist.broadcast_object_list(state, src=0)
+            completed = state[0]
+            retry = (
+                validation_pending
+                or step == settings.get("first_check_step")
+                or step % settings["eval_every"] == 0
+            )
+            if completed:
+                last_validated_step = step
+            elif retry:
+                run_validation(model, val_data, config, device, output, step, writer)
+                last_validated_step = step
         while not finished(settings, progress):
             started = time.perf_counter()
             torch.cuda.reset_peak_memory_stats(device)
@@ -332,11 +349,11 @@ def run(config, resume=None, eval_only=False):
                     skipped_since_log,
                     discarded_since_log,
                     sum(
-                        (b["text_lengths"] + b["frame_lengths"] + 7 + int(use_speaker)).sum().item()
+                        (b["text_lengths"] + b["frame_lengths"] + model.prefix_tokens).sum().item()
                         for b in batches
                     ),
                     sum(
-                        (b["text_lengths"] + b["frame_lengths"] + 7 + int(use_speaker)).max().item()
+                        (b["text_lengths"] + b["frame_lengths"] + model.prefix_tokens).max().item()
                         * len(b["frame_lengths"])
                         for b in batches
                     ),
@@ -433,30 +450,10 @@ def run(config, resume=None, eval_only=False):
                 skipped_since_log = discarded_since_log = 0
             final = finished(settings, progress)
             first_check = step == settings.get("first_check_step")
-            if val_data is not None and (
+            validation_due = val_data is not None and (
                 first_check or step % settings["eval_every"] == 0 or final
-            ):
-                if rank == 0:
-                    print(
-                        json.dumps({"validation_started": step, "samples": len(val_data)}),
-                        flush=True,
-                    )
-                metrics = validate(
-                    model,
-                    val_data,
-                    config["eval"]["batch_size"],
-                    device,
-                    settings["loss_reduction"],
-                    settings["residual_weight"],
-                    loader_settings=settings,
-                )
-                if rank == 0:
-                    print(json.dumps({"step": step, "val": metrics}), flush=True)
-                    write_validation(writer, metrics, step)
-                    with (output / "metrics.jsonl").open("a") as journal:
-                        journal.write(json.dumps({"step": step, "val": metrics}) + "\n")
-                last_validated_step = step
-            if first_check or step % settings["save_every"] == 0 or final:
+            )
+            if first_check or step % settings["save_every"] == 0 or final or validation_due:
                 save_checkpoint(
                     output / "checkpoints",
                     model,
@@ -465,25 +462,16 @@ def run(config, resume=None, eval_only=False):
                     progress,
                     signature,
                     keep=settings["keep_checkpoints"],
+                    validation_pending=validation_due,
                 )
                 last_saved_step = step
                 if rank == 0:
                     writer.flush()
-        # An epoch can end exactly at an accumulation boundary, discovered on the next read.
-        if val_data is not None and progress["step"] != last_validated_step:
-            metrics = validate(
-                model,
-                val_data,
-                config["eval"]["batch_size"],
-                device,
-                settings["loss_reduction"],
-                settings["residual_weight"],
-                loader_settings=settings,
-            )
-            if rank == 0:
-                write_validation(writer, metrics, progress["step"])
-                with (output / "metrics.jsonl").open("a") as journal:
-                    journal.write(json.dumps({"step": progress["step"], "val": metrics}) + "\n")
+            if validation_due:
+                run_validation(model, val_data, config, device, output, step, writer)
+                last_validated_step = step
+        # Epoch exhaustion may only be discovered by reading the next batch.
+        validation_due = val_data is not None and progress["step"] != last_validated_step
         if progress["step"] > last_saved_step:
             save_checkpoint(
                 output / "checkpoints",
@@ -493,7 +481,10 @@ def run(config, resume=None, eval_only=False):
                 progress,
                 signature,
                 keep=settings["keep_checkpoints"],
+                validation_pending=validation_due,
             )
+        if validation_due:
+            run_validation(model, val_data, config, device, output, progress["step"], writer)
         if rank == 0:
             (output / "completion.json").write_text(json.dumps(progress, indent=2))
     finally:

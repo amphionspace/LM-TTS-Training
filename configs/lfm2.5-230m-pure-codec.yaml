@@ -4,6 +4,9 @@ extends: base.yaml
 paths:
   assembled_model: ${paths.project}/assets/assembled/lfm2.5-230m-base-pure-codec
 
+assembly:
+  family: lfm2  # Uses local LFM sources; never prepares a Qwen backbone.
+
 model:
   use_speaker_embedding: false
 

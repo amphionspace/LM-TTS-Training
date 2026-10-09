@@ -148,7 +148,7 @@ def test_offline_assembly_preserves_vocab_and_reloads(tmp_path, capacity):
     from tokenizers.models import WordLevel
     from transformers import AutoTokenizer, Lfm2ForCausalLM, PreTrainedTokenizerFast
 
-    from lm_tts.models.lfm_assembly import assemble
+    from lm_tts.models.assembly.lfm import assemble
     from lm_tts.models.loading import load_model
 
     base_config = Lfm2Config.from_dict(tiny_config().lm_tts_lfm_config)

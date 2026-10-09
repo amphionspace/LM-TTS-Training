@@ -21,7 +21,7 @@ from transformers import PreTrainedTokenizerFast
 from lm_tts.artifacts import file_hash
 from lm_tts.data.build import tokenizer_identity
 from lm_tts.data.merged import bind_merged
-from lm_tts.models.assembly import save_model
+from lm_tts.models.assembly.qwen import save_model
 from lm_tts.models.qwen import make_config
 
 
@@ -33,6 +33,7 @@ def prepare(
     train_text_frontend=False,
     use_speaker_embedding=True,
     reference_masking=False,
+    model_family="qwen",
 ):
     root.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(2)
@@ -55,9 +56,32 @@ def prepare(
         tts_eos_token_id=201,
         speaker_encoder_config={"enc_dim": 64, "mel_dim": 8, "enc_channels": [16, 16, 16, 16, 48]},
     )
-    model = Qwen3TTSForConditionalGeneration(config)
     assembled = root / "assembled"
-    save_model(model, assembled)
+    if model_family == "lfm":
+        from safetensors.torch import save_file
+        from test_lfm import tiny_config
+
+        from lm_tts.models.lfm import LfmTTSModel
+
+        talker = tiny_config()
+        model = LfmTTSModel(talker)
+        assembled.mkdir()
+        save_file(model.state_dict(), assembled / "model.safetensors")
+        (assembled / "config.json").write_text(
+            json.dumps(
+                {
+                    "model_type": "lfm2_tts",
+                    "talker_config": model.config.to_dict(),
+                    "tts_bos_token_id": 200,
+                    "tts_eos_token_id": 201,
+                }
+            )
+        )
+        use_speaker_embedding = False
+        train_text_frontend = True
+    else:
+        model = Qwen3TTSForConditionalGeneration(config)
+        save_model(model, assembled)
     tokenizer = Tokenizer(
         WordLevel(
             {"[PAD]": 0, "[UNK]": 1, "hello": 2, **{str(i): i + 3 for i in range(num_rows)}},
@@ -70,7 +94,9 @@ def prepare(
     )
     tokenizer.save_pretrained(assembled)
     tensors = {}
-    for key, value in model.speaker_encoder.state_dict().items():
+    for key, value in (
+        model.speaker_encoder.state_dict().items() if model.speaker_encoder is not None else []
+    ):
         tensors["speaker_encoder." + key] = {
             "shape": list(value.shape),
             "dtype": str(value.dtype).removeprefix("torch."),

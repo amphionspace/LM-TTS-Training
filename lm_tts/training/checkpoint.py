@@ -40,7 +40,9 @@ def prune_checkpoints(root, keep):
     return removed
 
 
-def save_checkpoint(root, model, optimizer, scheduler, progress, signature, keep=None):
+def save_checkpoint(
+    root, model, optimizer, scheduler, progress, signature, keep=None, *, validation_pending=False
+):
     rank = dist.get_rank()
     target = Path(root) / f"step-{progress['step']:08d}"
     temporary = target.with_name(target.name + ".incomplete")
@@ -70,6 +72,7 @@ def save_checkpoint(root, model, optimizer, scheduler, progress, signature, keep
                     "signature": signature,
                     "scheduler": scheduler.state_dict(),
                     "world_size": dist.get_world_size(),
+                    "validation_pending": validation_pending,
                 },
                 indent=2,
             )

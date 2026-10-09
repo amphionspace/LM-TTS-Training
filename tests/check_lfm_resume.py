@@ -9,6 +9,7 @@ import torch.distributed as dist
 from torch.distributed.fsdp import MixedPrecisionPolicy
 from transformers import AutoTokenizer
 
+from lm_tts.artifacts import file_hash
 from lm_tts.data.batch import collate
 from lm_tts.models.loading import load_model
 from lm_tts.objectives.tts import tts_loss
@@ -28,10 +29,7 @@ def main():
         rank = dist.get_rank()
         model = load_model(args.assembled_model, use_speaker_embedding=False)
         model.train()
-        for module in (model.talker.model, model.talker.code_predictor.model):
-            module.gradient_checkpointing_enable(
-                gradient_checkpointing_kwargs={"use_reentrant": False}
-            )
+        model.enable_activation_checkpointing()
         tokenizer = AutoTokenizer.from_pretrained(args.assembled_model, local_files_only=True)
         raw = json.loads((args.assembled_model / "config.json").read_text())
         rows = []
@@ -84,7 +82,12 @@ def main():
             return float(loss.detach())
 
         first = step()
-        signature = {"fixture": "lfm-fsdp-resume", "assembly": str(args.assembled_model.resolve())}
+        signature = {
+            "fixture": "lfm-fsdp-resume",
+            "assembly": str(args.assembled_model.resolve()),
+            "assembly_sha256": file_hash(args.assembled_model / "assembly_report.json"),
+            "model": {"use_speaker_embedding": False},
+        }
         checkpoint = save_checkpoint(
             args.output, model, optimizer, scheduler, {"step": 1}, signature
         )

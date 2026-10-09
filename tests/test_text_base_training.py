@@ -158,3 +158,27 @@ def test_tokenizer_compatibility_preserves_build_identity_and_protocol(tmp_path)
     (source / "config.json").write_text("{}")
     with pytest.raises(ValueError, match="Build tokenizer artifact changed"):
         verify_tokenizer_compatibility(target, identity)
+
+
+def test_prepare_rejects_family_mismatch_before_copying(tmp_path, monkeypatch):
+    import sys
+
+    import yaml
+
+    from scripts import prepare_models
+
+    model = tmp_path / "assembled"
+    model.mkdir()
+    (model / "config.json").write_text('{"model_type": "lfm2_tts"}')
+    config = tmp_path / "wrong.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {"paths": {"project": str(tmp_path)}, "model": {"assembled_model": str(model)}}
+        )
+    )
+    monkeypatch.setattr(sys, "argv", ["prepare_models", "--config", str(config)])
+    with pytest.raises(ValueError, match="assembly.family disagrees"):
+        prepare_models.main()
+    assert not (tmp_path / "assets").exists()
+    with pytest.raises(ValueError, match="only accepts"):
+        assembly_recipe({"assembly": {"family": "lfm2", "text_initialization": "qwen-tts"}})

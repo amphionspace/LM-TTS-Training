@@ -19,9 +19,9 @@ import torch
 from huggingface_hub import snapshot_download
 
 from lm_tts.artifacts import file_hash
-from lm_tts.models.assembly import (
+from lm_tts.models.assembly.common import copy_codec
+from lm_tts.models.assembly.qwen import (
     audit_sources,
-    copy_codec,
     initialize_model,
     save_model,
     validate_saved,

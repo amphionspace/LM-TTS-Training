@@ -82,6 +82,11 @@ def main():
         "weights_sha256": file_hash(args.output / "model.safetensors"),
         "step": metadata["progress"]["step"],
     }
+    report["artifact_sha256"] = {
+        p.name: file_hash(p)
+        for p in sorted(args.output.iterdir())
+        if p.is_file() and p.name != "export.json"
+    }
     (args.output / "export.json").write_text(json.dumps(report, indent=2))
     print(json.dumps(report))
 

@@ -55,6 +55,12 @@ class TTSModel(CodecTTSModel):
             self.speaker_encoder.eval()
         return self
 
+    def pretrained_modules(self, include_text=False):
+        modules = [self.talker.model.layers, self.talker.model.norm]
+        if include_text:
+            modules.append(self.talker.model.text_embedding)
+        return modules
+
     @classmethod
     def from_assembled(
         cls,
@@ -65,7 +71,7 @@ class TTSModel(CodecTTSModel):
     ):
         if attn_implementation not in {"flash_attention_2", "sdpa"}:
             raise ValueError("TTSModel requires flash_attention_2 or sdpa")
-        from .assembly import load_prefix
+        from .assembly.common import load_prefix
 
         directory = Path(directory)
         if not (directory / "ASSEMBLY_COMPLETE").exists():
@@ -77,24 +83,26 @@ class TTSModel(CodecTTSModel):
             ):
                 if file_hash(directory / name) != expected:
                     raise ValueError(f"Assembled artifact changed: {name}")
-        config = Qwen3TTSConfig.from_dict(json.loads((directory / "config.json").read_text()))
+        raw = json.loads((directory / "config.json").read_text())
+        model = cls.from_config(raw, attn_implementation, use_speaker_embedding)
+        if load_weights:
+            model.load_state_dict(load_prefix(directory, ""), strict=True)
+        return model
+
+    @classmethod
+    def from_config(cls, raw, attn_implementation="sdpa", use_speaker_embedding=None):
+        if attn_implementation not in {"flash_attention_2", "sdpa"}:
+            raise ValueError("TTSModel requires flash_attention_2 or sdpa")
+        config = Qwen3TTSConfig.from_dict(raw)
         if use_speaker_embedding is not None:
             if type(use_speaker_embedding) is not bool:
                 raise ValueError("use_speaker_embedding must be a boolean")
             config.talker_config.lm_tts_use_speaker_embedding = use_speaker_embedding
         config.talker_config._attn_implementation = attn_implementation
-        # Predictor sequences have exactly 16 positions, one sequence per codec frame.
-        # FA2's deterministic backward workspace scales with the rounded sequence length;
-        # large frame batches fail on our supported CUDA stack. Native SDPA avoids that
-        # workspace without adding padding or changing the teacher-forcing objective.
+        # Each predictor sequence has 16 positions. SDPA avoids FA2 deterministic
+        # backward workspace failures on large frame batches, without any padding.
         config.talker_config.code_predictor_config._attn_implementation = "sdpa"
-        model = cls(config.talker_config, config.speaker_encoder_config)
-        if load_weights:
-            model.talker.load_state_dict(load_prefix(directory, "talker."), strict=True)
-            model.speaker_encoder.load_state_dict(
-                load_prefix(directory, "speaker_encoder."), strict=True
-            )
-        return model
+        return cls(config.talker_config, config.speaker_encoder_config)
 
     def initialize_backbone(self, path):
         base = AutoModel.from_pretrained(
