@@ -1,6 +1,6 @@
 # All16 训练与 Seed-TTS 评测
 
-本报告第 1–7 节记录 all16 frozen-conditioning 的训练设置、数据、模型初始化与冻结范围；第 8 节汇总该实验和 textbase 可训练文本前端实验的全部已完成 Seed-TTS 结果。两种训练方案分别标注，不能混用冻结范围。
+本报告记录 all16 的两种训练方案：**frozen-conditioning 使用冻结的 TTS 文本 embedding / projector；textbase 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector**。两者共用数据划分和音频建模结构，文本前端的初始化、宽度与冻结范围不同。第 1–4 节说明结构和训练设置，第 5–7 节保留 frozen-conditioning 的评测与诊断，第 8 节汇总两种方案的全部已完成 Seed-TTS 结果。
 
 更新于 **2026-10-09**。Frozen-conditioning 的 17,500 / 32,500 / 47,382，以及 textbase 的 17,500 / 25,000，均已完成 speaker + ICL 双 greedy 和双采样评测，共 **10 组**，全部通过审计。最新一组于 **2026-10-09 07:18 UTC** 完成；总表见第 8 节。speaker-only 保持暂停。
 
@@ -8,23 +8,24 @@
 
 | 实验 | 配置（相对仓库根目录） | 初始组装模型 | 训练作业 |
 | --- | --- | --- | --- |
-| frozen-conditioning，本轮 | `configs/supervised-tts-20260929-all16-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml` | `assets/assembled/qwen3-tts-frozen-conditioning` | `pt-blb39rgw`；最终 step 47382 |
+| frozen-conditioning | `configs/supervised-tts-20260929-all16-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml` | `assets/assembled/qwen3-tts-frozen-conditioning` | `pt-blb39rgw`；最终 step 47382 |
+| textbase，可训练文本前端 | `configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml` | `assets/assembled/qwen3-tts-text-base-trainable-random-projector` | `pt-u0ys9osd`；本报告已评测 step 17500 / 25000 |
 
-本实验 YAML 的 `train.run_name` 与文件名去掉 `.yaml` 一致；输出统一为 `/workspace/LM-TTS-Training-Runs/<run_name>/`。`/workspace/workspace/yanglin/LM-TTS-Training-Runs` 是其软链接。
+两种实验 YAML 的 `train.run_name` 与文件名去掉 `.yaml` 一致；输出统一为 `/workspace/LM-TTS-Training-Runs/<run_name>/`。`/workspace/workspace/yanglin/LM-TTS-Training-Runs` 是其软链接。
 
 | Run 内路径 | 用途 |
 | --- | --- |
 | `metrics.jsonl`、`tensorboard/` | 训练、验证、吞吐和数据等待指标，以及 TensorBoard |
 | `checkpoints/` | 可直接恢复的完整分布式训练状态 |
-| `archived-checkpoints/` | 本轮的独立 checkpoint 归档，避免被轮转删除 |
+| `archived-checkpoints/` | frozen-conditioning 的独立 checkpoint 归档，避免被轮转删除 |
 | `logs/` | 节点日志与保留的验证证据 |
 | `submissions/` | 实际提交配置、代码快照和作业身份；复核历史训练优先读这里 |
 
-本轮训练目录轮转保留最近两份，另有每小时归档任务；评测读取归档，不依赖轮转目录。下载的基础模型在 `assets/base/`，组装模型在 `assets/assembled/`，评测模型和产物在相邻的 `UltraEval-Audio`，三者各有用途。
+Frozen-conditioning 的训练目录轮转保留最近两份，另有每小时归档任务，评测读取 `archived-checkpoints/`；textbase 设置 `keep_checkpoints: null`，保留全部完整 checkpoint，评测直接读取该实验的 `checkpoints/`。下载的基础模型在 `assets/base/`，组装模型在 `assets/assembled/`，评测模型和产物在相邻的 `UltraEval-Audio`，三者各有用途。
 
 ## 2. 使用了哪些数据
 
-训练数据与固定划分：
+**两种实验复用同一份 build、16 个数据集和固定 train / validation 划分**，textbase 未重新切分数据。训练数据与固定划分：
 
 - Unified 根目录：`/workspace/data/DATA-TTS-UNIFIED`。
 - Selection：`tts-selection-supervised-tts-20260929T151539bjt-01`。
@@ -62,13 +63,24 @@ Merged 表已经包含目标 text、每帧 16 个 codec ID、1024 维 speaker em
 
 ## 3. 模型初始化与冻结
 
-本轮是“文本 LM 主干迁移 + 新音频模块”，不是整个模型从零训练。组装在本地提前完成，seed 42、FP32 保存；训练直接加载 assembled 权重，恢复时加载 checkpoint，不重新组装。
+两种方案均为“文本 LM 主干迁移 + 新音频模块”。组装在本地提前完成，seed 42、FP32 保存；训练直接加载 assembled 权重，恢复时加载 checkpoint，不重新组装。
+
+### 文本前端：两种方案的差异
+
+| 模块 | Frozen-conditioning | Textbase |
+| --- | --- | --- |
+| 文本 tokenizer | 配套 TTS tokenizer，固定 token IDs，无可训练参数 | 与左侧文件和 token IDs 一致，兼容同一训练 build |
+| 文本 embedding | **151,936 × 2,048**；来自 `Qwen3-TTS-12Hz-0.6B-Base` 完整表；**冻结** | **151,936 × 1,024**；共享 token 行来自 `Qwen3-0.6B-Base`，新增 TTS token 行随机初始化；**整张表更新**，峰值 LR `1e-4` |
+| 文本 projector | **2,048 → 2,048 → 1,024，SiLU**；来自同一 TTS checkpoint；**冻结** | **1,024 → 1,024 → 1,024，SiLU**；**随机初始化并更新**，峰值 LR `3e-4`，保留两层 MLP |
+
+Textbase 的“扩词表”指在文本 Base 的 **151,669 个有效 token** 上加入 **7 个 TTS token**，有效 token 数变为 151,676。原 embedding 已预留 151,936 行，因此此次**没有增加矩阵行数**；共享 token 的 ID 与初始向量保持一致，新增 token 对应行重新随机初始化。所有文本 embedding 行使用同一个 `1e-4` 参数组，新增行不单独采用 `3e-4`。这些是组装时的初始化规则，训练后的 checkpoint 已包含更新后的 embedding 和 projector。
+
+### Talker、音频与 speaker：两种方案共用的结构
+
+以下模块的结构、初始化来源和训练范围一致；各实验独立组装和训练，权重并不共享。
 
 | 模块 | 结构 / 初始化来源 | 是否更新 |
 | --- | --- | --- |
-| 文本 tokenizer | 固定分词规则与 TTS 特殊 token，配套组装模型 | 无可训练参数 |
-| 文本 embedding | 151,936 × 2,048；`Qwen3-TTS-12Hz-0.6B-Base` 完整表 | **冻结** |
-| 文本 projector | 2,048 → 2,048 → 1,024，SiLU；同一 TTS checkpoint | **冻结** |
 | Talker 主干与 norm | 28 层，hidden 1,024，FFN 3,072；`Qwen3-0.6B-Base` 的 layers / norm | **更新**，峰值 LR `1e-4` |
 | 首码本 embedding | 3,072 × 1,024，含音频控制 token；随机初始化 | **更新**，`3e-4` |
 | 首码本输出 head | 1,024 → 3,072；随机初始化，与 embedding 不共享权重 | **更新**，`3e-4` |
@@ -80,15 +92,25 @@ Merged 表已经包含目标 text、每帧 16 个 codec ID、1024 维 speaker em
 | Speaker → Talker projector | 维度已匹配，没有单独 projector | 无参数 |
 | 音频 codec encoder / decoder | `Qwen3-TTS-Tokenizer-12Hz`，24 kHz、16 码本 | **独立冻结**，不进入训练 optimizer |
 
-主模型总参数 **914,643,008**，其中可训练 **588,329,216**、冻结 **326,313,792**；codec 不计入此总数。没有加载官方 TTS 的 Talker / 音频 embedding / Code Predictor 权重，也没有加载纯文本 LM 的文本输出 head。
+两种方案都没有加载官方 TTS 的 Talker / 音频 embedding / Code Predictor 权重，也没有加载纯文本 LM 的文本输出 head。Textbase 中随机初始化的是 text projector、新增 TTS token 行和音频模块；Talker 主干及共享文本 embedding 行来自文本 Base，speaker encoder 与 codec 来自预训练 TTS 组件。
 
-输入路径：文本 IDs 查表并经过 text projector；每个音频帧的 16 组 codec IDs 分别查表，所得 16 个向量相加成一个 1024 维向量。它们按“角色与控制前缀 → speaker → 完整文本 → codec BOS → 历史音频帧”排列，经因果 attention 融合。文本位置加 codec PAD，音频位置加 projected text PAD；这是协议占位向量，与 batch 补齐长度的 padding 不同。
+| 主模型参数量（不含独立 codec） | Frozen-conditioning | Textbase |
+| --- | ---: | ---: |
+| 总参数 | 914,643,008 | 754,865,216 |
+| 可训练 | 588,329,216 | 746,010,880 |
+| 冻结 | 326,313,792 | 8,854,336（仅 speaker encoder） |
+
+Textbase 的文本前端更窄，因此总参数更少；开放文本前端训练后，可训练参数反而更多。结构与初始化核对依据为各自的 `assembly_report.json`，textbase 的组装和恢复验证见 [textbase 实验记录](all16-textbase-20261003.md)。
+
+### 两种方案的输入融合与联合训练
+
+输入路径：文本 IDs 查表并经过各自的 text projector，均输出 1024 维向量；每个音频帧的 16 组 codec IDs 分别查表，所得 16 个向量相加成一个 1024 维向量。它们按“角色与控制前缀 → speaker → 完整文本 → codec BOS → 历史音频帧”排列，经因果 attention 融合。文本位置加 codec PAD，音频位置加 projected text PAD；这是协议占位向量，与 batch 补齐长度的 padding 不同。
 
 这 16 张音频 embedding 都参与训练，residual 表也复用于 Code Predictor 的码本内预测；它们与输出 head **不 tie**。训练用真实历史帧做 teacher forcing，Talker 与 Code Predictor 同时计算 loss、共同反向传播，二者之间不 detach。
 
 ## 4. 怎么训练与恢复
 
-本轮训练设置：
+两种实验共用以下训练设置；文本前端的峰值 LR 与冻结范围见第 3 节，checkpoint 保留策略见第 1 节。
 
 | 项目 | 设置与含义 |
 | --- | --- |
@@ -102,11 +124,13 @@ Merged 表已经包含目标 text、每帧 16 个 codec ID、1024 维 speaker em
 | 读取 | 每 rank 4 workers，prefetch factor 2，长度分桶窗口 65,536，pin memory / persistent workers |
 | 验证与保存 | 第 100 步，之后每 2,500 步，以及训练结束；验证集全部 128,219 条 |
 
-损坏的单条数据跳过并记录；某 rank 整个 microbatch 无效时全体协调跳过，避免通信挂起。配置错误或模型计算异常不会伪装成坏数据吞掉。训练记录包括数据等待时间 / 占比、吞吐和显存；预算预检时实际显存约 66–67 GiB/卡。临近结束 step 47380 记录约 7.55 秒/步、10,794 音频秒/秒，属于当时单步测量，不代表含验证与保存的全程平均。
+Textbase 的 `1e-4` 参数组包含 Talker 主干和整张文本 embedding，共 **596,049,920** 参数；`3e-4` 参数组包含随机 text projector 和音频模块，共 **149,960,960** 参数。两种实验分别维护 optimizer、LR 进度和 checkpoint，不能跨方案 resume。
+
+损坏的单条数据跳过并记录；某 rank 整个 microbatch 无效时全体协调跳过，避免通信挂起。配置错误或模型计算异常不会伪装成坏数据吞掉。训练记录包括数据等待时间 / 占比、吞吐和显存；frozen-conditioning 的预算预检时实际显存约 66–67 GiB/卡。临近结束 step 47380 记录约 7.55 秒/步、10,794 音频秒/秒，属于当时单步测量，不代表含验证与保存的全程平均。
 
 Code Predictor 使用 SDPA，是因为当前环境的大 batch FA2 测试曾出现非法访问 / NaN；Talker 仍使用 FA2。完整验证、32 卡恢复逐位一致证据见 [本轮训练记录](all16-20261001.md)。
 
-以下命令在 **LM-TTS-Training 根目录**运行。复现新实验先复制 YAML、修改 `train.run_name`，不要对已完成的正式 run 再提交一次：
+以下以 frozen-conditioning 配置演示，命令在 **LM-TTS-Training 根目录**运行；运行 textbase 时将 `CFG` 换成第 1 节对应的 YAML，组装模型路径由配置选择。复现新实验先复制 YAML、修改 `train.run_name`，不要对已有正式 run 重复提交：
 
 ```bash
 PY=/workspace/workspace/yanglin/envs/lm-tts/bin/python
@@ -128,7 +152,7 @@ CFG=configs/supervised-tts-20260929-all16-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yam
 
 Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已提交的数据进度。保持模型、数据、卡数、batch 预算和 LR 计划不变；可以调整 workers / prefetch。不要手工按“已读了多少预取数据”推进位置，也不要把其他实验 checkpoint 接到此 run。
 
-本轮最终 teacher-forcing 验证：首码本 CE **0.906703**、residual CE **5.244773**、加权 loss **2.480135**，跳过 / 连带丢弃样本均为 0。这类验证随训练自动执行；下文自由生成的 ASR / SIM 是独立评测流程，loss 降低不等于 WER/CER 必然良好。
+Frozen-conditioning 最终 step 47,382 的 teacher-forcing 验证：首码本 CE **0.906703**、residual CE **5.244773**、加权 loss **2.480135**，跳过 / 连带丢弃样本均为 0。这类验证随训练自动执行；下文自由生成的 ASR / SIM 是独立评测流程，loss 降低不等于 WER/CER 必然良好。
 
 ## 5. Seed-TTS 方法与历史 Qwen 对比
 
