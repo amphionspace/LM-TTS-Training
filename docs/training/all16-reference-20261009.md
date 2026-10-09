@@ -61,4 +61,10 @@ $PY -m scripts.acp.submit --config "$CFG" --submit # 同一个 run 只提交一�
 
 两卡 BF16 的真实 trainer / reader / evaluator / checkpoint 路径已通过：连续 4 步，与 2 步后中断并 resume 至 4 步，最终所有权重逐项一致，最大差为 **0**。Talker、codec embedding、head 与 Code Predictor 均有更新，冻结模块完全不变。验证在第 2、4 步执行，未出现坏样本或非有限 loss。
 
-真实 AISHELL 试建保留 87,968 条（训练 87,880、验证 88）。全量构建正在核对全部行；正式任务 ID 与完成后的覆盖数在提交时补充。
+全量构建完成：训练 **127,966,545** 条，验证 **128,072** 条，共 **128,094,617** 条。原验证集因新 reference 过滤减少 147 条，其余样本保持原归属。完整索引、各数据集的独立 manifest 和顶层训练 / 验证目录均已发布。
+
+对最终 build 的 16 个数据集各抽查 49 条，共 **784 条**：codec、speaker embedding、参考区间与 mask 均可正常读取，缓存的文本 token 与当前 tokenizer 重新编码逐条一致。speaker encoder 参数身份与原始 build 一致；全部训练样本的 frame / token 预算检查通过。详情在 build 的 `payload-verification.json` 和 run 的 `verification/` 中。
+
+2026-10-09 03:30:46 UTC 已提交 ACP 任务 **`pt-xpv9q5i0`**，代码版本 `a18291b`，2 节点 × 8 A800；平台已确认 SSH 免密与 TensorBoard 开启。提交记录在 `submissions/20261009T033045242966Z/`。提交后平台进入 `STARTING`，此时尚未产生训练 step 日志；这不代表已完成首步或首轮验证。
+
+构建试验的未完成副本、写入性能测试和小模型临时目录已清理。正式 build、现有对照实验及其模型 / checkpoint 均保留；本轮测试日志与 resume 比对报告保存在 `verification/`。
