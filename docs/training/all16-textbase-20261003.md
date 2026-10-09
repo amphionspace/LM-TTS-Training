@@ -47,3 +47,26 @@ CONFIG=configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32
 ```
 
 初次提交不传 resume。恢复时只使用这个 run 的 checkpoint，先确认旧任务终态，再追加 `--resume latest`；禁止用原 frozen-conditioning checkpoint 切换模型。任务提交时保存源码快照及展开配置，不随仓库后续清理改变。
+
+## Seed-TTS：step 25,000（2026-10-09）
+
+按指定的 `checkpoints/step-00025000` 评测，约为 1.587 epoch；不自动改用后续 checkpoint。复用 `UltraEval-Audio/init_model/all16-textbase-step-00025000` 的 FP32 导出，以 BF16 + SDPA 推理。已核对完整标记、checkpoint 元数据与组装报告哈希、导出权重哈希，以及配置和 tokenizer 与本实验组装模型的一致性。导出权重 SHA256 为 `41db269684fdd84b8d725ea9466a097fbe6e167451967e0ce04574c32c3e89e2`。
+
+- 仅评测 **speaker + ICL**；英文 1,088 条、中文 2,020 条。参考录音提供 speaker embedding、codec 和参考文本，目标录音不进入生成。
+- 顺序为 **双 greedy → 双采样**，每组先完成小样本生成 / 评分 / 审计，再运行全量；greedy 全量通过审计后才开始采样。speaker-only 保持暂停。
+- 使用 8 卡，每推理进程 16 GiB 显存上限，batch size 1；`language="Auto"`、`non_streaming_mode=True`，与本轮训练输入协议一致。
+- 采样时两个模块均使用 `top_k=50, top_p=1.0, temperature=0.9`；greedy 关闭两处采样。Talker `repetition_penalty=1.05`，逐条 seed 为 `42 + split 内 index`。
+- 各组独立排除输出 **超过 30 秒** 的样本，不参与 ASR / SIM；保留排除数量和清单。生成上限 378 token，略超阈值后停止并排除，不把截短音频计为正常样本。
+- 英文 Whisper-large-v3 WER、中文 SeACo-Paraformer CER，均按逐句错误率取平均；相似度为 WavLM-large + ECAPA 的余弦相似度 ×100。数据和评分器复用之前 Seed-TTS 评测的本地文件。
+
+以下路径相对 `UltraEval-Audio`：
+
+| 内容 | 路径 |
+| --- | --- |
+| Greedy 结果 | `res/all16-textbase-step25000-seedtts-greedy-20261009-8gpu` |
+| 采样结果 | `res/all16-textbase-step25000-seedtts-sampling-20261009-8gpu` |
+| 顺序执行日志 | `log/seed-tts-textbase-step25000-sequence.log` |
+
+后台会话为 `seedtts-all16-textbase-s25000-sequence`。具体命令保存在 greedy 结果目录的 `run-sequence.sh`；`sequence-stage.txt` 记录当前阶段，各组 `pipeline_status.json` 记录运行状态，完成后读取 `full/summary.json` 与 `full/audit.json`。若中断，确认该会话和其评测进程均已退出后，可在 UltraEval-Audio 根目录重跑同一脚本，复用已完成音频与评分。
+
+本次是独立的 textbase 实验，不写入 frozen-conditioning 的训练与评测报告。当前已启动，尚无全量成绩；不能用启动验证或少量样本代替完整结果。
