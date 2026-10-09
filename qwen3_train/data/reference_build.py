@@ -2,6 +2,7 @@
 
 import json
 import multiprocessing
+import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -149,73 +150,84 @@ def build_dataset(arguments):
         "coverage": {"ready": manifest["rows"]},
         "reference_filtering": filtering,
     }
-    indices = {
-        role: np.lib.format.open_memmap(
-            output / f"{role}.npy",
-            mode="w+",
-            dtype=INDEX_DTYPE,
-            shape=(len(old_val) if role == "validation" else manifest["rows"],),
-        )
-        for role in ("all", "train", "validation")
+    slot = configured.get("binding_slot", 0)
+    index_paths = {
+        "all": output / "sampling-000.npy",
+        **{
+            role: output.parent / role / f"sampling-{slot:03d}.npy"
+            for role in ("train", "validation")
+        },
     }
-    cursor = dict.fromkeys(indices, 0)
-    schema = pa.schema([("text_ids", pa.list_(pa.int32())), ("num_text_tokens", pa.int32())])
+    for path in index_paths.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    # AFS mmap page faults make small writes prohibitively slow. Publish contiguous arrays once.
+    with tempfile.TemporaryDirectory(prefix="lm-tts-reference-index-") as scratch:
+        indices = {
+            role: np.lib.format.open_memmap(
+                Path(scratch) / f"{role}.npy",
+                mode="w+",
+                dtype=INDEX_DTYPE,
+                shape=(len(old_val) if role == "validation" else manifest["rows"],),
+            )
+            for role in ("all", "train", "validation")
+        }
+        cursor = dict.fromkeys(indices, 0)
+        schema = pa.schema([("text_ids", pa.list_(pa.int32())), ("num_text_tokens", pa.int32())])
 
-    def columns():
-        for rows, locators, cached in aligned_cache(table, old_table, binding):
-            records = old_index[locators].copy()
-            if (
-                not np.array_equal(records["row"], locators)
-                or not np.array_equal(
-                    records["frames"], [r["codec_num_codec_frames"] for r in rows]
-                )
-                or not np.array_equal(records["tokens"], cached["num_text_tokens"].to_numpy())
-            ):
-                raise ValueError("Baseline sampling metadata disagrees with matched row")
-            records["row"] = np.arange(cursor["all"], cursor["all"] + len(rows))
-            heldout = validation_rows[locators]
-            for role, selected in (
-                ("all", records),
-                ("train", records[~heldout]),
-                ("validation", records[heldout]),
-            ):
-                indices[role][cursor[role] : cursor[role] + len(selected)] = selected
-                cursor[role] += len(selected)
-            if cursor["all"] % (8192 * 100) == 0 or cursor["all"] == manifest["rows"]:
-                print(
-                    json.dumps(
-                        {
-                            "building_reference": manifest["dataset_id"],
-                            **cursor,
-                            "total": manifest["rows"],
-                        }
-                    ),
-                    flush=True,
-                )
-            yield from cached.cast(schema).to_batches()
+        def columns():
+            for rows, locators, cached in aligned_cache(table, old_table, binding):
+                records = old_index[locators].copy()
+                if (
+                    not np.array_equal(records["row"], locators)
+                    or not np.array_equal(
+                        records["frames"], [r["codec_num_codec_frames"] for r in rows]
+                    )
+                    or not np.array_equal(records["tokens"], cached["num_text_tokens"].to_numpy())
+                ):
+                    raise ValueError("Baseline sampling metadata disagrees with matched row")
+                records["row"] = np.arange(cursor["all"], cursor["all"] + len(rows))
+                heldout = validation_rows[locators]
+                for role, selected in (
+                    ("all", records),
+                    ("train", records[~heldout]),
+                    ("validation", records[heldout]),
+                ):
+                    indices[role][cursor[role] : cursor[role] + len(selected)] = selected
+                    cursor[role] += len(selected)
+                if cursor["all"] % (8192 * 100) == 0 or cursor["all"] == manifest["rows"]:
+                    print(
+                        json.dumps(
+                            {
+                                "building_reference": manifest["dataset_id"],
+                                **cursor,
+                                "total": manifest["rows"],
+                            }
+                        ),
+                        flush=True,
+                    )
+                yield from cached.cast(schema).to_batches()
 
-    clone = table.shallow_clone(output / "merged.lance", reference["lance_version"])
-    clone.add_columns(pa.RecordBatchReader.from_batches(schema, columns()), batch_size=8192)
-    if cursor["all"] != manifest["rows"] or not cursor["train"] or not cursor["validation"]:
-        raise ValueError("Incomplete reference build or empty train/validation partition")
-    for index in indices.values():
-        index.flush()
+        clone = table.shallow_clone(output / "merged-000.lance", reference["lance_version"])
+        clone.add_columns(pa.RecordBatchReader.from_batches(schema, columns()), batch_size=8192)
+        if cursor["all"] != manifest["rows"] or not cursor["train"] or not cursor["validation"]:
+            raise ValueError("Incomplete reference build or empty train/validation partition")
+        for role, index in indices.items():
+            np.save(index_paths[role], index[: cursor[role]])
     result = {
         role: {
             **binding,
             "ready_rows": cursor[role],
             "coverage": {"ready": cursor[role]},
-            "sampling_index": str(output / f"{role}.npy"),
-            "sampling_sha256": file_hash(output / f"{role}.npy"),
+            "sampling_index": str(index_paths[role]),
+            "sampling_sha256": file_hash(index_paths[role]),
             "merged": {
                 **reference,
-                "table_path": str(output / "merged.lance"),
+                "table_path": str(output / "merged-000.lance"),
                 "lance_version": clone.version,
             },
         }
         for role in indices
     }
-    (output / "binding.json").write_text(json.dumps(result, indent=2))
     return result
 
 
@@ -246,7 +258,7 @@ def create_reference_build(recipe, output, tokenizer_info, selection_sha):
     arguments = [
         (
             recipe["root"],
-            b,
+            {**b, "binding_slot": slot},
             old[b["dataset_id"]],
             baseline_path.parent,
             heldout[b["dataset_id"]],
@@ -254,7 +266,7 @@ def create_reference_build(recipe, output, tokenizer_info, selection_sha):
             selection_sha,
             output / b["dataset_id"],
         )
-        for b in configured
+        for slot, b in enumerate(configured)
     ]
     workers = recipe.get("workers", 4)
     if workers == 1:
@@ -278,7 +290,14 @@ def create_reference_build(recipe, output, tokenizer_info, selection_sha):
     ):
         destination = output if role == "all" else output / role
         destination.mkdir(exist_ok=True)
-        bindings = [{**child[role], "binding_slot": i} for i, child in enumerate(children)]
+        bindings = [
+            {
+                **child[role],
+                "binding_slot": i,
+                "sampling_index": str(Path(child[role]["sampling_index"]).relative_to(destination)),
+            }
+            for i, child in enumerate(children)
+        ]
         manifest = {
             **baseline,
             "build_id": output.name,
@@ -297,4 +316,21 @@ def create_reference_build(recipe, output, tokenizer_info, selection_sha):
         (destination / "manifest.json").write_text(json.dumps(manifest, indent=2))
         manifests[role] = manifest
     (output / "data_recipe.json").write_text(json.dumps(recipe, indent=2))
+    for configured_binding, child in zip(configured, children, strict=True):
+        directory = output / configured_binding["dataset_id"]
+        child_recipe = {**recipe, "bindings": [configured_binding]}
+        manifest = {
+            **manifests["all"],
+            "build_id": directory.name,
+            "bindings": [{**child["all"], "binding_slot": 0, "sampling_index": "sampling-000.npy"}],
+            "coverage": {
+                "ready": child["all"]["ready_rows"],
+                "dataset_unbound": baseline["selected_rows"] - old[directory.name]["ready_rows"],
+            },
+            "recipe_sha256": digest(child_recipe),
+        }
+        (directory / "manifest.json").write_text(json.dumps(manifest, indent=2))
+        (directory / "data_recipe.json").write_text(
+            json.dumps(child_recipe, indent=2)
+        )
     return manifests["train"]

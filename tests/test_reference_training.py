@@ -137,6 +137,11 @@ def test_reference_build_keeps_ids_tokens_and_holdout(tmp_path):
     train = FeatureDataset(build / "train/manifest.json", (200, 201), mask_reference=True)
     val = FeatureDataset(build / "validation/manifest.json", (200, 201), mask_reference=True)
     old = FeatureDataset(tmp_path / "baseline/manifest.json", (200, 201))
+    standalone = FeatureDataset(build / "test/manifest.json", (200, 201), mask_reference=True)
+    assert len(standalone) == 6
+    assert train.bindings[0]["sampling_index"] == "sampling-000.npy"
+    assert val.bindings[0]["sampling_index"] == "sampling-000.npy"
+    assert Path(standalone.bindings[0]["sampling_index"]).name == "sampling-000.npy"
 
     class SmallBatches:
         def __init__(self, dataset, size):

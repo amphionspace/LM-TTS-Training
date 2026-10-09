@@ -39,6 +39,8 @@ $PY -m scripts.acp.submit --config "$CFG" --submit # 同一个 run 只提交一�
 
 新 build 位于 `data/builds/supervised-tts-20260929-reference-20261009-all16/`，训练、验证分别读取其 `train/manifest.json`、`validation/manifest.json`。build 独立写入本仓库；codec / speaker 大字段引用 pipeline 的固定 Lance 快照，源数据必须保留。
 
+目录布局沿用原始 build：每个数据集目录包含 `manifest.json`、`data_recipe.json`、`merged-000.lance` 和 `sampling-000.npy`；顶层 `train/`、`validation/` 分别保存自己的 manifest 与 `sampling-XXX.npy`。构建时的临时索引在本地临时目录生成，再顺序写入 AFS，避免逐条 mmap 写入共享存储；最终格式不变。
+
 ## Mask 与 CE
 
 `model.use_speaker_embedding: true` 输入裁剪片段的 embedding，`train.mask_reference: true` 屏蔽其对应 codec 目标。两个开关与数据绑定同时校验，防止误用全音频 features 或意外对参考片段计算 CE。旧配置省略 mask 时仍使用旧行为。
