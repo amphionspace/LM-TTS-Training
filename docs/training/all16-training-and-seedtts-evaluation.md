@@ -1,8 +1,8 @@
-# All16 frozen-conditioning 训练与 Seed-TTS 评测
+# All16 训练与 Seed-TTS 评测
 
-本报告记录 all16 frozen-conditioning 的训练设置、数据、模型初始化与冻结范围，以及最终 checkpoint **`step-00047382`** 和中途 checkpoint 的 Seed-TTS 评测。
+本报告第 1–7 节记录 all16 frozen-conditioning 的训练设置、数据、模型初始化与冻结范围；第 8 节汇总该实验和 textbase 可训练文本前端实验的全部已完成 Seed-TTS 结果。两种训练方案分别标注，不能混用冻结范围。
 
-更新于 **2026-10-08 10:16 UTC**。本轮已完成 3 个 epoch；step 47,382 的 speaker + ICL 采样和双 greedy 均完成，每组 3,108 条。Step 32,500 greedy 也已完成并通过审计，排除 32 条长输出后评分 3,076 条；采样评测已自动启动，step 17,500 等待接续。speaker-only 保持暂停。
+更新于 **2026-10-09**。Frozen-conditioning 的 17,500 / 32,500 / 47,382，以及 textbase 的 17,500 / 25,000，均已完成 speaker + ICL 双 greedy 和双采样评测，共 **10 组**，全部通过审计。最新一组于 **2026-10-09 07:18 UTC** 完成；总表见第 8 节。speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -170,7 +170,7 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 **结论：greedy 在内容准确率上更好，但并非所有指标都更好。** 英文和中文错误率均下降，SIM 略降；没有 MOS 或完整主观试听结果，不能据此认定整体音质更好。Greedy 最长英文 70 秒、中文 105.04 秒；其中 1 条英文触及现有 Whisper 评分器的 30 秒截断，因此该条 WER 未衡量后半段内容，长输出风险需单独看待。
 
-### Step 32,500 对照（greedy 已完成，采样运行中）
+### Step 32,500 对照（greedy 与采样均已完成）
 
 使用同一训练 run 的完整归档 `step-00032500`，67 个文件已通过 SHA-256 校验。导出模型为 `UltraEval-Audio/init_model/all16-frozen-conditioning-step-00032500`；模型配置、文本 tokenizer 与 step 47,382 一致。
 
@@ -188,7 +188,7 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 | 随后采样的结果 | `res/all16-step32500-seedtts-sampling-20261008-8gpu` |
 | 顺序执行日志 | `log/seed-tts-step32500-sequence.log` |
 
-**Greedy 于 2026-10-08 10:13 UTC 完成并通过审计**：3,108 条均已生成，英文排除 4 条、中文排除 28 条超过 30 秒的输出；保留的 3,076 条均完成 ASR 和 SIM，无未恢复的生成或评分错误。采样评测随后自动启动。
+**Greedy 于 2026-10-08 10:13 UTC 完成并通过审计**：3,108 条均已生成，英文排除 4 条、中文排除 28 条超过 30 秒的输出；保留的 3,076 条均完成 ASR 和 SIM，无未恢复的生成或评分错误。采样于同日 12:22 UTC 完成并通过审计，3,108 条全部评分、无超过 30 秒的输出；完整指标见第 8 节。
 
 下表对两个 checkpoint 分别应用 **输出超过 30 秒即排除** 的规则；step 47,382 从既有逐条评分重新汇总，不重新生成，不覆盖上文原始全量成绩。
 
@@ -199,7 +199,7 @@ Resume 恢复 optimizer、LR 进度、epoch、next batch、各 rank RNG 和已�
 
 Step 32,500 的英文 WER 和中文 CER 分别降低 **8.452、4.499 个百分点**，但 SIM 分别降低 **1.462、3.418**，且异常长输出更多。它在保留样本上的内容准确率更好，不能据此认定整体克隆质量更好，也不能仅凭这两组结果确定退化原因。各组保留样本不同；排除的长输出仍须计入失败现象，不能视为模型已经解决这些样本。历史 Qwen 的过滤阈值为 160 秒，与此表也不同。
 
-结果见 [32,500 greedy 汇总](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/summary.json)和[审计](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/audit.json)。后台会话为 `seedtts-all16-s32500-sequence`；顺序启动命令保存在 greedy 目录的 `run-sequence.sh`，阶段见 `sequence-stage.txt`。采样尚无完整成绩。
+结果见 [32,500 greedy 汇总](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/summary.json)和[审计](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/audit.json)。后台会话为 `seedtts-all16-s32500-sequence`；顺序启动命令保存在 greedy 目录的 `run-sequence.sh`，阶段见 `sequence-stage.txt`。两组完整成绩均已纳入第 8 节。
 
 完整结果见 [采样汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/summary.json)、[greedy 汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json)和 [greedy 审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json)。早期小样本诊断保存在 [评测证据](evidence/seed-tts-step47382.json)，正式结论以上述全量结果为准。
 
@@ -207,9 +207,9 @@ Step 32,500 的英文 WER 和中文 CER 分别降低 **8.452、4.499 个百分�
 
 现有完整归档没有 step 15,000 / 16,000；最接近 16,000 的是 **step 17,500**。其 checkpoint 记录已完成 1 个 epoch，再消费 13,686,509 / 128,091,959 条训练样本，约 **1.107 epoch**。
 
-已安排自动顺序：**32,500 greedy → 32,500 采样 → 17,500 greedy → 17,500 采样**。每组必须完成全量评分并通过审计，才会开始下一组；前序失败则停止接续。17,500 沿用相同 speaker + ICL、数据、采样参数、8 卡和每进程 16 GiB 上限，以及上述各组独立的 30 秒过滤规则，开始前自动核验归档并导出模型。
+已完成的执行顺序：**32,500 greedy → 32,500 采样 → 17,500 greedy → 17,500 采样**。每组必须完成全量评分并通过审计，才会开始下一组；前序失败则停止接续。17,500 沿用相同 speaker + ICL、数据、采样参数、8 卡和每进程 16 GiB 上限，以及上述各组独立的 30 秒过滤规则，开始前自动核验归档并导出模型。
 
-结果分别写入 UltraEval-Audio 的 `res/all16-step17500-seedtts-greedy-20261008-8gpu` 和 `res/all16-step17500-seedtts-sampling-20261008-8gpu`。后台会话 `seedtts-all16-s17500-sequence` 当前等待 32,500 两组完成；调度日志为 `log/seed-tts-step17500-sequence.log`，阶段在 greedy 目录的 `sequence-stage.txt`。本段为已启动的接续安排，尚无该 checkpoint 的评测成绩。
+结果分别写入 UltraEval-Audio 的 `res/all16-step17500-seedtts-greedy-20261008-8gpu` 和 `res/all16-step17500-seedtts-sampling-20261008-8gpu`。Greedy 和采样分别于 2026-10-08 14:39、16:20 UTC 完成并通过审计，指标见第 8 节。调度日志为 `log/seed-tts-step17500-sequence.log`，greedy 目录的 `sequence-stage.txt` 已为 `complete`。
 
 ## 6. 当前训练存在的问题：speaker 条件的训推不一致
 
@@ -287,4 +287,58 @@ envs/tts/bin/python -u scripts/run_seed_tts.py \
 - `full/audit.json`：必须 `passed: true` 且覆盖全部 3,108 条；同时 pipeline 为 `complete` 才算所选模式完成。
 - `full/speaker_icl/`：逐条生成音频、转写、WER/CER、SIM、分片参数。
 
-本次两组均为 `complete`，审计通过；上表使用全量汇总结果。
+本节的 step 47,382 两组均为 `complete`，审计通过；各 checkpoint 的过滤后对比见第 8 节。
+
+## 8. 全部已完成的 Seed-TTS 结果（2026-10-09）
+
+### 口径与实验身份
+
+以下 **10 组均为 speaker + ICL**，每组原始输入英文 1,088 条、中文 2,020 条；全部完成生成、应保留样本的 ASR / SIM 和审计，无未恢复的生成或评分错误。WER/CER 是逐句错误率的算术平均；SIM 为 WavLM-large + ECAPA 余弦相似度 ×100，不是音质 MOS。
+
+- **Frozen-conditioning**：第 3 节所述的冻结 TTS 文本 embedding / projector；评测 17,500（约 1.107 epoch）、32,500 和最终 47,382（3 epochs）。
+- **Textbase**：文本 embedding 从 Qwen3-0.6B-Base 初始化并扩词表，维度为 151,936 × 1,024；随机初始化的 `1024 → 1024 → 1024` SiLU projector。文本 embedding 和 projector **均参与训练**，speaker encoder 仍冻结；评测 17,500（约 1.107 epoch）和 25,000（约 1.587 epoch）。其训练设置见 [textbase 实验记录](all16-textbase-20261003.md)。
+
+总表统一按**各组独立排除输出超过 30 秒**汇总，不强制相同排除清单，也不按错误率筛样本。47,382 的两组由已保存的逐条评分重算该过滤视图，不重新生成或覆盖原始汇总；第 5 节仍保留其原始全量成绩。其余各组直接取已过滤的 `full/summary.json`。各组保留样本不同，长输出仍属于需报告的异常，过滤后的分数不能单独代表全体输入表现。
+
+新运行的生成上限为 378 token；47,382 以及 32,500 greedy 在切换规则前已生成的音频使用原 2,048 token 上限。因此总表统一的是评分过滤规则，并非所有历史生成都使用了同一上限。其余协议沿用 Auto、non-streaming、相同参考输入和评分器。历史 Qwen 使用超过 160 秒的统一排除清单及不同 language / streaming 设置，其已过滤成绩保留在第 5 节，不混入这张 30 秒口径的总表。
+
+### 指标总表
+
+“保留/排除”分别列出实际评分数和超过 30 秒的输出数。Greedy 与采样均指 Talker 和 Code Predictor 两个模块同时关闭或开启采样。
+
+| 实验 | Step | 解码 | 英文保留/排除 | WER/% ↓ | 英文 SIM ↑ | 中文保留/排除 | CER/% ↓ | 中文 SIM ↑ |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Frozen-conditioning | 17,500 | Greedy | 1,088/0 | 3.119 | 56.481 | 2,000/20 | 8.386 | 65.474 |
+| Frozen-conditioning | 17,500 | 采样 | 1,088/0 | 5.713 | 56.772 | 2,020/0 | 11.350 | 67.166 |
+| Frozen-conditioning | 32,500 | Greedy | 1,084/4 | 4.803 | 62.203 | 1,992/28 | 5.024 | 71.525 |
+| Frozen-conditioning | 32,500 | 采样 | 1,088/0 | 8.181 | 62.168 | 2,020/0 | 9.218 | 71.915 |
+| Frozen-conditioning | 47,382 | Greedy | 1,087/1 | 13.255 | 63.665 | 2,016/4 | 9.523 | 74.943 |
+| Frozen-conditioning | 47,382 | 采样 | 1,088/0 | 17.072 | 64.253 | 2,020/0 | 14.169 | 76.158 |
+| Textbase | 17,500 | Greedy | 1,087/1 | 3.609 | 45.080 | 1,979/41 | 10.084 | 54.164 |
+| Textbase | 17,500 | 采样 | 1,088/0 | 5.153 | 47.100 | 2,020/0 | 12.864 | 57.656 |
+| Textbase | 25,000 | Greedy | 1,087/1 | 3.590 | 51.639 | 2,015/5 | 5.249 | 62.483 |
+| Textbase | 25,000 | 采样 | 1,088/0 | 4.383 | 53.101 | 2,020/0 | 6.166 | 64.852 |
+
+### 结果说明
+
+1. **两个实验、所有已测 checkpoint 的 greedy 错误率都低于对应采样。** 但 greedy 的长输出更多；textbase 17,500 排除 42 条、25,000 排除 6 条，对应采样均未排除。不能仅凭保留样本的 WER/CER 认为 greedy 在所有方面更好。
+2. **Textbase 从 17,500 到 25,000 有改善。** Greedy 英文 WER 基本持平（3.609% → 3.590%），中文 CER 从 10.084% 降到 5.249%，中英文 SIM 均提高；采样的两种错误率也下降。Textbase 25,000 greedy 内容准确率优于本 checkpoint 的采样，但采样的 SIM 更高且没有超过 30 秒的输出。
+3. **同为 17,500，textbase 尚未显示全面优势。** Greedy 的中英文错误率均高于 frozen-conditioning，SIM 也更低；采样只有英文 WER 更低，中文 CER 更高，SIM 仍更低。Textbase 25,000 的英文较好也不能直接与另一实验 32,500 或 47,382 等同训练进度比较。
+4. **Frozen-conditioning 训练更久并未带来持续降低的生成错误率。** 已测 greedy 中，17,500 英文 WER 最低，32,500 中文 CER 最低；47,382 的 SIM 较高，但内容错误率较差。这些结果不能单独证明过拟合或确定原因。Textbase 同样使用目标自身 speaker embedding 训练，改变文本前端并未消除第 6 节的训推差异；该节配对诊断只测试了 frozen-conditioning 47,382，不能把诊断数值直接套给 textbase。
+
+### 完成时间与原始证据
+
+下表时间为 UTC。每个链接指向该组的原始汇总和审计；逐条转写、评分及生成 WAV 位于同目录下的 `speaker_icl/`。47,382 链接仍为原始未过滤汇总，总表的 30 秒视图从该目录逐条记录计算。
+
+| 实验 / Step / 解码 | 完成时间（UTC） | 结果证据 |
+| --- | --- | --- |
+| Frozen-conditioning / 17,500 / Greedy | 2026-10-08 14:39:57 | [汇总](../../../UltraEval-Audio/res/all16-step17500-seedtts-greedy-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step17500-seedtts-greedy-20261008-8gpu/full/audit.json) |
+| Frozen-conditioning / 17,500 / 采样 | 2026-10-08 16:20:04 | [汇总](../../../UltraEval-Audio/res/all16-step17500-seedtts-sampling-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step17500-seedtts-sampling-20261008-8gpu/full/audit.json) |
+| Frozen-conditioning / 32,500 / Greedy | 2026-10-08 10:13:29 | [汇总](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/audit.json) |
+| Frozen-conditioning / 32,500 / 采样 | 2026-10-08 12:22:22 | [汇总](../../../UltraEval-Audio/res/all16-step32500-seedtts-sampling-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step32500-seedtts-sampling-20261008-8gpu/full/audit.json) |
+| Frozen-conditioning / 47,382 / Greedy | 2026-10-08 07:22:50 | [汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json) |
+| Frozen-conditioning / 47,382 / 采样 | 2026-10-08 05:02:52 | [汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/audit.json) |
+| Textbase / 17,500 / Greedy | 2026-10-09 06:11:28 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step17500-seedtts-greedy-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step17500-seedtts-greedy-20261009-8gpu/full/audit.json) |
+| Textbase / 17,500 / 采样 | 2026-10-09 07:18:23 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step17500-seedtts-sampling-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step17500-seedtts-sampling-20261009-8gpu/full/audit.json) |
+| Textbase / 25,000 / Greedy | 2026-10-09 03:56:09 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-greedy-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-greedy-20261009-8gpu/full/audit.json) |
+| Textbase / 25,000 / 采样 | 2026-10-09 05:00:28 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-sampling-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-sampling-20261009-8gpu/full/audit.json) |
