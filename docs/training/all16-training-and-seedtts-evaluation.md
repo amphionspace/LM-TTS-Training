@@ -405,17 +405,17 @@ Textbase 同时改变了**文本表示维度、初始化来源、projector 初�
 
 - 模式为 **`icl_only`**：参考音频 codec + 参考文本 + 目标文本；跳过 speaker encoder 计算，完全省略 speaker 向量和对应位置，不插入零向量。原生 Qwen wrapper 不识别训练侧的无 speaker 标记，评测适配显式使用其无 speaker 前缀分支，并检查每次生成的 ICL 调用数量。无 speaker 导出若误选 speaker-only 或 speaker + ICL，会被拒绝。
 - 沿用 Seed-TTS 英文 1,088 条、中文 2,020 条，以及 Auto、non-streaming、BF16 + SDPA、相同 ASR / SIM 评分器。顺序为双 greedy → 双采样，各组独立排除超过 30 秒输出；生成上限 378 token。
-- 使用 **Talker batch size 4、codec batch size 1**：参考音频逐条编码，输出 codec 逐条解码，只有 Talker / Code Predictor 批量计算。使用 GPU **6、3、2**，每推理进程显存上限 16 GiB；其余 GPU 当时运行其他任务。原生批量推理使用带 attention mask 的 padding，实际加速取决于同批输出长度和共享 GPU 负载。
-- 每个分片按原始清单固定组批，seed 为 `42 + 该批首条样本的 index`。恢复时保持原分组；若一批只写入部分结果，则重新生成同一批，只补写缺失记录。Batch size 和分片数必须保持一致。**采样的随机数分配与此前 batch 1 不同**，不属于逐条随机性完全对齐的对照；BF16 批量计算也不保证 greedy 输出逐位一致。
+- **正式评测回退为 batch size 1，3 卡并行**。Batch 4 曾尝试将参考编码和输出解码固定为单条、仅批量计算 Talker / Code Predictor，但完整生成出现新增长输出，未采用；具体检查见下文。使用 GPU **6、3、2**，每推理进程显存上限 16 GiB；其余 GPU 当时运行其他任务。原生批量推理使用带 attention mask 的 padding，实际加速取决于同批输出长度和共享 GPU 负载。
+- 正式 batch 1 每条 seed 为 `42 + split 内 index`。批量诊断中，每个分片按原始清单固定组批，seed 为 `42 + 该批首条样本的 index`。恢复时保持原分组；若一批只写入部分结果，则重新生成同一批，只补写缺失记录。Batch size 和分片数必须保持一致。**采样的随机数分配与此前 batch 1 不同**，不属于逐条随机性完全对齐的对照；BF16 批量计算也不保证 greedy 输出逐位一致。
 
 结果路径相对 UltraEval-Audio：
 
 | 内容 | 路径 |
 | --- | --- |
-| Greedy | `res/all16-no-spk-step10000-seedtts-greedy-bs4-codec1-20261010-3gpu` |
-| 采样 | `res/all16-no-spk-step10000-seedtts-sampling-bs4-codec1-20261010-3gpu` |
+| Greedy | `res/all16-no-spk-step10000-seedtts-greedy-bs1-20261010-3gpu` |
+| 采样 | `res/all16-no-spk-step10000-seedtts-sampling-bs1-20261010-3gpu` |
 | Batch 对照日志 | `log/seed-tts-no-spk-step10000-preflight.log` |
-| 正式顺序日志 | `log/seed-tts-no-spk-step10000-codec1-sequence.log` |
+| 正式顺序日志 | `log/seed-tts-no-spk-step10000-bs1-sequence.log` |
 
 ### 批量推理正确性检查与修正
 
@@ -435,6 +435,10 @@ Textbase 同时改变了**文本表示维度、初始化来源、projector 初�
 
 FP32 对照使用同一份 BF16 舍入后的权重转为 FP32 计算，用于隔离批量计算的数值影响，不是另一次 FP32 音质评测。BF16 下这三处 logits 的最大差异约为 0.125 / 0.128 / 0.094，因此不能承诺整段自回归输出逐位一致。这里只验证了四条样本的 prefill、residual heads 和一次固定历史的缓存续推，不代表覆盖所有长度与生成步骤。22 项回归检查还覆盖了误用 speaker 模式、同批 seed、尾批、ICL 调用、逐条 codec 处理及异常后的 decoder 恢复。
 
-对照脚本和报告保留在旧 greedy 目录的 `batch-correctness/`：见[检查报告](../../../UltraEval-Audio/res/all16-no-spk-step10000-seedtts-greedy-bs4-20261010-3gpu/batch-correctness/report.json)。修正后的结果使用上表独立的 **`bs4-codec1`** 目录，避免与旧输入条件混用。
+对照脚本和报告保留在旧 greedy 目录的 `batch-correctness/`：见[检查报告](../../../UltraEval-Audio/res/all16-no-spk-step10000-seedtts-greedy-bs4-20261010-3gpu/batch-correctness/report.json)。修正后的批量诊断另存于 `res/all16-no-spk-step10000-seedtts-greedy-bs4-codec1-20261010-3gpu`，两个 batch 4 目录均不作为正式结果。
 
-运行命令保存在新 greedy 目录的 `run-sequence.sh`；后台会话为 `seedtts-all16-no-spk-s10000-codec1`。修正后的流程已启动，先重新生成小样本、评分并审计，通过后才运行全量 greedy，完成并审计通过后接采样。尚无全量成绩，读取各组 `full/summary.json` 与 `full/audit.json`。该实验的纯 ICL 条件、训练进度和批量设置均与第 8 节旧结果不同，应分别报告。
+**局部正确性检查不等于整段生成等价。** 修正 codec 后的完整四条预检中，英文 index 0 在 batch 1 输出 **3.68 秒**，batch 4 却输出 **30.16 秒**并被排除；index 1 分别为 4.72 / 4.56 秒，两条中文均为 30.16 秒。固定历史的 FP32 对照未发现位置或缓存逻辑错误，但不能据此排除整段自回归路径的问题，也不能把新出现的长输出简单归为无关紧要的舍入差异。
+
+因此本轮正式评测使用已验证的 **batch 1、GPU 6 / 3 / 2 并行**，保持与旧结果一致的逐样本 seed。Batch 4 两次预检及其检查报告仅保留作诊断，暂停时均未写出正式全量样本。加速方案需要进一步验证整体生成稳定性后再采用。
+
+运行命令保存在上表 `bs1` greedy 目录的 `run-sequence.sh`，后台会话为 `seedtts-all16-no-spk-s10000-bs1`。正式流程已重新启动，先完成小样本生成、评分、审计，再运行全量 greedy，通过后接采样。尚无全量成绩，读取各组 `full/summary.json` 与 `full/audit.json`。该实验的纯 ICL 条件和训练进度与第 8 节旧结果不同，应分别报告。
