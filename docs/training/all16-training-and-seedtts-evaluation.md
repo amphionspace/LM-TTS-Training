@@ -394,3 +394,29 @@ Textbase 同时改变了**文本表示维度、初始化来源、projector 初�
 - **检验开放文本前端训练的影响**：保留原 TTS 的 2048 维 embedding 和预训练 projector，仅开放这两者训练，并明确记录文本参数组的 LR。
 
 若要隔离维度本身，还需要控制初始化来源、训练范围和映射方式；直接给 1024 维补零或增加升维层，不等于恢复了原 TTS 的 2048 维表示。以上仅记录后续对照建议，本次未修改现有模型、训练或评测结果。
+
+## 10. No-speaker step 10,000：纯 ICL 评测（2026-10-10）
+
+本次按指定 checkpoint 评测：`supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00010000`。它从 **frozen-conditioning assembled 模型重新训练**，不是 textbase，也不是从旧训练 checkpoint 接续。配置为 `model.use_speaker_embedding: false`；训练时删除 speaker 位置，保留冻结的 2048 维 TTS 文本 embedding 与预训练 projector。资源为 16 卡、梯度累积 2；该 checkpoint 已消费 81,422,431 条样本，约 **0.636 epoch**。训练设置见 [no-speaker 实验记录](all16-no-speaker-20261008.md)。
+
+导出模型在 `UltraEval-Audio/init_model/all16-no-spk-step-00010000`，权重 SHA256 为 `f08e5390744df3f72930c1fca6ac6ba1bc31c8dc9a05df4182b7d1a48a56e255`。已检查完整标记、组装身份并完成分布式权重加载；导出配置和元数据均明确禁用 speaker embedding。
+
+### 推理条件与批量设置
+
+- 模式为 **`icl_only`**：参考音频 codec + 参考文本 + 目标文本；跳过 speaker encoder 计算，完全省略 speaker 向量和对应位置，不插入零向量。原生 Qwen wrapper 不识别训练侧的无 speaker 标记，评测适配显式使用其无 speaker 前缀分支，并检查每次生成的 ICL 调用数量。无 speaker 导出若误选 speaker-only 或 speaker + ICL，会被拒绝。
+- 沿用 Seed-TTS 英文 1,088 条、中文 2,020 条，以及 Auto、non-streaming、BF16 + SDPA、相同 ASR / SIM 评分器。顺序为双 greedy → 双采样，各组独立排除超过 30 秒输出；生成上限 378 token。
+- 应本次要求验证 **batch size 4**，不再固定单条推理。使用 GPU **6、3、2**，每推理进程显存上限 16 GiB；其余 GPU 当时运行其他任务。原生批量推理使用带 attention mask 的 padding，实际加速取决于同批输出长度和共享 GPU 负载。
+- 每个分片按原始清单固定组批，seed 为 `42 + 该批首条样本的 index`。恢复时保持原分组；若一批只写入部分结果，则重新生成同一批，只补写缺失记录。Batch size 和分片数必须保持一致。**采样的随机数分配与此前 batch 1 不同**，不属于逐条随机性完全对齐的对照；BF16 批量计算也不保证 greedy 输出逐位一致。
+
+结果路径相对 UltraEval-Audio：
+
+| 内容 | 路径 |
+| --- | --- |
+| Greedy | `res/all16-no-spk-step10000-seedtts-greedy-bs4-20261010-3gpu` |
+| 采样 | `res/all16-no-spk-step10000-seedtts-sampling-bs4-20261010-3gpu` |
+| Batch 对照日志 | `log/seed-tts-no-spk-step10000-preflight.log` |
+| 正式顺序日志 | `log/seed-tts-no-spk-step10000-sequence.log` |
+
+Batch 预检在同一张 GPU 6 上依次生成中英文各 2 条：batch 1 的纯生成时间 **199.66 秒**，batch 4 为 **100.44 秒**，本次约 **1.99×**；峰值 allocated 显存分别为 **2.85 / 4.83 GiB**。两组中文样本均达到 30.16 秒并排除，英文输出长度有变化；这是共享 GPU 下的四条样本测量，不代表全量吞吐或输出逐位一致。证据保存在 greedy 目录的 `batch-comparison.json` 和 `verification-batch1/`。
+
+运行命令保存在 greedy 目录的 `run-sequence.sh`，两组通过完整性审计后才会顺序接续；完整结果读取各自的 `full/summary.json` 和 `full/audit.json`。Batch 4 小样本 ASR / SIM 与审计已通过：两条英文 WER 均为 0，两条中文因过长排除，没有有效中文评分，不能据此判断中文效果。正式全量任务已启动，后台会话为 `seedtts-all16-no-spk-s10000-sequence`；greedy 完成并通过审计后自动运行采样，尚无全量成绩。该实验的纯 ICL 条件、训练进度和批量设置均与第 8 节旧结果不同，应分别报告。
