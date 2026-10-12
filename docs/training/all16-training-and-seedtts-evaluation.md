@@ -2,7 +2,7 @@
 
 本报告记录 all16 的三种训练方案：**frozen-conditioning** 使用冻结的 TTS 文本 embedding / projector；**textbase** 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector；**no-speaker** 保留 frozen-conditioning 的文本前端与音频结构，移除 speaker embedding 条件后独立训练。三者共用同一数据划分。第 1–4 节说明共同设置与主要差异，第 5–9 节保留前两种方案的评测和诊断，第 10 节记录 no-speaker step 10,000，**第 11 节集中说明当前评测的 no-speaker step 17,500 模型及评测设置**。
 
-更新于 **2026-10-12**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。当前新增的是 **no-speaker step 17,500 的全量纯 ICL 双采样评测**，其模型说明见第 11 节；全量结果待完成后补充。Step 10,000 的旧任务与 speaker-only 保持暂停。
+更新于 **2026-10-12**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。当前新增的是 **no-speaker step 17,500 的全量纯 ICL 评测，双采样完成后接双 greedy**，其模型说明见第 11 节；全量结果待完成后补充。Step 10,000 的旧任务与 speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -520,7 +520,7 @@ Run 名称为 `supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1
 
 推理模式为 **`icl_only`**：输入参考文本、参考音频 codec 和目标文本，不输入 speaker embedding，也不运行 speaker encoder。参考音频仍通过 codec 前缀提供声音条件；“无 speaker embedding”不等于“无参考音频”。导出配置带 `lm_tts_use_speaker_embedding=false`，评测适配显式省略 speaker 位置，不能直接把该 checkpoint 当作普通 speaker + ICL 模型调用。
 
-该改动去掉了目标音频 speaker embedding 这一条件通道，但没有证明所有训推差异都消失：训练仍是单条完整音频的 teacher forcing，外部克隆评测会额外提供参考文本和参考 codec 前缀，再自由生成目标音频。不能仅因关闭 speaker encoder 就断言推理质量已解决。训练内 `eval.batch_size=32` 也不等于自由生成的 batch size；本轮生成始终为 **batch size 1**。全量样本规模、评分器、生成参数与结果目录见本节末的“全量双采样评测”。
+该改动去掉了目标音频 speaker embedding 这一条件通道，但没有证明所有训推差异都消失：训练仍是单条完整音频的 teacher forcing，外部克隆评测会额外提供参考文本和参考 codec 前缀，再自由生成目标音频。不能仅因关闭 speaker encoder 就断言推理质量已解决。训练内 `eval.batch_size=32` 也不等于自由生成的 batch size；本轮生成始终为 **batch size 1**。全量样本规模、评分器、生成参数与结果目录见本节末的“全量评测：双采样后接双 greedy”。
 
 ### 十条双采样预检
 
@@ -547,9 +547,9 @@ Run 名称为 `supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1
 两轮采样均为 **0/10 达到 30 秒上限**。Step 17,500 的时长为 **2.48–15.84 秒**，没有低于 1 秒的输出；此前中文 index 2 的 0.32 秒变为 7.36 秒。这十条中未再观察到上一轮的极短输出，但仅凭长度不能确认是否完整读对，也不能证明全量生成稳定。没有进行 ASR、SIM 或人工听测；本次不报告可懂度或音质改善。全部十条已生成，测试进程已结束，旧全量任务继续暂停。
 
 
-### 全量双采样评测
+### 全量评测：双采样后接双 greedy
 
-十条预检完成后，按后续要求启动 **step 17,500 全量 Seed-TTS 双采样评测**，英文 1,088 条、中文 2,020 条。沿用纯 ICL、Auto、non-streaming、BF16 + SDPA、batch size 1、逐条 seed 和上述采样参数；本轮只跑双采样。
+十条预检完成后，按后续要求启动 **step 17,500 全量 Seed-TTS 双采样评测**，英文 1,088 条、中文 2,020 条。沿用纯 ICL、Auto、non-streaming、BF16 + SDPA、batch size 1、逐条 seed 和上述采样参数；按后续要求，双采样完成生成、评分及审计后，自动接同一 checkpoint 的全量双 greedy。Greedy 将 Talker 与 Code Predictor 的采样同时关闭，其余输入和评分设置保持一致。
 
 - 生成：GPU 0–7，共 8 个分片；每进程 PyTorch 分配上限 4 GiB，启动检查保留 0.5 GiB 余量。
 - 评分：GPU 0、1、6、7；英文 Whisper large-v3 WER、中文 SeACo-Paraformer CER、WavLM large + ECAPA 说话人相似度。先完成小样本评分和审计，再自动生成全量、评分、汇总和审计。
@@ -558,3 +558,8 @@ Run 名称为 `supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1
 - 后台会话：`seedtts-no-spk-s17500-sampling-full`。Step 10,000 的旧任务仍保持暂停。
 
 四条评分预检和审计已通过：英文两条 WER 均为 0，中文两条平均 CER 为 36.36%；样本太少，不能代表全量结果。首次全量启动因 5 卡可用显存略低于 4 GiB + 1 GiB 启动门槛而退出，随后维持 4 GiB 上限，将启动余量调整为 0.5 GiB 并恢复；复用原预检记录。尚无全量成绩。
+
+
+Greedy 已排队，使用独立目录 `UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu`；同样为 8 卡、batch size 1、纯 ICL、3,108 条。两组独立按 30 秒规则排除长音频，汇总时分别报告排除数量。
+
+接续脚本为 greedy 目录内的 `wait-and-run.py`，实际运行命令为 `run.sh`，后台会话为 `seedtts-no-spk-s17500-greedy-queued`。`queue_status.json` / `queue.log` 记录等待与接续状态；greedy 启动后的状态和日志为 `pipeline_status.json` / `run.log`，最终结果同样在 `full/summary.json`、`full/audit.json`。脚本等待 sampling 释放运行锁，再确认 checkpoint 身份、完成状态、审计通过以及 3,108 条全部已评分或按规则排除；若 sampling 失败或不完整，则停止接续，不启动 greedy。
