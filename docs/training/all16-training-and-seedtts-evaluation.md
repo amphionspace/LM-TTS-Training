@@ -506,10 +506,10 @@ FP32 对照使用同一份 BF16 舍入后的权重转为 FP32 计算，用于隔
 
 十条预检完成后，按后续要求启动 **step 17,500 全量 Seed-TTS 双采样评测**，英文 1,088 条、中文 2,020 条。沿用纯 ICL、Auto、non-streaming、BF16 + SDPA、batch size 1、逐条 seed 和上述采样参数；本轮只跑双采样。
 
-- 生成：GPU 0–7，共 8 个分片；每进程 PyTorch 分配上限 4 GiB，启动检查保留 1 GiB 余量。
+- 生成：GPU 0–7，共 8 个分片；每进程 PyTorch 分配上限 4 GiB，启动检查保留 0.5 GiB 余量。
 - 评分：GPU 0、1、6、7；英文 Whisper large-v3 WER、中文 SeACo-Paraformer CER、WavLM large + ECAPA 说话人相似度。先完成小样本评分和审计，再自动生成全量、评分、汇总和审计。
 - 统计：保留所有生成记录；超过 30 秒的音频按既有规则排除评分，并单独报告排除数量与比例，不能只看保留样本的均分。
 - 结果目录：`UltraEval-Audio/res/all16-no-spk-step17500-seedtts-sampling-bs1-20261012-8gpu`。复现命令为目录内的 `run.sh`，主日志 `run.log`，阶段状态 `pipeline_status.json`；最终结果为 `full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/icl_only/`。
 - 后台会话：`seedtts-no-spk-s17500-sampling-full`。Step 10,000 的旧任务仍保持暂停。
 
-当前已启动流程，尚无全量成绩。
+四条评分预检和审计已通过：英文两条 WER 均为 0，中文两条平均 CER 为 36.36%；样本太少，不能代表全量结果。首次全量启动因 5 卡可用显存略低于 4 GiB + 1 GiB 启动门槛而退出，随后维持 4 GiB 上限，将启动余量调整为 0.5 GiB 并恢复；复用原预检记录。尚无全量成绩。
