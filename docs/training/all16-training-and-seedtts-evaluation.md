@@ -2,7 +2,7 @@
 
 本报告记录 all16 的三种训练方案：**frozen-conditioning** 使用冻结的 TTS 文本 embedding / projector；**textbase** 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector；**no-speaker** 保留 frozen-conditioning 的文本前端与音频结构，移除 speaker embedding 条件后独立训练。三者共用同一数据划分。第 1–4 节说明共同设置与主要差异，第 5–9 节保留前两种方案的评测和诊断，第 10 节记录 no-speaker step 10,000，**第 11 节集中说明当前评测的 no-speaker step 17,500 模型及评测设置**。
 
-更新于 **2026-10-12**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。当前新增的是 **no-speaker step 17,500 的全量纯 ICL 评测，双采样完成后接双 greedy**，其模型说明见第 11 节；全量双采样结果已补入第 11 节，greedy 单独汇总。Step 10,000 的旧任务与 speaker-only 保持暂停。
+更新于 **2026-10-12**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。当前新增的是 **no-speaker step 17,500 的全量纯 ICL 评测，双采样完成后接双 greedy**，其模型说明见第 11 节；全量双采样与双 greedy 结果均已补入第 11 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -576,3 +576,19 @@ Run 名称为 `supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1
 Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu`；同样为 8 卡、batch size 1、纯 ICL、3,108 条。两组独立按 30 秒规则排除长音频，汇总时分别报告排除数量。
 
 接续脚本为 greedy 目录内的 `wait-and-run.py`，实际运行命令为 `run.sh`，后台会话为 `seedtts-no-spk-s17500-greedy-queued`。`queue_status.json` / `queue.log` 记录等待与接续状态；greedy 启动后的状态和日志为 `pipeline_status.json` / `run.log`，最终结果同样在 `full/summary.json`、`full/audit.json`。脚本等待 sampling 释放运行锁，再确认 checkpoint 身份、完成状态、审计通过以及 3,108 条全部已评分或按规则排除；若 sampling 失败或不完整，则停止接续，不启动 greedy。
+
+
+### Step 17,500 全量双 greedy 结果
+
+本组为同一 **no-speaker step 17,500、纯 ICL** 模型，Talker 与 Code Predictor 的采样均关闭，其余设置沿用上一组。于 **2026-10-12 08:51:52 UTC** 完成，接续流程与完整性审计均通过。3,108 条全部生成，其中 **546 条评分、2,562 条因超过 30 秒排除**；无未恢复的生成或评分错误。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| icl_only | seed_tts_eval_en | 1088/1088 | 197/197 | 44.859 | 26.335 | — | — | 完整（排除 891 条） |
+| icl_only | seed_tts_eval_zh | 2020/2020 | 349/349 | 91.902 | 9.121 | — | — | 完整（排除 1671 条） |
+
+英文排除 **891/1088（81.89%）**，中文排除 **1671/2020（82.72%）**，总排除率 **82.43%**。被排除的输出集中在约 30.16 秒的生成上限；`197/197` 和 `349/349` 是过滤后的评分覆盖，不是原始测试集的覆盖率。表中“完整”仅表示生成、评分及排除记录齐全，**不代表生成质量正常**。DNSMOS 未计算。
+
+与双采样的英文 0 条、中文 5 条超长输出相比，双 greedy 出现了大量无法在上限前结束的输出，且保留样本的内容错误率仍很高。两组按各自时长独立过滤，评分子集差异很大，不能把过滤后的均分差值视为同一批样本上的严格配对提升。
+
+原始证据：[结果表](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/summary.json) · [完整性审计及排除清单](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `icl_only/`。两组全量评测及自动接续现已完成。
