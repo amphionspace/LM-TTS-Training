@@ -37,10 +37,11 @@ train:
     decay_ratio: 0.1
     min_lr_ratio: 0.1
 
-  # 8 GPUs x 64k frames matches the Qwen emilia2 run's 16 x 32k global budget.
-  # Tokens count text + frames + 10 per sample, so raise them in the same ratio.
-  max_batch_frames: 64000
-  max_batch_tokens: 100000
+  # 64k frames OOMed in the Code Predictor on 80 GiB A800s; 48k keeps no accumulation
+  # (3/4 of the Qwen emilia2 run's 16 x 32k global budget). Tokens count
+  # text + frames + 10 per sample, so they scale in the same ratio.
+  max_batch_frames: 48000
+  max_batch_tokens: 75000
   accumulation: 1
   num_workers: 4
   prefetch_factor: 2
