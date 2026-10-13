@@ -10,7 +10,7 @@ data:
   build_id: supervised-tts-20261012-emilia2-reference
 
 train:
-  run_name: supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd
+  run_name: supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd
   precision: bf16
   mask_reference: true  # Exclude reference targets in all 16 codebooks; retain EOS.
   loss_reduction: token
@@ -29,10 +29,10 @@ train:
     decay_ratio: 0.1
     min_lr_ratio: 0.1
 
-  # Same per-GPU budgets; 16 GPUs x 2 microbatches replace 32 GPUs x 1.
+  # Same per-GPU budgets; one microbatch per optimizer step on 16 GPUs.
   max_batch_frames: 32000
   max_batch_tokens: 50000
-  accumulation: 2
+  accumulation: 1
   num_workers: 4
   prefetch_factor: 2
   length_bucket_size: 65536
