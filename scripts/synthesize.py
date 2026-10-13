@@ -30,6 +30,9 @@ def main():
     backend = "flash_attention_2" if dtype == torch.bfloat16 else "sdpa"
     export = verify_export(args.model)
     pure_codec = not export.get("use_speaker_embedding", True)
+    family = json.loads((args.model / "config.json").read_text()).get("model_type")
+    if family == "lfm2_tts" and not pure_codec:
+        raise ValueError("Speaker-conditioned LFM generation is not implemented")
     if pure_codec:
         validate_generation(config["generation"])
     rows = json.loads(args.prompts.read_text())

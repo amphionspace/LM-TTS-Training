@@ -25,6 +25,7 @@ class LfmTTSConfig:
     initializer_range: float = 0.02
     lm_tts_input_protocol: str = "qwen3_non_streaming"
     lm_tts_use_speaker_embedding: bool = False
+    lm_tts_freeze_speaker_encoder: bool = False
     lm_tts_freeze_text_frontend: bool = False
     lm_tts_text_projection: str = "identity"
     _attn_implementation: str = "sdpa"

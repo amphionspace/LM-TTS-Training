@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 
 import torch
+from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
 from qwen_tts.core.models.modeling_qwen3_tts import (
+    Qwen3TTSSpeakerEncoder,
     Qwen3TTSTalkerCodePredictorModelForConditionalGeneration,
     Qwen3TTSTalkerResizeMLP,
 )
@@ -56,15 +58,17 @@ class LfmTTSModel(CodecTTSModel):
             modules.append(self.talker.model.embed_tokens)
         return modules
 
-    def __init__(self, config):
+    def __init__(self, config, speaker_config=None):
         super().__init__()
         if not isinstance(config, LfmTTSConfig):
             backend = config._attn_implementation
             config = LfmTTSConfig.from_dict(config.to_dict())
             config._attn_implementation = backend
             config.code_predictor_config._attn_implementation = "sdpa"
-        if getattr(config, "lm_tts_use_speaker_embedding", False):
-            raise ValueError("LFM assembly supports pure codec conditioning only")
+        if config.lm_tts_use_speaker_embedding != (speaker_config is not None):
+            raise ValueError("LFM speaker conditioning requires exactly one speaker encoder config")
+        if config.lm_tts_use_speaker_embedding and not config.lm_tts_freeze_speaker_encoder:
+            raise ValueError("LFM speaker conditioning requires a frozen speaker encoder")
         if config.lm_tts_freeze_text_frontend:
             raise ValueError("LFM requires a trainable text frontend")
         if config.lm_tts_text_projection not in {"identity", "mlp"}:
@@ -82,10 +86,27 @@ class LfmTTSModel(CodecTTSModel):
         self.config = config
         self.talker = LfmTalker(config)
         self.speaker_encoder = None
+        if speaker_config is not None:
+            if speaker_config.enc_dim != config.hidden_size:
+                raise ValueError("Speaker embedding width must match the LFM hidden size")
+            from ..speaker import deterministic_speaker_padding
+
+            # Its default initialization is overwritten by the template weights; keep
+            # the global RNG stream identical to the pure-codec recipe.
+            with torch.random.fork_rng(devices=[]):
+                self.speaker_encoder = Qwen3TTSSpeakerEncoder(speaker_config)
+            deterministic_speaker_padding(self.speaker_encoder)
+            self.speaker_encoder.requires_grad_(False).eval()
         self.groups = config.num_code_groups
         self.code_size = config.code_predictor_config.vocab_size
         self.bos = config.codec_bos_id
         self.eos = config.codec_eos_token_id
+
+    def train(self, mode=True):
+        super().train(mode)
+        if self.speaker_encoder is not None:
+            self.speaker_encoder.eval()
+        return self
 
     @classmethod
     def from_assembled(
@@ -98,8 +119,6 @@ class LfmTTSModel(CodecTTSModel):
         directory = Path(directory)
         if not (directory / "ASSEMBLY_COMPLETE").is_file():
             raise ValueError("Require a completed LFM assembly")
-        if use_speaker_embedding not in (None, False):
-            raise ValueError("LFM assembly requires model.use_speaker_embedding=false")
         if attn_implementation not in {"sdpa", "flash_attention_2"}:
             raise ValueError("LFM requires sdpa or flash_attention_2")
         report = json.loads((directory / "assembly_report.json").read_text())
@@ -115,11 +134,19 @@ class LfmTTSModel(CodecTTSModel):
 
     @classmethod
     def from_config(cls, raw, attn_implementation="sdpa", use_speaker_embedding=None):
-        if use_speaker_embedding not in (None, False):
-            raise ValueError("LFM requires model.use_speaker_embedding=false")
         if attn_implementation not in {"sdpa", "flash_attention_2"}:
             raise ValueError("LFM requires sdpa or flash_attention_2")
         config = LfmTTSConfig.from_dict(raw["talker_config"])
+        # The assembly owns the speaker encoder weights, so conditioning cannot be toggled.
+        if use_speaker_embedding is not None and (
+            use_speaker_embedding != config.lm_tts_use_speaker_embedding
+        ):
+            raise ValueError("model.use_speaker_embedding disagrees with the LFM assembly")
         config._attn_implementation = attn_implementation
         config.code_predictor_config._attn_implementation = "sdpa"
-        return cls(config)
+        speaker = (
+            Qwen3TTSSpeakerEncoderConfig(**raw["speaker_encoder_config"])
+            if config.lm_tts_use_speaker_embedding
+            else None
+        )
+        return cls(config, speaker)

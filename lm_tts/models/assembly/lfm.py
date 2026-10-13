@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 import torch
+from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
 from safetensors.torch import save_file
 from transformers import AutoConfig, AutoTokenizer, PreTrainedTokenizerFast
 
@@ -15,7 +16,7 @@ from ..lfm.configuration import LfmTTSConfig
 from .common import TEXT_SPECIALS, copy_codec, load_prefix
 
 
-def prepare_config(backbone, template, text_frontend="native"):
+def prepare_config(backbone, template, text_frontend="native", speaker_encoder=False):
     if text_frontend not in {"native", "qwen-mlp"}:
         raise ValueError("text_frontend must be native or qwen-mlp")
     backbone, template = Path(backbone), Path(template)
@@ -54,7 +55,8 @@ def prepare_config(backbone, template, text_frontend="native"):
         lm_tts_lfm_config=base.to_dict(),
         lm_tts_text_projection="mlp" if text_frontend == "qwen-mlp" else "identity",
         lm_tts_input_protocol="qwen3_non_streaming",
-        lm_tts_use_speaker_embedding=False,
+        lm_tts_use_speaker_embedding=speaker_encoder,
+        lm_tts_freeze_speaker_encoder=speaker_encoder,
         lm_tts_freeze_text_frontend=False,
         lm_tts_role_ids=tokenizer.encode("<|im_start|>assistant\n", add_special_tokens=False),
         lm_tts_pad_token_id=tokenizer.convert_tokens_to_ids("<tts_pad>"),
@@ -69,20 +71,38 @@ def prepare_config(backbone, template, text_frontend="native"):
         "talker_config": config.to_dict(),
         **{key: tokenizer.convert_tokens_to_ids(token) for key, token in TEXT_SPECIALS.items()},
     }
+    if speaker_encoder:
+        speaker = {k: v for k, v in raw["speaker_encoder_config"].items() if k != "model_type"}
+        if speaker.get("enc_dim") != base.hidden_size:
+            raise ValueError("Template speaker embedding width must match the LFM hidden size")
+        artifact["speaker_encoder_config"] = speaker
     return config, artifact, tokenizer, added, len(source_vocab)
 
 
 def assemble(
-    backbone, template, codec, output, seed=42, dtype=torch.float32, *, text_frontend="native"
+    backbone,
+    template,
+    codec,
+    output,
+    seed=42,
+    dtype=torch.float32,
+    *,
+    text_frontend="native",
+    speaker_encoder=False,
 ):
     output = Path(output).resolve()
     if output.exists():
         raise ValueError(f"Output already exists: {output}")
     config, artifact, tokenizer, added, source_tokens = prepare_config(
-        backbone, template, text_frontend
+        backbone, template, text_frontend, speaker_encoder
     )
     torch.manual_seed(seed)
-    model = LfmTTSModel(config)
+    speaker_config = (
+        Qwen3TTSSpeakerEncoderConfig(**artifact["speaker_encoder_config"])
+        if speaker_encoder
+        else None
+    )
+    model = LfmTTSModel(config, speaker_config)
     source = load_prefix(backbone, "model.")
     original_embedding = source.pop("embed_tokens.weight")
     incompatible = model.talker.model.load_state_dict(source, strict=False)
@@ -101,7 +121,13 @@ def assemble(
         native[fresh_ids] = fresh
         if text_frontend == "qwen-mlp":
             target[:, config.hidden_size :].copy_(-native)
+    speaker_source = load_prefix(template, "speaker_encoder.") if speaker_encoder else {}
+    if speaker_encoder:
+        model.speaker_encoder.load_state_dict(speaker_source, strict=True)
     model.to(dtype=dtype)
+    for key, value in speaker_source.items():
+        if not torch.equal(model.speaker_encoder.state_dict()[key], value.to(dtype)):
+            raise ValueError(f"Template speaker tensor changed: speaker_encoder.{key}")
     # Check every reused tensor, not just a few representative layers.
     reused = model.talker.model.state_dict()
     for key, value in source.items():
@@ -130,7 +156,7 @@ def assemble(
             atol=1e-6 if dtype == torch.float32 else 0.01,
             rtol=1e-5 if dtype == torch.float32 else 0.01,
         )
-    del source, original_embedding, reused
+    del source, original_embedding, reused, speaker_source
     report = {
         "format_version": 1,
         "model_type": "lfm2_tts",
@@ -140,7 +166,9 @@ def assemble(
         "text_frontend": text_frontend,
         "text_projection_init": "paired-silu" if text_frontend == "qwen-mlp" else "identity",
         "freeze_text_frontend": False,
-        "use_speaker_embedding": False,
+        "use_speaker_embedding": speaker_encoder,
+        # Pure-codec reports predate this key; record it only when an encoder exists.
+        **({"freeze_speaker_encoder": True} if speaker_encoder else {}),
         "sources": {
             name: {
                 "resolved_directory": str(Path(path).resolve()),
@@ -158,7 +186,12 @@ def assemble(
             "added_tokens": added,
             "shared_rows_verified": int(shared.sum()),
         },
-        "loaded_modules": ["LFM layers", "LFM final norm", "LFM text embedding (shared rows)"],
+        "loaded_modules": ["LFM layers", "LFM final norm", "LFM text embedding (shared rows)"]
+        + (
+            ["frozen speaker encoder (speaker_encoder.* from the TTS template)"]
+            if speaker_encoder
+            else []
+        ),
         "new_modules": ["TTS token rows", "codec embedding/head", "5-layer Code Predictor"],
         "text_frontend_verification": {
             "probe_rows": len(probe_ids),

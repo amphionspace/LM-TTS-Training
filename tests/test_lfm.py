@@ -144,16 +144,11 @@ def test_pretrained_lr_and_no_duplicate_embedding(model):
     assert model.speaker_encoder is None
 
 
-@pytest.mark.parametrize("capacity", [8, 16])
-@pytest.mark.parametrize("text_frontend", ["native", "qwen-mlp"])
-def test_offline_assembly_preserves_vocab_and_reloads(tmp_path, capacity, text_frontend):
+def assembly_sources(tmp_path, capacity, speaker=False):
     from safetensors.torch import save_file
     from tokenizers import Tokenizer
     from tokenizers.models import WordLevel
-    from transformers import AutoTokenizer, Lfm2ForCausalLM, PreTrainedTokenizerFast
-
-    from lm_tts.models.assembly.lfm import assemble
-    from lm_tts.models.loading import load_model
+    from transformers import Lfm2ForCausalLM, PreTrainedTokenizerFast
 
     base_config = Lfm2Config.from_dict(tiny_config().lm_tts_lfm_config)
     base_config.vocab_size = capacity
@@ -200,6 +195,31 @@ def test_offline_assembly_preserves_vocab_and_reloads(tmp_path, capacity, text_f
     codec.mkdir()
     (codec / "config.json").write_text("{}")
     save_file({"fixture": torch.ones(1)}, codec / "model.safetensors")
+    if speaker:
+        from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
+        from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSSpeakerEncoder
+
+        raw = json.loads((template / "config.json").read_text())
+        raw["speaker_encoder_config"] = SPEAKER
+        (template / "config.json").write_text(json.dumps(raw))
+        torch.manual_seed(3)
+        encoder = Qwen3TTSSpeakerEncoder(Qwen3TTSSpeakerEncoderConfig(**SPEAKER))
+        save_file(
+            {f"speaker_encoder.{k}": v.bfloat16() for k, v in encoder.state_dict().items()},
+            template / "model.safetensors",
+        )
+    return backbone, template, codec, vocab, source, base_config
+
+
+@pytest.mark.parametrize("capacity", [8, 16])
+@pytest.mark.parametrize("text_frontend", ["native", "qwen-mlp"])
+def test_offline_assembly_preserves_vocab_and_reloads(tmp_path, capacity, text_frontend):
+    from transformers import AutoTokenizer
+
+    from lm_tts.models.assembly.lfm import assemble
+    from lm_tts.models.loading import load_model
+
+    backbone, template, codec, vocab, source, base_config = assembly_sources(tmp_path, capacity)
     output = tmp_path / "assembled"
     report = assemble(
         backbone, template, codec, output, dtype=torch.bfloat16, text_frontend=text_frontend
@@ -224,7 +244,7 @@ def test_offline_assembly_preserves_vocab_and_reloads(tmp_path, capacity, text_f
         )
         projected = loaded.talker.text_projection(weights[: len(vocab)])
         torch.testing.assert_close(projected, actual, atol=1e-6, rtol=1e-5)
-    with pytest.raises(ValueError, match="pure codec"):
+    with pytest.raises(ValueError, match="speaker encoder config"):
         config = tiny_config()
         config.lm_tts_use_speaker_embedding = True
         LfmTTSModel(config)
@@ -268,3 +288,143 @@ def test_bf16_flash_packing(model):
         grads.append(torch.cat([p.grad.float().flatten() for p in model.parameters()]))
     torch.testing.assert_close(*values, rtol=2e-3, atol=1e-3)
     assert (grads[0] - grads[1]).norm() / grads[0].norm() < 0.03
+
+
+SPEAKER = dict(
+    mel_dim=16,
+    enc_dim=64,
+    enc_channels=[32, 32, 32, 32, 96],
+    enc_attention_channels=16,
+    enc_res2net_scale=4,
+    enc_se_channels=16,
+)
+
+
+def speaker_model():
+    from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
+
+    config = tiny_config("qwen-mlp")
+    config.lm_tts_use_speaker_embedding = True
+    config.lm_tts_freeze_speaker_encoder = True
+    torch.manual_seed(71)
+    return LfmTTSModel(config, Qwen3TTSSpeakerEncoderConfig(**SPEAKER))
+
+
+def speaker_rows():
+    generator = torch.Generator().manual_seed(5)
+    return [
+        {**row, "speaker_embedding": torch.randn(64, generator=generator) * 10, **extra}
+        for row, extra in zip(
+            rows(),
+            [
+                {"reference_interval": (1, 3)},
+                {"reference_interval": (0, 1), "codes": torch.arange(48, 96).reshape(3, 16)},
+            ],
+        )
+    ]
+
+
+def test_speaker_encoder_does_not_change_other_initialization():
+    torch.manual_seed(71)
+    plain = LfmTTSModel(tiny_config("qwen-mlp"))
+    spk = speaker_model()
+    for name, value in plain.state_dict().items():
+        torch.testing.assert_close(spk.state_dict()[name], value, rtol=0, atol=0)
+    assert {k for k in spk.state_dict() if k not in plain.state_dict()} == {
+        k for k in spk.state_dict() if k.startswith("speaker_encoder.")
+    }
+
+
+def test_speaker_is_frozen_excluded_and_placed_like_qwen():
+    model = speaker_model().train()
+    assert not model.speaker_encoder.training
+    assert not any(p.requires_grad for p in model.speaker_encoder.parameters())
+    groups = parameter_groups(model, {"lr": 3e-4, "backbone_lr": 1e-4})
+    grouped = {id(p) for g in groups for p in g["params"]}
+    assert not grouped & {id(p) for p in model.speaker_encoder.parameters()}
+    assert grouped == {id(p) for p in model.parameters() if p.requires_grad}
+    plain = LfmTTSModel(tiny_config("qwen-mlp"))
+    assert model.prefix_tokens == plain.prefix_tokens + 1
+    batch = collate(speaker_rows()[:1])
+    with torch.no_grad():
+        inputs, audio = model.input_embeddings(batch)
+    roles = len(model.config.lm_tts_role_ids)
+    # Qwen non-streaming layout: role, three think controls, speaker, text, BOS, frames.
+    speaker = inputs["inputs_embeds"][0, roles + 3]
+    text_pad = model.talker.text_projection(
+        model.talker.model.text_embedding(torch.tensor([model.config.lm_tts_pad_token_id]))
+    )[0]
+    torch.testing.assert_close(speaker, batch["speaker_embeddings"][0] + text_pad)
+    assert audio[0].item() == model.prefix_tokens + len(batch["text_ids"]) - 1
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_speaker_masked_batch_matches_individual(packed):
+    model = speaker_model().eval()
+    if packed:
+        model.config._attn_implementation = "flash_attention_2"
+    losses, gradients = [], []
+    for batches in ([speaker_rows()], [[r] for r in speaker_rows()]):
+        model.zero_grad(set_to_none=True)
+        total = 0
+        for rs in batches:
+            batch = collate(rs)
+            out = tts_loss(model(batch), batch, model.eos)
+            loss = out["first_sum"] / 3 + 0.3 * out["residual_sum"] / 15
+            loss.backward()
+            total += loss.detach()
+        losses.append(total)
+        gradients.append(
+            {n: p.grad.clone() for n, p in model.named_parameters() if p.grad is not None}
+        )
+    torch.testing.assert_close(*losses, atol=2e-6, rtol=2e-6)
+    assert gradients[0].keys() == gradients[1].keys()
+    assert not any(k.startswith("speaker_encoder.") for k in gradients[0])
+    for name in gradients[0]:
+        torch.testing.assert_close(gradients[0][name], gradients[1][name], atol=2e-6, rtol=2e-3)
+
+
+def test_speaker_packing_isolates_other_samples():
+    model = speaker_model().eval()
+    model.config._attn_implementation = "flash_attention_2"
+    original = speaker_rows()
+    with torch.no_grad():
+        expected = model.hidden(collate(original))
+        changed = copy.deepcopy(original)
+        changed[0]["codes"].fill_(80)
+        changed[0]["speaker_embedding"] = -changed[0]["speaker_embedding"]
+        torch.testing.assert_close(model.hidden(collate(changed))[4:], expected[4:], rtol=0, atol=0)
+
+
+def test_speaker_assembly_only_adds_the_template_encoder(tmp_path):
+    from lm_tts.models.assembly.common import load_prefix
+    from lm_tts.models.assembly.lfm import assemble
+    from lm_tts.models.loading import load_model
+
+    backbone, template, codec, *_ = assembly_sources(tmp_path, 16, speaker=True)
+    outputs = {}
+    for speaker in (False, True):
+        outputs[speaker] = tmp_path / f"assembled-{speaker}"
+        report = assemble(
+            backbone,
+            template,
+            codec,
+            outputs[speaker],
+            text_frontend="qwen-mlp",
+            speaker_encoder=speaker,
+        )
+        assert report["use_speaker_embedding"] is speaker
+    plain = load_model(outputs[False], attn_implementation="sdpa")
+    spk = load_model(outputs[True], attn_implementation="sdpa")
+    assert spk.config.lm_tts_freeze_speaker_encoder
+    for name, value in plain.state_dict().items():
+        torch.testing.assert_close(spk.state_dict()[name], value, rtol=0, atol=0)
+    expected = load_prefix(template, "speaker_encoder.")
+    actual = spk.speaker_encoder.state_dict()
+    assert actual.keys() == expected.keys()
+    for name, value in expected.items():
+        torch.testing.assert_close(actual[name].bfloat16(), value, rtol=0, atol=0)
+    with pytest.raises(ValueError, match="disagrees with the LFM assembly"):
+        load_model(outputs[True], attn_implementation="sdpa", use_speaker_embedding=False)
+    with pytest.raises(ValueError, match="disagrees with the LFM assembly"):
+        load_model(outputs[False], attn_implementation="sdpa", use_speaker_embedding=True)

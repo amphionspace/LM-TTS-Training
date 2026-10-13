@@ -28,10 +28,16 @@ def main():
         default="native",
         help="qwen-mlp doubles the LFM text width and adds a paired-initialized SiLU MLP",
     )
+    parser.add_argument(
+        "--speaker-encoder",
+        action="store_true",
+        help="Add the template's frozen speaker encoder for cached speaker embeddings",
+    )
     args = parser.parse_args()
     if args.output is None:
         suffix = "-text2048" if args.text_frontend == "qwen-mlp" else ""
-        args.output = root / f"assets/assembled/lfm2.5-230m-base{suffix}-pure-codec"
+        kind = "spk" if args.speaker_encoder else "pure-codec"
+        args.output = root / f"assets/assembled/lfm2.5-230m-base{suffix}-{kind}"
     torch.set_num_threads(4)
     report = assemble(
         args.backbone,
@@ -41,6 +47,7 @@ def main():
         seed=args.seed,
         dtype=getattr(torch, args.dtype),
         text_frontend=args.text_frontend,
+        speaker_encoder=args.speaker_encoder,
     )
     print(
         json.dumps(

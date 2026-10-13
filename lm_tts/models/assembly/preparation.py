@@ -18,10 +18,18 @@ def assembly_recipe(config):
         raise ValueError("assembly must be a mapping")
     family = overrides.get("family", "qwen3")
     if family == "lfm2":
-        recipe = {"family": "lfm2", "seed": 42, "dtype": "float32", "text_frontend": "native"}
+        recipe = {
+            "family": "lfm2",
+            "seed": 42,
+            "dtype": "float32",
+            "text_frontend": "native",
+            "speaker_encoder": False,
+        }
         overrides = config["assembly"]
         if set(overrides) - set(recipe):
-            raise ValueError("LFM assembly only accepts family, seed, dtype and text_frontend")
+            raise ValueError(
+                "LFM assembly only accepts family, seed, dtype, text_frontend and speaker_encoder"
+            )
         recipe.update(overrides)
         if type(recipe["seed"]) is not int or recipe["seed"] < 0:
             raise ValueError("assembly.seed must be a nonnegative integer")
@@ -29,6 +37,8 @@ def assembly_recipe(config):
             raise ValueError("Invalid assembly dtype")
         if recipe["text_frontend"] not in {"native", "qwen-mlp"}:
             raise ValueError("LFM text_frontend must be native or qwen-mlp")
+        if type(recipe["speaker_encoder"]) is not bool:
+            raise ValueError("assembly.speaker_encoder must be boolean")
         return recipe
     if family != "qwen3":
         raise ValueError(f"Unsupported assembly family: {family}")
@@ -117,6 +127,7 @@ def prepare_lfm(config, recipe):
             seed=recipe["seed"],
             dtype=getattr(torch, recipe["dtype"]),
             text_frontend=recipe["text_frontend"],
+            speaker_encoder=recipe["speaker_encoder"],
         )
     report = json.loads((assembled / "assembly_report.json").read_text())
     if report.get("text_frontend", "native") != recipe["text_frontend"]:
@@ -125,6 +136,8 @@ def prepare_lfm(config, recipe):
         "model_type": "lfm2_tts",
         "seed": recipe["seed"],
         "dtype": recipe["dtype"],
+        "use_speaker_embedding": recipe["speaker_encoder"],
+        "freeze_speaker_encoder": recipe["speaker_encoder"] or None,
     }.items():
         if report.get(key) != value:
             raise ValueError(f"Assembled recipe mismatch for {key}: {assembled}")

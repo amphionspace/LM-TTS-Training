@@ -35,6 +35,7 @@ def prepare(
     reference_masking=False,
     model_family="qwen",
     lfm_text_frontend="native",
+    lfm_speaker=False,
 ):
     root.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(2)
@@ -50,12 +51,13 @@ def prepare(
     talker.codec_think_eos_id = 2153
     talker.lm_tts_freeze_speaker_encoder = True
     talker.lm_tts_freeze_text_frontend = not train_text_frontend
+    speaker = {"enc_dim": 64, "mel_dim": 8, "enc_channels": [16, 16, 16, 16, 48]}
     config = Qwen3TTSConfig(
         talker_config=talker.to_dict(),
         tts_model_type="base",
         tts_bos_token_id=200,
         tts_eos_token_id=201,
-        speaker_encoder_config={"enc_dim": 64, "mel_dim": 8, "enc_channels": [16, 16, 16, 16, 48]},
+        speaker_encoder_config=speaker,
     )
     assembled = root / "assembled"
     if model_family == "lfm":
@@ -65,7 +67,12 @@ def prepare(
         from lm_tts.models.lfm import LfmTTSModel
 
         talker = tiny_config(lfm_text_frontend)
-        model = LfmTTSModel(talker)
+        speaker_config = None
+        if lfm_speaker:
+            talker.lm_tts_use_speaker_embedding = True
+            talker.lm_tts_freeze_speaker_encoder = True
+            speaker_config = config.speaker_encoder_config
+        model = LfmTTSModel(talker, speaker_config)
         assembled.mkdir()
         save_file(model.state_dict(), assembled / "model.safetensors")
         (assembled / "config.json").write_text(
@@ -75,10 +82,11 @@ def prepare(
                     "talker_config": model.config.to_dict(),
                     "tts_bos_token_id": 200,
                     "tts_eos_token_id": 201,
+                    **({"speaker_encoder_config": speaker} if lfm_speaker else {}),
                 }
             )
         )
-        use_speaker_embedding = False
+        use_speaker_embedding = lfm_speaker
         train_text_frontend = True
     else:
         model = Qwen3TTSForConditionalGeneration(config)
@@ -213,7 +221,9 @@ def compare(root, precision, world_size):
     baseline = load_file(root / "assembled/model.safetensors")
     config = json.loads((root / "assembled/config.json").read_text())
     text_frozen = config["talker_config"]["lm_tts_freeze_text_frontend"]
-    text_prefixes = ("talker.model.text_embedding.", "talker.text_projection.")
+    # LFM registers its text embedding under the native embed_tokens name.
+    embedding = "embed_tokens" if config["model_type"] == "lfm2_tts" else "text_embedding"
+    text_prefixes = (f"talker.model.{embedding}.", "talker.text_projection.")
     frozen = ("speaker_encoder.",) + (text_prefixes if text_frozen else ())
     for key in baseline:
         if key.startswith(frozen):
@@ -261,6 +271,9 @@ def main():
     parser.add_argument("--train-text-frontend", action="store_true")
     parser.add_argument("--no-speaker-embedding", action="store_true")
     parser.add_argument("--reference-masking", action="store_true")
+    parser.add_argument("--model-family", choices=["qwen", "lfm"], default="qwen")
+    parser.add_argument("--lfm-text-frontend", choices=["native", "qwen-mlp"], default="native")
+    parser.add_argument("--lfm-speaker", action="store_true")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare-only", action="store_true")
     mode.add_argument("--compare-only", action="store_true")
@@ -288,6 +301,9 @@ def main():
         train_text_frontend=args.train_text_frontend,
         use_speaker_embedding=not args.no_speaker_embedding,
         reference_masking=args.reference_masking,
+        model_family=args.model_family,
+        lfm_text_frontend=args.lfm_text_frontend,
+        lfm_speaker=args.lfm_speaker,
     )
     if args.prepare_only:
         print(json.dumps({"prepared": str(root), "rows": args.rows}))
