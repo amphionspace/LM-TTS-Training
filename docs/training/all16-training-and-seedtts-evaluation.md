@@ -2,7 +2,7 @@
 
 本报告记录 all16 的三种训练方案：**frozen-conditioning** 使用冻结的 TTS 文本 embedding / projector；**textbase** 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector；**no-speaker** 保留 frozen-conditioning 的文本前端与音频结构，移除 speaker embedding 条件后独立训练。三者共用同一数据划分。第 1–4 节说明共同设置与主要差异，第 5–9 节保留前两种方案的评测和诊断，第 10 节记录 no-speaker step 10,000，**第 11 节记录 no-speaker step 17,500 的结构、设置和完整结果，第 12 节记录同一实验 step 25,000 的接续评测**。
 
-更新于 **2026-10-13**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；本轮新增 **no-speaker step 25,000 全量纯 ICL 评测，先双采样、后双 greedy**，进展见第 12 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
+更新于 **2026-10-13**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；本轮新增 **no-speaker step 25,000 全量纯 ICL 评测：双采样已完成，双 greedy 正在运行**，结果与进展见第 12 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -614,6 +614,24 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 | 生成音频与逐条评分 | 各目录内的 `full/icl_only/` |
 | Greedy 接续控制 | Greedy 目录内的 `wait-and-run.py`、`queue_status.json`、`queue.log` |
 
-接续脚本等待双采样释放运行锁，再验证 checkpoint 身份、双采样设置、审计通过以及全部 3,108 条均已评分或按规则排除；若前一阶段失败则不启动 greedy。四条预检的生成、ASR / SIM 评分和完整性审计均已通过：英文两条平均 WER **0.000%**、SIM **50.753%**，中文两条平均 CER **6.818%**、SIM **69.232%**；无超长排除，音频时长 2.08–9.84 秒。这只是预检，不代表全量质量。当前双采样已进入八卡全量生成，双 greedy 等待接续，尚无全量评分结果。
+接续脚本等待双采样释放运行锁，再验证 checkpoint 身份、双采样设置、审计通过以及全部 3,108 条均已评分或按规则排除；若前一阶段失败则不启动 greedy。四条预检的生成、ASR / SIM 评分和完整性审计均已通过：英文两条平均 WER **0.000%**、SIM **50.753%**，中文两条平均 CER **6.818%**、SIM **69.232%**；无超长排除，音频时长 2.08–9.84 秒。这只是预检，不代表全量质量。全量双采样现已完成，结果见下文；双 greedy 已自动接续，当前处于全量生成阶段，尚无完整评分结果。
 
 导出权重 SHA256：`1f2abbedf3f0cbdee1397ec34ba798a0f09a897a692135b08953dbdaf491bf89`。导出配置、文本 tokenizer 和音频 tokenizer 权重均与 step 17,500 一致。后台会话分别为 `seedtts-no-spk-s25000-sampling-full`、`seedtts-no-spk-s25000-greedy-queued`；状态以各目录中的 JSON 文件为准。
+
+
+### Step 25,000 全量双采样结果
+
+本组为 **no-speaker、纯 ICL、Talker / Code Predictor 双采样**，于 **2026-10-13 05:10:30 UTC** 完成。**3,108 条全部生成并评分，无超过 30 秒的排除项**；完整性审计通过，无未恢复的生成或评分错误。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| icl_only | seed_tts_eval_en | 1088/1088 | 1088/1088 | 3.508 | 47.483 | — | — | 完整 |
+| icl_only | seed_tts_eval_zh | 2020/2020 | 2020/2020 | 7.325 | 56.077 | — | — | 完整 |
+
+英文报告 WER，中文报告 CER，均为逐句错误率的算术平均；SIM 为余弦相似度乘 100。英文最长音频 **26.48 秒**，中文最长 **25.28 秒**，两组评分分母均为完整测试集。DNSMOS 未计算，`—` 不表示零分。
+
+与第 11 节 step 17,500 的同设置双采样相比，英文 WER **4.398% → 3.508%**、SIM **44.778% → 47.483%**；中文 CER **22.659% → 7.325%**、SIM **48.587% → 56.077%**，中文超长排除从 **5 条降为 0 条**。本轮汇总指标更好；中文前一轮只评分 2,015 条，本轮评分全部 2,020 条，因此中文均分并非严格相同子集上的配对比较。
+
+原始证据：[结果表](../../../UltraEval-Audio/res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `icl_only/`。
+
+双 greedy 于 **05:10:31 UTC** 自动接续，目前已通过预检并进入全量生成，完整结果待补充；本节上述数值仅属于双采样。
