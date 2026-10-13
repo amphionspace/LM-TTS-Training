@@ -1,8 +1,8 @@
 # All16 训练与 Seed-TTS 评测
 
-本报告记录 all16 的三种训练方案：**frozen-conditioning** 使用冻结的 TTS 文本 embedding / projector；**textbase** 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector；**no-speaker** 保留 frozen-conditioning 的文本前端与音频结构，移除 speaker embedding 条件后独立训练。三者共用同一数据划分。第 1–4 节说明共同设置与主要差异，第 5–9 节保留前两种方案的评测和诊断，第 10 节记录 no-speaker step 10,000，**第 11 节集中说明当前评测的 no-speaker step 17,500 模型及评测设置**。
+本报告记录 all16 的三种训练方案：**frozen-conditioning** 使用冻结的 TTS 文本 embedding / projector；**textbase** 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector；**no-speaker** 保留 frozen-conditioning 的文本前端与音频结构，移除 speaker embedding 条件后独立训练。三者共用同一数据划分。第 1–4 节说明共同设置与主要差异，第 5–9 节保留前两种方案的评测和诊断，第 10 节记录 no-speaker step 10,000，**第 11 节记录 no-speaker step 17,500 的结构、设置和完整结果，第 12 节记录同一实验 step 25,000 的接续评测**。
 
-更新于 **2026-10-12**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。当前新增的是 **no-speaker step 17,500 的全量纯 ICL 评测，双采样完成后接双 greedy**，其模型说明见第 11 节；全量双采样与双 greedy 结果均已补入第 11 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
+更新于 **2026-10-13**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；本轮新增 **no-speaker step 25,000 全量纯 ICL 评测，先双采样、后双 greedy**，进展见第 12 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | frozen-conditioning | `configs/supervised-tts-20260929-all16-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml` | `assets/assembled/qwen3-tts-frozen-conditioning` | `pt-blb39rgw`；最终 step 47382 |
 | textbase，可训练文本前端 | `configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32gpu-lr3e-4-bblr1e-4-ep3-wsd.yaml` | `assets/assembled/qwen3-tts-text-base-trainable-random-projector` | `pt-u0ys9osd`；本报告已评测 step 17500 / 25000 |
-| no-speaker，冻结文本前端、无 speaker 条件 | `configs/supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd.yaml` | `assets/assembled/qwen3-tts-frozen-conditioning` | `pt-6epa7d0g` 为首次训练作业；当前评测 step 17500 |
+| no-speaker，冻结文本前端、无 speaker 条件 | `configs/supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd.yaml` | `assets/assembled/qwen3-tts-frozen-conditioning` | `pt-6epa7d0g` 为首次训练作业；step 17500 已完成，当前评测 step 25000 |
 
 三种实验 YAML 的 `train.run_name` 与文件名去掉 `.yaml` 一致；输出统一为 `/workspace/LM-TTS-Training-Runs/<run_name>/`。`/workspace/workspace/yanglin/LM-TTS-Training-Runs` 是其软链接。
 
@@ -592,3 +592,28 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 与双采样的英文 0 条、中文 5 条超长输出相比，双 greedy 出现了大量无法在上限前结束的输出，且保留样本的内容错误率仍很高。两组按各自时长独立过滤，评分子集差异很大，不能把过滤后的均分差值视为同一批样本上的严格配对提升。
 
 原始证据：[结果表](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/summary.json) · [完整性审计及排除清单](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `icl_only/`。两组全量评测及自动接续现已完成。
+
+
+## 12. No-speaker step 25,000：全量双采样与双 greedy（2026-10-13）
+
+本轮读取同一 no-speaker run 的 `checkpoints/step-00025000`，不是 textbase step 25,000。`COMPLETE` 标记、组装身份与 `use_speaker_embedding=false` 已核对。Checkpoint 记录 `world_size=16`、`epoch=1`（从 0 计数），本 epoch 已消费 **75,174,926** 条样本。结构、冻结范围、全部 16 个数据集、固定划分和训练设置均沿用第 11 节；只更换 checkpoint 权重。
+
+评测继续使用 **纯 ICL、Auto、non-streaming、BF16 + SDPA、batch size 1**，英文 1,088 条、中文 2,020 条。先运行 Talker / Code Predictor 双采样（top-k 50、top-p 1.0、temperature 0.9），完成生成、评分与完整性审计后自动接双 greedy；逐条 seed、输入及评分规则与 step 17,500 一致。两组均先进行中英文各 2 条生成、评分和审计预检。
+
+- 导出模型：`UltraEval-Audio/init_model/all16-no-spk-step-00025000`，保存 FP32 权重及配套 tokenizer；无 speaker 标记要求推理显式省略 speaker 位置。
+- 生成使用 GPU 0–7；每进程分配上限 4 GiB、启动预留 0.5 GiB。评分使用 GPU 0–3，以避开其他卡上已有任务的显存压力。
+- 指标仍为英文 Whisper large-v3 WER、中文 SeACo-Paraformer CER、WavLM large + ECAPA SIM；不计算 DNSMOS。
+- 各组独立排除超过 30 秒的输出，同时保留并报告排除数量与比例。尤其需要检查 step 17,500 双 greedy 的大量超长输出是否仍存在；过滤后的评分不能代替全量生成成功率。
+
+| 内容 | `UltraEval-Audio/` 下的路径 |
+| --- | --- |
+| 全量双采样 | `res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/` |
+| 全量双 greedy | `res/all16-no-spk-step25000-seedtts-greedy-bs1-20261013-8gpu/` |
+| 每组命令、状态、日志 | 各目录内的 `run.sh`、`pipeline_status.json`、`run.log` |
+| 完成后的结果与审计 | 各目录内的 `full/results_table.md`、`full/summary.json`、`full/audit.json` |
+| 生成音频与逐条评分 | 各目录内的 `full/icl_only/` |
+| Greedy 接续控制 | Greedy 目录内的 `wait-and-run.py`、`queue_status.json`、`queue.log` |
+
+接续脚本等待双采样释放运行锁，再验证 checkpoint 身份、双采样设置、审计通过以及全部 3,108 条均已评分或按规则排除；若前一阶段失败则不启动 greedy。四条预检的生成、ASR / SIM 评分和完整性审计均已通过：英文两条平均 WER **0.000%**、SIM **50.753%**，中文两条平均 CER **6.818%**、SIM **69.232%**；无超长排除，音频时长 2.08–9.84 秒。这只是预检，不代表全量质量。当前双采样已进入八卡全量生成，双 greedy 等待接续，尚无全量评分结果。
+
+导出权重 SHA256：`1f2abbedf3f0cbdee1397ec34ba798a0f09a897a692135b08953dbdaf491bf89`。导出配置、文本 tokenizer 和音频 tokenizer 权重均与 step 17,500 一致。后台会话分别为 `seedtts-no-spk-s25000-sampling-full`、`seedtts-no-spk-s25000-greedy-queued`；状态以各目录中的 JSON 文件为准。
