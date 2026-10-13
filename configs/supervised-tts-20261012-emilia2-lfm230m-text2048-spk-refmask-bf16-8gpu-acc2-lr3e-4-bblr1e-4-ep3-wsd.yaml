@@ -49,8 +49,8 @@ train:
   log_every: 10
   first_check_step: 100
   keep_checkpoints: null
-  save_every: 2500
-  eval_every: 2500
+  save_every: 1000
+  eval_every: 1000
 
 eval:
   batch_size: 32
