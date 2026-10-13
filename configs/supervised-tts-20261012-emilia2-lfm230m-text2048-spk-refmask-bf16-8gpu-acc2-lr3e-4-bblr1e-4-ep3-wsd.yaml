@@ -18,7 +18,7 @@ data:
   build_id: supervised-tts-20261012-emilia2-reference-lfm2.5-230m
 
 train:
-  run_name: supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf16-8gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd
+  run_name: supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf16-8gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd
   precision: bf16
   mask_reference: true  # Exclude reference targets in all 16 codebooks; retain EOS.
   loss_reduction: token
@@ -37,12 +37,11 @@ train:
     decay_ratio: 0.1
     min_lr_ratio: 0.1
 
-  # 64k frames OOMed in the Code Predictor on 80 GiB A800s; 48k keeps no accumulation
-  # (3/4 of the Qwen emilia2 run's 16 x 32k global budget). Tokens count
-  # text + frames + 10 per sample, so they scale in the same ratio.
-  max_batch_frames: 48000
-  max_batch_tokens: 75000
-  accumulation: 1
+  # 64k and 48k frames ran out of memory in the Code Predictor on 80 GiB A800s.
+  # 8 GPUs x 32k frames x 2 microbatches matches the Qwen emilia2 run's 16 x 32k.
+  max_batch_frames: 32000
+  max_batch_tokens: 50000
+  accumulation: 2
   num_workers: 4
   prefetch_factor: 2
   length_bucket_size: 65536
