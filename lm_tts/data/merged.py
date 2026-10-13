@@ -149,11 +149,22 @@ def bind_merged(
         )
         dataset = configured["dataset_id"]
         selected = next((s for s in selection["outputs"] if s["dataset_id"] == dataset), None)
+        # Reference merges drop targets without a legal reference crop; sources still cover
+        # the full selection, so account for the published exclusions instead of dropping rows.
+        source_rows = manifest["rows"]
+        if manifest["profile"].get("speaker_mode") == "codec_grid_reference":
+            filtering = manifest.get("reference_filtering", {})
+            source_rows = filtering.get("input_rows")
+            if (
+                filtering.get("retained") != manifest["rows"]
+                or source_rows - sum(filtering["excluded_reasons"].values()) != manifest["rows"]
+            ):
+                raise ValueError("Invalid published reference subset")
         if (
             manifest["dataset_id"] != dataset
             or manifest["target_kind"] != "sample"
             or selected is None
-            or selected["selected_rows"] != manifest["rows"]
+            or selected["selected_rows"] != source_rows
             or manifest["selection"]["manifest_sha256"] != selection_hash
             or manifest["coverage"]["ok"] != manifest["rows"]
             or manifest["rows"] < 1
@@ -181,11 +192,18 @@ def bind_merged(
                 or source_manifest["lance_version"] != source["lance_version"]
                 or source_manifest["dataset_id"] != dataset
                 or source_manifest["release_id"] != manifest["release_id"]
-                or source_manifest["rows"] != manifest["rows"]
+                or source_manifest["rows"] != source_rows
                 or source_manifest["selection"]["manifest_sha256"] != selection_hash
             ):
                 raise ValueError("Merged source identity, profile or selection changed")
             sources[kind], source_manifests[kind] = source, source_manifest
+        policy = source_manifests["speaker"]["profile"].get("reference", {})
+        if manifest["profile"].get("speaker_mode") == "codec_grid_reference" and (
+            policy.get("version"),
+            policy.get("codec_sample_rate"),
+            policy.get("codec_hop_samples"),
+        ) != ("codec-grid-reference-v1", 24000, 1920):
+            raise ValueError("Unsupported reference timing profile")
         binding = {
             "binding_slot": slot,
             "dataset_id": dataset,
@@ -281,6 +299,7 @@ def bind_merged(
     unbound = [
         s for s in selection["outputs"] if s["dataset_id"] not in names and s["selected_rows"]
     ]
+    reference = all(is_reference(b) for b in bound)
     manifest = {
         "contract_version": "v0.1",
         "status": "complete",
@@ -288,13 +307,14 @@ def bind_merged(
         "representation": "merged_indexed_references",
         "build_id": output.name,
         "reference_policy": "self",
-        "reference_scope": "target",
+        "reference_scope": "codec_grid_reference" if reference else "target",
         "reference_count": 1,
         "model_protocol": {
             "conditioning": "speaker_only",
             "requires_reference_text": False,
             "requires_reference_codec": False,
             "uses_speaker_conditioning": True,
+            **({"loss_mask": "reference_codec_interval"} if reference else {}),
         },
         "speaker_conditioning_mode": "frozen_embedding",
         "evaluation": recipe["evaluation"],

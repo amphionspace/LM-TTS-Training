@@ -1,0 +1,18 @@
+extends: base.yaml
+
+# ---- emilia2 only: cropped speaker references on selection-v2 (upstream test splits held out) ----
+root: ${paths.features}
+selection_manifest: selections/tts-selection-supervised-tts-20261012T123927bjt-01/manifest.json
+tokenizer: ${paths.assembled_model}
+workers: 4
+
+reference_policy: self
+speaker_conditioning_mode: frozen_embedding
+evaluation: no_holdout  # The source build is partitioned into train / validation below.
+validation_fraction: 0.001
+split_seed: 42
+
+# Targets without a legal reference crop are excluded by the published merge.
+bindings:
+  - dataset_id: emilia2
+    merged_manifest: datasets/emilia2/v0.1/features/merged/emilia2-merged-reference-features-v1-20261013T063612bjt-01/manifest.json

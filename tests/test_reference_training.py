@@ -183,6 +183,35 @@ def test_reference_build_keeps_ids_tokens_and_holdout(tmp_path):
         validate_row(row, train.bindings[0])
 
 
+def test_filtered_reference_merge_builds_without_baseline(tmp_path):
+    build, _, removed = reference_fixture(tmp_path)
+    recipe = json.loads((build / "data_recipe.json").read_text())
+    recipe.pop("reuse_build")
+    path = Path(recipe["bindings"][0]["merged_manifest"])
+    selection_path = Path(recipe["root"]) / "selection.json"
+    selection = json.loads(selection_path.read_text())
+    arguments = (selection, selection_path, file_hash(selection_path), {"sha256": "fixture"})
+    manifest = bind_merged(recipe, tmp_path / "fresh", *arguments[:3], arguments[3], Tokenizer())
+    assert manifest["reference_scope"] == "codec_grid_reference"
+    assert manifest["model_protocol"]["loss_mask"] == "reference_codec_interval"
+    split_build(tmp_path / "fresh/manifest.json", fraction=0.25)
+    train = FeatureDataset(tmp_path / "fresh/train/manifest.json", (200, 201), mask_reference=True)
+    val = FeatureDataset(
+        tmp_path / "fresh/validation/manifest.json", (200, 201), mask_reference=True
+    )
+    ids = {int(ds[i]["id"], 16) for ds in (train, val) for i in range(len(ds))}
+    assert ids == set(range(8)) - removed
+    row = train[0]
+    a, b = row["reference_interval"]
+    assert collate([row])["supervised_frame_lengths"].item() == len(row["codes"]) - (b - a)
+
+    merged = json.loads(path.read_text())
+    merged["reference_filtering"]["excluded_reasons"]["no_legal_reference"] = 1
+    path.write_text(json.dumps(merged))
+    with pytest.raises(ValueError, match="reference subset"):
+        bind_merged(recipe, tmp_path / "bad", *arguments[:3], arguments[3], Tokenizer())
+
+
 @pytest.mark.parametrize("reduction", ["token", "sample", "sqrt"])
 def test_reference_loss_matches_explicit_targets_and_accumulation(reduction):
     torch.manual_seed(123)
