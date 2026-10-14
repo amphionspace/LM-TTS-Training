@@ -1,0 +1,66 @@
+extends: base.yaml
+
+# ---- Model: Qwen3-0.6B-Base text embedding with a near-identity trainable projector ----
+# Single-variable control for the Qwen emilia2 refmask run: only the text frontend differs.
+# near-identity keeps the Base embeddings the Talker layers were pretrained on (2·SiLU(x) ≈ x),
+# unlike the textbase run's random projector. See docs/training/text-frontend-analysis-20261014.md.
+paths:
+  assembled_model: ${paths.project}/assets/assembled/qwen3-tts-text-base-trainable-near-identity
+
+assembly:
+  text_initialization: text-base
+  text_projection_init: near-identity
+  train_text_frontend: true
+  train_speaker_encoder: false
+  input_protocol: qwen3_non_streaming
+  seed: 42
+  dtype: float32
+
+model:
+  use_speaker_embedding: true
+
+# ---- Data: same emilia2 build and holdout as the Qwen emilia2 refmask run ----
+data:
+  config: ${paths.project}/configs/data-emilia2-reference.yaml
+  build_id: supervised-tts-20261012-emilia2-reference
+
+train:
+  run_name: supervised-tts-20261014-emilia2-textbase-nearid-spk-refmask-bf16-8gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd
+  precision: bf16
+  mask_reference: true  # Exclude reference targets in all 16 codebooks; retain EOS.
+  loss_reduction: token
+  residual_weight: 0.3
+  text_embedding_lr_group: backbone  # Embedding/backbone use backbone_lr; the projector uses lr.
+
+  epochs: 3
+  max_steps: null
+  schedule_steps: null
+  warmup_steps: null
+  lr: 3.0e-4
+  backbone_lr: 1.0e-4
+  scheduler:
+    name: wsd
+    warmup_ratio: 0.01
+    decay_ratio: 0.1
+    min_lr_ratio: 0.1
+
+  # 8 GPUs x 32k frames x 2 microbatches matches the Qwen emilia2 run's 16 x 32k.
+  max_batch_frames: 32000
+  max_batch_tokens: 50000
+  accumulation: 2
+  num_workers: 4
+  prefetch_factor: 2
+  length_bucket_size: 65536
+
+  log_every: 10
+  first_check_step: 100
+  keep_checkpoints: null
+  save_every: 1000
+  eval_every: 1000
+
+eval:
+  batch_size: 32
+
+acp:
+  nodes: 1
+  worker_spec: N3lS.Ii.I60.80c896g  # 8 A800 GPUs, 80 vCPU, 896 GiB per node
