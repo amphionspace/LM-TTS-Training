@@ -2,7 +2,7 @@
 
 本报告记录 all16 的三种训练方案：**frozen-conditioning** 使用冻结的 TTS 文本 embedding / projector；**textbase** 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector；**no-speaker** 保留 frozen-conditioning 的文本前端与音频结构，移除 speaker embedding 条件后独立训练。三者共用同一数据划分。第 1–4 节说明共同设置与主要差异，第 5–9 节保留前两种方案的评测和诊断，第 10 节记录 no-speaker step 10,000，**第 11 节记录 no-speaker step 17,500 的结构、设置和完整结果，第 12 节记录同一实验 step 25,000 的接续评测**。
 
-更新于 **2026-10-14**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；No-speaker step 25,000 的双采样结果见第 12 节，双 greedy 已完成、结果待补录。当前新增 **Emilia2 refmask step 10,000 的 speaker + ICL 评测**，模型差异与进展见第 13 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
+更新于 **2026-10-14**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；No-speaker step 25,000 的双采样结果见第 12 节，双 greedy 已完成、结果待补录。**Emilia2 refmask step 10,000 的 speaker + ICL 双采样已完成，双 greedy 已启动接续**，模型差异与结果见第 13 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -671,4 +671,22 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 
 每组的 `run.sh` 保存复现命令，`pipeline_status.json` / `run.log` 记录阶段与日志；最终评分表、汇总、审计在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/speaker_icl/`。Greedy 目录中的 `wait-and-run.py` / `queue_status.json` 负责接续：只有双采样 checkpoint 身份匹配、全部 3,108 条评分或按规则排除且审计通过后才启动。
 
-导出权重 SHA256：`eaf81e93de6ef498843d018d9b5e95236b7cf72bb0f8e25b3032601aab86ba54`。导出保存 FP32 权重及配套 tokenizer，推理使用 BF16；已确认 speaker 标记为 true。中英文各两条生成、评分及完整性审计均已通过：英文 WER **0.000%**、SIM **65.933%**，中文 CER **15.909%**、SIM **77.900%**；四条均未超过 30 秒，运行断言确认 speaker embedding 与 ICL 均实际使用。上述仅为预检，不能代表全量质量。当前双采样已进入八卡全量生成，双 greedy 等待接续，尚无全量结果。后台会话为 `seedtts-emilia2-refmask-s10000-sampling-full` 与 `seedtts-emilia2-refmask-s10000-greedy-queued`。
+导出权重 SHA256：`eaf81e93de6ef498843d018d9b5e95236b7cf72bb0f8e25b3032601aab86ba54`。导出保存 FP32 权重及配套 tokenizer，推理使用 BF16；已确认 speaker 标记为 true。中英文各两条生成、评分及完整性审计均已通过：英文 WER **0.000%**、SIM **65.933%**，中文 CER **15.909%**、SIM **77.900%**；四条均未超过 30 秒，运行断言确认 speaker embedding 与 ICL 均实际使用。上述仅为预检，不能代表全量质量。全量双采样现已完成，结果见下文；双 greedy 已启动接续，尚无完整评分结果。后台会话为 `seedtts-emilia2-refmask-s10000-sampling-full` 与 `seedtts-emilia2-refmask-s10000-greedy-queued`。
+
+
+### Emilia2 refmask step 10,000 全量双采样结果
+
+本组为 **speaker embedding + ICL、Talker / Code Predictor 双采样**，于 **2026-10-14 02:36:45 UTC** 完成。**3,108 条全部生成并评分，无超长排除**；完整性审计通过，无未恢复的生成或评分错误。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 1088/1088 | 1088/1088 | 5.016 | 53.470 | — | — | 完整 |
+| speaker_icl | seed_tts_eval_zh | 2020/2020 | 2020/2020 | 4.594 | 65.478 | — | — | 完整 |
+
+英文报告 WER，中文报告 CER，均为逐句错误率的算术平均；SIM 为余弦相似度乘 100。英文最长音频 **11.20 秒**，中文最长 **15.68 秒**，均未超过 30 秒，两组评分分母均为完整测试集。DNSMOS 未计算，`—` 不表示零分。
+
+与第 12 节 no-speaker step 25,000 的双采样汇总相比，本轮英文 WER **3.508% → 5.016%**，中文 CER **7.325% → 4.594%**；英文 SIM **47.483% → 53.470%**，中文 SIM **56.077% → 65.478%**。即中文错误率更低、中英文相似度更高，但英文错误率更高。两轮都没有时长排除；训练数据、speaker 条件和训练进度不同，这不是 refmask 的单变量对照。
+
+原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `speaker_icl/`。
+
+双 greedy 接续任务于 **2026-10-14 02:36:54 UTC** 启动，完整结果待补充；上述结果仅属于双采样。
