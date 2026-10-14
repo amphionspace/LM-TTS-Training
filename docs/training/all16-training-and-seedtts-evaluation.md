@@ -2,7 +2,7 @@
 
 本报告记录 all16 的三种训练方案：**frozen-conditioning** 使用冻结的 TTS 文本 embedding / projector；**textbase** 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector；**no-speaker** 保留 frozen-conditioning 的文本前端与音频结构，移除 speaker embedding 条件后独立训练。三者共用同一数据划分。第 1–4 节说明共同设置与主要差异，第 5–9 节保留前两种方案的评测和诊断，第 10 节记录 no-speaker step 10,000，**第 11 节记录 no-speaker step 17,500 的结构、设置和完整结果，第 12 节记录同一实验 step 25,000 的接续评测**。
 
-更新于 **2026-10-14**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；No-speaker step 25,000 的双采样结果见第 12 节，双 greedy 已完成、结果待补录。**Emilia2 refmask step 10,000 的 speaker + ICL 双采样已完成，双 greedy 按要求停止**，结果见第 13 节。当前测试 LFM230M step 5,000，仅运行 sampling，说明见第 14 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
+更新于 **2026-10-14**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；No-speaker step 25,000 的双采样结果见第 12 节，双 greedy 已完成、结果待补录。**Emilia2 refmask step 10,000 的 speaker + ICL 双采样已完成，双 greedy 按要求停止**，结果见第 13 节。**LFM230M step 5,000 的全量双采样也已完成并通过审计**，结构、结果和对比见第 14 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -722,7 +722,7 @@ LFM checkpoint 使用 `lm_tts` 的生成路径：沿用训练输入构造，加�
 - 导出：`UltraEval-Audio/init_model/emilia2-lfm230m-text2048-spk-refmask-step-00005000/`；权重 SHA256 `dd8c2a7d757bd8d408a86be27799b80ba1dbf1904055110f4662b7843ff2978d`。
 - 结果：`UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/`。
 - 复现命令为结果目录的 `run.sh`；阶段及日志为 `pipeline_status.json` / `run.log`；完整结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频和逐条评分在 `full/speaker_icl/`。
-- 后台会话：`seedtts-emilia2-lfm230m-s5000-sampling-full`。中英文各两条生成、评分与审计均已通过；3,108 条全量音频已生成，评分中断后正在恢复（见下文）。未安排 greedy，当前尚无完整评分结果。
+- 后台会话：`seedtts-emilia2-lfm230m-s5000-sampling-full`。中英文各两条生成、评分与审计均已通过；3,108 条全量音频已全部生成并评分，修复评分中断后完成审计（见下文）。未安排 greedy，本轮评测已完成。
 
 预检四条时长 **2.48、2.80、5.28、6.48 秒**，单条生成耗时约 **3.18–7.11 秒**；英文平均 WER **13.393%**、SIM **45.209%**，中文平均 CER **9.091%**、SIM **61.383%**。无超长排除，speaker 与 ICL 条件均通过运行校验。这只是流程预检，不能代表全量质量或用于模型优劣结论。
 
@@ -733,4 +733,29 @@ LFM checkpoint 使用 `lm_tts` 的生成路径：沿用训练输入构造，加�
 
 已修复空假设处理：**返回空转写并正常计分**，对非空目标文本计为全部删除（CER 100%），保留该样本及 SIM 评分。没有把短音频排除，也没有重生成或改动已有 WAV；真实模型异常仍会抛出。回归验证覆盖空转写错误率、正常转写不变及模型异常不被吞掉，连同既有评测测试共 **29 项通过**。
 
-从原目录的 `run.sh` 恢复，保留中断前 **616 条**成功评分和历史错误记录；所有生成分片均确认 `remaining=0`。**04:14:26 UTC** 已重新进入全量评分。故障样本 index 282 随后成功评分：空转写、**CER 100.000%**、**SIM -14.922%**，保留在统计内；四个评分分片均已越过中断位置，确认时成功评分已从 616 条增至 **713 条**。剩余评分继续运行，完整结果待汇总和审计。修复提交：UltraEval-Audio `0cfbb2b`。
+从原目录的 `run.sh` 恢复，保留中断前 **616 条**成功评分和历史错误记录；所有生成分片均确认 `remaining=0`。**04:14:26 UTC** 已重新进入全量评分。故障样本 index 282 随后成功评分：空转写、**CER 100.000%**、**SIM -14.922%**，保留在统计内；四个评分分片均已越过中断位置，确认时成功评分已从 616 条增至 **713 条**。随后于 **04:28:22 UTC** 完成全部评分、汇总和审计。审计保留 1 条历史评分错误记录，该样本已成功重试，无未恢复错误。修复提交：UltraEval-Audio `0cfbb2b`。
+
+
+### LFM230M step 5,000 全量双采样结果
+
+本组为 **LFM230M、speaker embedding + ICL、Talker / Code Predictor 双采样**，于 **2026-10-14 04:28:22 UTC** 完成。**3,108 条全部生成并评分，无超长排除**；完整性审计通过，输入身份、分片覆盖、音频格式及推理条件均已核对。下表与原始结果表一致，均分另从 3,108 条唯一成功评分记录重新计算核对。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 1088/1088 | 1088/1088 | 8.682 | 39.195 | — | — | 完整 |
+| speaker_icl | seed_tts_eval_zh | 2020/2020 | 2020/2020 | 9.399 | 55.248 | — | — | 完整 |
+
+英文为逐句 WER 的算术平均，中文为逐句 CER 的算术平均；SIM 为余弦相似度乘 100。DNSMOS 未计算，`—` 不表示零分。英文平均时长 **3.979 秒**、最长 **11.12 秒**；中文平均 **5.279 秒**、最长 **12.40 秒**。
+
+**无超长输出不代表没有提前结束问题。** 中文仍有 5 条低于 0.2 秒：index 282、992、1797 为 0.08 秒，844、1322 为 0.16 秒；这 5 条均保留在评分中，CER 均为 100%，对应 SIM 也计入均分。其中 4 条 ASR 为空转写，844 的转写为“嗯”。此前触发评分中断的 282 已包含在最终 2,020 条中文结果中，没有通过删样本改善分数。
+
+与第 13 节 **Qwen Emilia2 refmask step 10,000** 的同模式双采样比较：
+
+| Checkpoint | 英文 WER/% ↓ | 英文 SIM/% ↑ | 中文 CER/% ↓ | 中文 SIM/% ↑ | 评分条数 / 超长排除 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Qwen Emilia2 refmask step 10,000 | 5.016 | 53.470 | 4.594 | 65.478 | 3,108 / 0 |
+| LFM230M Emilia2 refmask step 5,000 | 8.682 | 39.195 | 9.399 | 55.248 | 3,108 / 0 |
+
+本次 LFM checkpoint 的中英文错误率均更高、相似度均更低。两轮使用相同的 Emilia2 样本划分与完整 Seed-TTS 测试集，但 LFM 仅消费 **34,642,179** 条训练样本，Qwen 已消费 **66,839,436** 条；主干、tokenizer、文本前端初始化及冻结范围也不同。因此这反映的是两个当前 checkpoint 的结果，不能据此单独判定 LFM 主干或 refmask 方案的优劣。
+
+原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `speaker_icl/`。本轮仅运行双采样，没有后续 greedy 任务。
