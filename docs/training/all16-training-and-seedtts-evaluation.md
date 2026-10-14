@@ -842,4 +842,32 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 - 固定评测命令：同目录 `run.sh`；模型为 `UltraEval-Audio/init_model/emilia2-refmask-step-00015000/`。
 - 导出日志为 `export.log`，评测状态 / 日志为 `pipeline_status.json` / `run.log`；正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。
 
-检查器持有单实例锁，避免重复启动。若导出或评测失败，会记录错误并在 30 分钟后重试；评测沿用原目录，成功音频和评分自动跳过。完成全量评分并通过审计后，检查器退出。创建时 step 15,000 尚未出现，当前等待 checkpoint。
+检查器持有单实例锁，避免重复启动。若导出或评测失败，会记录错误并在 30 分钟后重试；评测沿用原目录，成功音频和评分自动跳过。完成全量评分并通过审计后，检查器退出。创建时 step 15,000 尚未出现；随后已自动完成导出、全量生成、评分和审计。
+
+
+### Qwen Emilia2 refmask step 15,000 全量双采样结果
+
+于 **2026-10-14 13:05:18 UTC** 完成，3,108 条全部生成；按独立 30 秒规则排除英文 3 条、中文 2 条，其余 **3,103 条全部评分**，完整性审计通过，无未恢复错误。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 1088/1088 | 1085/1085 | 5.418 | 55.153 | — | — | 完整（排除 3 条） |
+| speaker_icl | seed_tts_eval_zh | 2020/2020 | 2018/2018 | 4.870 | 67.760 | — | — | 完整（排除 2 条） |
+
+英文为逐句 WER 均值，中文为逐句 CER 均值；SIM 为余弦相似度乘 100，DNSMOS 未计算。与 step 12,500 比较时须考虑本轮排除了 5 条超长输出，评分分母不同。
+
+原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md) · [汇总及排除清单](../../../UltraEval-Audio/res/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/audit.json)。
+
+
+## 18. Qwen Emilia2 refmask step 17,500 / 20,000：每十分钟自动检查
+
+监控与第 17 节相同训练 run 下的 `checkpoints/step-00017500/`、`checkpoints/step-00020000/`，每 **600 秒（10 分钟）**各检查一次。目标目录必须有 `COMPLETE`、`metadata.json`，且元数据 step 匹配。确认后自动导出模型并跑 **speaker + ICL、双采样、BF16 推理、batch size 1** 的 Seed-TTS 中英文全量评测，采样参数与评分指标沿用 step 15,000；生成与评分均为 **8 卡 × 每卡 4 个 worker，共 32 个**。
+
+| 目标 | 后台会话 | `UltraEval-Audio/res/` 下的目录 |
+| --- | --- | --- |
+| step 17,500 | `seedtts-emilia2-refmask-s17500-watch` | `emilia2-refmask-step17500-seedtts-sampling-bs1-20261014-8gpu-4wpg/` |
+| step 20,000 | `seedtts-emilia2-refmask-s20000-watch` | `emilia2-refmask-step20000-seedtts-sampling-bs1-20261014-8gpu-4wpg/` |
+
+两轮按顺序运行：17,500 等 15,000 完成并通过审计，20,000 等 17,500 完成并通过审计，避免并行占用同一组 GPU。完整 checkpoint 的检查、等待前轮、导出、评测和失败重试均由各目录的 `watch-and-run.py` 执行；单实例锁防止重复启动。导出或评测失败后记录错误，10 分钟后重试，复用已有成功音频与评分。已完成并通过审计的任务不会因重启检查器而重复执行。
+
+各目录的 `watch_status.json` 为当前状态，`watch_events.jsonl` 为检查历史，`watch.log` / `export.log` / `run.log` 保存日志；固定评测命令为 `run.sh`。正式结果仍在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频在 `full/speaker_icl/`。导出模型分别为 `UltraEval-Audio/init_model/emilia2-refmask-step-00017500/` 与 `emilia2-refmask-step-00020000/`。创建时两份 checkpoint 均未出现，首次检查状态为 `waiting_checkpoint`。
