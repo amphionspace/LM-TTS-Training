@@ -370,6 +370,8 @@ envs/tts/bin/python -u scripts/run_seed_tts.py \
 
 ## 9. 文本维度与 projector 差异：当前结论和待验证问题
 
+> **2026-10-14 更正**：“更窄的 embedding 和 projector 减少了容量”不成立；textbase SIM 低的直接原因是对 speaker embedding 的利用学得慢。见 [文本前端分析](text-frontend-analysis-20261014.md) 第 3、4 节。
+
 **Textbase 的 1024 维与 frozen-conditioning 的 2048 维差异是真实的结构差异，不是文档笔误或维度接错。** 已直接核对本地基础模型、组装模型及 textbase step 25,000 导出权重；两种方案经过 text projector 后都输出 1024 维，与 Talker 匹配。
 
 | 项目 | Frozen-conditioning | Textbase |

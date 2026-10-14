@@ -155,6 +155,8 @@ Code Predictor 的输入是 `[h, emb(code₀), …, emb(code₁₄)]` 这 16 个
 
 ### 5.2 几何对比（`text_embedding_compare.py`）
 
+> **2026-10-14 更正**：本节的有效维度对比不能说明容量差异。官方 projector 在实际输入范围内近似线性，前端等价于一张 `vocab × 1024` 的表；见 [文本前端分析](text-frontend-analysis-20261014.md) 第 3 节。
+
 | 指标 | TTS 2048 维 | Base 1024 维 |
 | --- | ---: | ---: |
 | 有效秩（谱熵） | 1,671 | 932 |
