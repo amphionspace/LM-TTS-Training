@@ -2,7 +2,7 @@
 
 本报告记录 all16 的三种训练方案：**frozen-conditioning** 使用冻结的 TTS 文本 embedding / projector；**textbase** 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector；**no-speaker** 保留 frozen-conditioning 的文本前端与音频结构，移除 speaker embedding 条件后独立训练。三者共用同一数据划分。第 1–4 节说明共同设置与主要差异，第 5–9 节保留前两种方案的评测和诊断，第 10 节记录 no-speaker step 10,000，**第 11 节记录 no-speaker step 17,500 的结构、设置和完整结果，第 12 节记录同一实验 step 25,000 的接续评测**。
 
-更新于 **2026-10-13**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；本轮新增 **no-speaker step 25,000 全量纯 ICL 评测：双采样已完成，双 greedy 正在运行**，结果与进展见第 12 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
+更新于 **2026-10-14**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；No-speaker step 25,000 的双采样结果见第 12 节，双 greedy 已完成、结果待补录。当前新增 **Emilia2 refmask step 10,000 的 speaker + ICL 评测**，模型差异与进展见第 13 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -614,7 +614,7 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 | 生成音频与逐条评分 | 各目录内的 `full/icl_only/` |
 | Greedy 接续控制 | Greedy 目录内的 `wait-and-run.py`、`queue_status.json`、`queue.log` |
 
-接续脚本等待双采样释放运行锁，再验证 checkpoint 身份、双采样设置、审计通过以及全部 3,108 条均已评分或按规则排除；若前一阶段失败则不启动 greedy。四条预检的生成、ASR / SIM 评分和完整性审计均已通过：英文两条平均 WER **0.000%**、SIM **50.753%**，中文两条平均 CER **6.818%**、SIM **69.232%**；无超长排除，音频时长 2.08–9.84 秒。这只是预检，不代表全量质量。全量双采样现已完成，结果见下文；双 greedy 已自动接续，当前处于全量生成阶段，尚无完整评分结果。
+接续脚本等待双采样释放运行锁，再验证 checkpoint 身份、双采样设置、审计通过以及全部 3,108 条均已评分或按规则排除；若前一阶段失败则不启动 greedy。四条预检的生成、ASR / SIM 评分和完整性审计均已通过：英文两条平均 WER **0.000%**、SIM **50.753%**，中文两条平均 CER **6.818%**、SIM **69.232%**；无超长排除，音频时长 2.08–9.84 秒。这只是预检，不代表全量质量。全量双采样已完成，结果见下文；双 greedy 随后自动接续并已完成，结果待补录。
 
 导出权重 SHA256：`1f2abbedf3f0cbdee1397ec34ba798a0f09a897a692135b08953dbdaf491bf89`。导出配置、文本 tokenizer 和音频 tokenizer 权重均与 step 17,500 一致。后台会话分别为 `seedtts-no-spk-s25000-sampling-full`、`seedtts-no-spk-s25000-greedy-queued`；状态以各目录中的 JSON 文件为准。
 
@@ -634,4 +634,41 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 
 原始证据：[结果表](../../../UltraEval-Audio/res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `icl_only/`。
 
-双 greedy 于 **05:10:31 UTC** 自动接续，目前已通过预检并进入全量生成，完整结果待补充；本节上述数值仅属于双采样。
+双 greedy 于 **2026-10-13 05:10:31 UTC** 自动接续，现已完成并通过审计，完整结果待补录；本节上述数值仅属于双采样。
+
+
+## 13. Emilia2 refmask step 10,000：speaker + ICL 评测（2026-10-14）
+
+本轮 checkpoint 为 `supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00010000`，位于同一 `LM-TTS-Training-Runs` 根目录。`COMPLETE` 和组装身份检查通过，元数据为 `epoch=0`、已消费 **66,839,436** 条样本，仍处于第一个 epoch、WSD steady 阶段。该实验单独使用 Emilia2，不属于前述 all16 数据配方；记录在这里便于统一查阅 Seed-TTS 结果。
+
+### 模型、数据与训练差异
+
+模型来自同一 `assets/assembled/qwen3-tts-frozen-conditioning`。文本 embedding（151,936 × 2,048）和 text projector（2,048 → 2,048 → 1,024）继承 TTS checkpoint 并冻结；Talker layers / norm、首码本 embedding / head、Code Predictor 及 residual embeddings / heads 参与训练，初始化来源沿用第 11 节。**本轮开启 speaker embedding**，使用冻结的 speaker encoder 所提取的参考片段向量；音频 codec 仍独立冻结。
+
+| 项目 | 本轮设置 |
+| --- | --- |
+| 训练配置 | `configs/supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd.yaml` |
+| 数据配方 / build | `configs/data-emilia2-reference.yaml` / `supervised-tts-20261012-emilia2-reference` |
+| 数据来源 | selection `tts-selection-supervised-tts-20261012T123927bjt-01`；仅绑定 Emilia2 reference features |
+| 固定划分 | 训练 **76,607,724** 条，验证 **76,684** 条；seed 42、约千分之一留出 |
+| Speaker 条件 / loss mask | `use_speaker_embedding=true`、`mask_reference=true`；参考来自目标录音内的合法裁剪片段，屏蔽该区间所有 16 个码本的 loss，保留 EOS 监督 |
+| 训练资源 / loss | 16 卡、BF16、accumulation 1；每卡 32,000 frames / 50,000 tokens；token loss：`first_ce + 0.3 × residual_ce` |
+| LR / 长度 | Talker 主干 `1e-4`，其余可训练音频模块 `3e-4`；3 epochs，样本进度 WSD，warmup 1%、decay 10%、最低为峰值 10% |
+
+训练仍提供完整目标文本与真实历史 codec；**refmask 仅取消参考区间的 loss，并不删除输入帧，也不构造独立的参考文本 / codec 前缀**。因此本次 speaker + ICL 是外部克隆生成测试，不能把 refmask 直接等同于完整 ICL 训练，或仅凭这项改动就认定所有训推差异已解决。
+
+### 评测设置与产物
+
+本次保留模型的 speaker 条件，采用 **`speaker_icl`**：参考音频提取 speaker embedding，同时提供参考文本、参考 codec 和目标文本。沿用 Seed-TTS 英文 **1,088** 条、中文 **2,020** 条、Auto、non-streaming、BF16 + SDPA、batch size 1；先双采样（Talker / Code Predictor 均为 top-k 50、top-p 1.0、temperature 0.9），完成评分及审计后自动接双 greedy。Speaker-only 不在本轮运行范围内。
+
+生成使用 GPU 0–7，每进程 PyTorch 分配上限 8 GiB、启动余量 2 GiB；评分使用 GPU 0–3。指标为英文 Whisper large-v3 WER、中文 SeACo-Paraformer CER、WavLM large + ECAPA SIM，DNSMOS 不计算。继续按每组自身的 30 秒时长规则排除超长输出，并单独报告排除数；和 no-speaker 结果比较时，需同时考虑训练数据、speaker 条件、消费样本量和梯度累积的变化，不能归因于 refmask 单一因素。
+
+| 内容 | `UltraEval-Audio/` 下的路径 |
+| --- | --- |
+| 独立导出模型 | `init_model/emilia2-refmask-step-00010000/` |
+| 全量双采样 | `res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/` |
+| 全量双 greedy | `res/emilia2-refmask-step10000-seedtts-greedy-bs1-20261014-8gpu/` |
+
+每组的 `run.sh` 保存复现命令，`pipeline_status.json` / `run.log` 记录阶段与日志；最终评分表、汇总、审计在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/speaker_icl/`。Greedy 目录中的 `wait-and-run.py` / `queue_status.json` 负责接续：只有双采样 checkpoint 身份匹配、全部 3,108 条评分或按规则排除且审计通过后才启动。
+
+导出权重 SHA256：`eaf81e93de6ef498843d018d9b5e95236b7cf72bb0f8e25b3032601aab86ba54`。导出保存 FP32 权重及配套 tokenizer，推理使用 BF16；已确认 speaker 标记为 true。中英文各两条生成、评分及完整性审计均已通过：英文 WER **0.000%**、SIM **65.933%**，中文 CER **15.909%**、SIM **77.900%**；四条均未超过 30 秒，运行断言确认 speaker embedding 与 ICL 均实际使用。上述仅为预检，不能代表全量质量。当前双采样已进入八卡全量生成，双 greedy 等待接续，尚无全量结果。后台会话为 `seedtts-emilia2-refmask-s10000-sampling-full` 与 `seedtts-emilia2-refmask-s10000-greedy-queued`。
