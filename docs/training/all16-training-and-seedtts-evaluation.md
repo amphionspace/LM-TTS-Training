@@ -799,11 +799,18 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-b
 
 Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf16-8gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00006000`，完整标记已确认；`epoch=0`，已消费 **41,507,406** 条训练样本。模型结构、文本前端初始化、冻结范围、数据划分和训练设置与第 14 节 LFM step 5,000 一致，仍处于 WSD steady 阶段。
 
-沿用第 14 节的 **speaker embedding + ICL、Talker / Code Predictor 双采样、Auto、non-streaming、BF16 + SDPA、batch size 1**；top-k 50、top-p 1.0、temperature 0.9，Talker repetition penalty 1.05。英文 1,088 条、中文 2,020 条，仅运行 sampling。推理仍为 LFM 完整前缀计算、无 KV cache；本次使用 **8 卡 × 每卡 4 个 worker，共 32 分片**，每条随机种子为 `42 + 原始 index`。每进程显存上限 8 GiB、预留 2 GiB；评分使用 GPU 0–3，中英文各两分片。四条预检评分及审计通过后自动进入全量生成、评分与审计，沿用相同指标和独立 30 秒超长排除规则。
+沿用第 14 节的 **speaker embedding + ICL、Talker / Code Predictor 双采样、Auto、non-streaming、BF16 + SDPA、batch size 1**；top-k 50、top-p 1.0、temperature 0.9，Talker repetition penalty 1.05。英文 1,088 条、中文 2,020 条，仅运行 sampling。推理仍为 LFM 完整前缀计算、无 KV cache；本次使用 **8 卡 × 每卡 4 个 worker，共 32 分片**，每条随机种子为 `42 + 原始 index`。每进程显存上限 8 GiB、预留 2 GiB；评分最初使用 GPU 0–3、中英文各两分片；后按要求切换为 **8 卡 × 每卡 4 个评分 worker，共 32 个**：英文 16 分片使用 GPU 2–5，中文 16 分片使用 GPU 0、1、6、7。英文 ASR 进程显存占用更高，优先放在空闲显存充足的卡上。四条预检评分及审计通过后自动进入全量生成、评分与审计，沿用相同指标和独立 30 秒超长排除规则。
 
 - 导出模型：`UltraEval-Audio/init_model/emilia2-lfm230m-text2048-spk-refmask-step-00006000/`。
 - 结果目录：`UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/`。
-- 复现 / 恢复：结果目录的 `run.sh`；恢复时保持 32 个生成分片及原评分分片数，跳过已有成功记录。
+- 复现 / 恢复：结果目录的 `run.sh`；恢复时保持 32 个生成分片；评分可改变并行度，读取所有已有评分分片并跳过成功记录。切换并行度前先停止旧评分进程，避免同一批样本被两个调度器重复处理。
 - 阶段与日志：`pipeline_status.json`、`run.log`、`logs/`；正式结果为 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/speaker_icl/`。
 
 导出权重 SHA256：`aeeaeeb05a04f0166a1045549152d4aba1f5a8efb95fb6a4bf1041de2861ea42`，配套配置与 tokenizer 文件哈希均与 step 5,000 一致。后台会话为 `seedtts-emilia2-lfm230m-s6000-sampling-4wpg`，中英文各两条预检生成、评分及审计已通过：英文 WER **7.143%**、SIM **48.113%**；中文 CER **13.636%**、SIM **64.592%**，均无超长排除。全量生成已启动，尚无正式全量评分；预检分数仅验证流程。
+
+
+### 评分并行度调整
+
+全量生成完成后，评分由 4 个进程切换为 **32 个进程**，保留已完成的 **514 条**成功评分及全部 WAV。`run.sh` 已加入 `--score-gpus 2,3,4,5,0,1,6,7 --score-workers-per-gpu 4`；后台恢复会话为 `seedtts-emilia2-lfm230m-s6000-score32`。生成和评分的每卡 worker 数分别由 `--workers-per-gpu`、`--score-workers-per-gpu` 控制。中英文仍分别使用 Whisper WER、Paraformer CER 和 WavLM SIM，指标定义不变。
+
+恢复适配通过评分跨旧分片复用、失败记录重试、32 worker 路由及既有审计测试，共 **30 项通过**。后续恢复无需手动删除或重新分配旧评分文件；完整性审计仍检查每个样本只有一条成功评分。
