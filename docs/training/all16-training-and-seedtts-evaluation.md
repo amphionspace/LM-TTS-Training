@@ -2,7 +2,7 @@
 
 本报告记录 all16 的三种训练方案：**frozen-conditioning** 使用冻结的 TTS 文本 embedding / projector；**textbase** 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector；**no-speaker** 保留 frozen-conditioning 的文本前端与音频结构，移除 speaker embedding 条件后独立训练。三者共用同一数据划分。第 1–4 节说明共同设置与主要差异，第 5–9 节保留前两种方案的评测和诊断，第 10 节记录 no-speaker step 10,000，**第 11 节记录 no-speaker step 17,500 的结构、设置和完整结果，第 12 节记录同一实验 step 25,000 的接续评测**。
 
-更新于 **2026-10-14**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；No-speaker step 25,000 的双采样结果见第 12 节，双 greedy 已完成、结果待补录。**Emilia2 refmask step 10,000 的 speaker + ICL 双采样已完成，双 greedy 按要求停止**，结果见第 13 节。**LFM230M step 5,000 的全量双采样也已完成并通过审计**，结构、结果和对比见第 14 节。**同一 Qwen Emilia2 refmask 实验的 step 12,500 双采样评测已完成**，见第 15 节。**LFM230M step 6,000 已启动同模式双采样评测**，见第 16 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
+更新于 **2026-10-14**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；No-speaker step 25,000 的双采样结果见第 12 节，双 greedy 已完成、结果待补录。**Emilia2 refmask step 10,000 的 speaker + ICL 双采样已完成，双 greedy 按要求停止**，结果见第 13 节。**LFM230M step 5,000 的全量双采样也已完成并通过审计**，结构、结果和对比见第 14 节。**同一 Qwen Emilia2 refmask 实验的 step 12,500 双采样评测已完成**，见第 15 节。**LFM230M step 6,000 同模式双采样评测已完成**，见第 16 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -808,7 +808,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 - 复现 / 恢复：结果目录的 `run.sh`；恢复时保持 32 个生成分片；评分可改变并行度，读取所有已有评分分片并跳过成功记录。切换并行度前先停止旧评分进程，避免同一批样本被两个调度器重复处理。
 - 阶段与日志：`pipeline_status.json`、`run.log`、`logs/`；正式结果为 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/speaker_icl/`。
 
-导出权重 SHA256：`aeeaeeb05a04f0166a1045549152d4aba1f5a8efb95fb6a4bf1041de2861ea42`，配套配置与 tokenizer 文件哈希均与 step 5,000 一致。后台会话为 `seedtts-emilia2-lfm230m-s6000-sampling-4wpg`，中英文各两条预检生成、评分及审计已通过：英文 WER **7.143%**、SIM **48.113%**；中文 CER **13.636%**、SIM **64.592%**，均无超长排除。全量生成已启动，尚无正式全量评分；预检分数仅验证流程。
+导出权重 SHA256：`aeeaeeb05a04f0166a1045549152d4aba1f5a8efb95fb6a4bf1041de2861ea42`，配套配置与 tokenizer 文件哈希均与 step 5,000 一致。后台会话为 `seedtts-emilia2-lfm230m-s6000-sampling-4wpg`，中英文各两条预检生成、评分及审计已通过：英文 WER **7.143%**、SIM **48.113%**；中文 CER **13.636%**、SIM **64.592%**，均无超长排除。全量评测已完成，结果见下文；预检分数仅验证流程。
 
 
 ### 评分并行度调整
@@ -816,3 +816,30 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 全量生成完成后，评分由 4 个进程切换为 **32 个进程**，保留已完成的 **514 条**成功评分及全部 WAV。`run.sh` 已加入 `--score-gpus 2,3,4,5,0,1,6,7 --score-workers-per-gpu 4`；后台恢复会话为 `seedtts-emilia2-lfm230m-s6000-score32`。生成和评分的每卡 worker 数分别由 `--workers-per-gpu`、`--score-workers-per-gpu` 控制。中英文仍分别使用 Whisper WER、Paraformer CER 和 WavLM SIM，指标定义不变。
 
 恢复适配通过评分跨旧分片复用、失败记录重试、32 worker 路由及既有审计测试，共 **30 项通过**。后续恢复无需手动删除或重新分配旧评分文件；完整性审计仍检查每个样本只有一条成功评分。
+
+
+### LFM230M step 6,000 全量双采样结果
+
+于 **2026-10-14 09:50:14 UTC** 完成，**3,108 条全部生成并评分，无超长排除**，完整性审计通过。改为 32 worker 后保留旧评分，最终中英文分别有 1,088 / 2,020 条唯一成功记录，无重复或未恢复错误；均分从逐条记录重新核对。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 1088/1088 | 1088/1088 | 9.417 | 43.251 | — | — | 完整 |
+| speaker_icl | seed_tts_eval_zh | 2020/2020 | 2020/2020 | 8.727 | 58.582 | — | — | 完整 |
+
+与同一实验 step 5,000 相比，英文 WER **8.682% → 9.417%**、SIM **39.195% → 43.251%**；中文 CER **9.399% → 8.727%**、SIM **55.248% → 58.582%**。相似度均提升，中文错误率下降，英文错误率上升。WER / CER 为逐句算术平均，SIM 为余弦相似度乘 100，DNSMOS 未计算。
+
+原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/audit.json)。
+
+
+## 17. Qwen Emilia2 refmask step 15,000：自动等待与双采样评测
+
+每 **30 分钟**检查一次 `supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00015000/`，仅在 `COMPLETE` 与 `metadata.json` 存在且元数据 step 为 15,000 时开始。确认后自动以第 13 节组装模型导出 FP32 权重，再运行 **speaker + ICL、双采样、BF16 推理、batch size 1** 的 Seed-TTS 中英文全量评测；生成和评分均为 **8 卡 × 每卡 4 个 worker，共 32 个**。采样参数、评分模型和 30 秒超长排除规则沿用第 15 节。
+
+- 后台会话：`seedtts-emilia2-refmask-s15000-watch`。
+- 运行目录：`UltraEval-Audio/res/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/`。
+- 等待 / 自动启动脚本：运行目录的 `watch-and-run.py`；检查状态与历史为 `watch_status.json`、`watch_events.jsonl`，日志为 `watch.log`。
+- 固定评测命令：同目录 `run.sh`；模型为 `UltraEval-Audio/init_model/emilia2-refmask-step-00015000/`。
+- 导出日志为 `export.log`，评测状态 / 日志为 `pipeline_status.json` / `run.log`；正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。
+
+检查器持有单实例锁，避免重复启动。若导出或评测失败，会记录错误并在 30 分钟后重试；评测沿用原目录，成功音频和评分自动跳过。完成全量评分并通过审计后，检查器退出。创建时 step 15,000 尚未出现，当前等待 checkpoint。
