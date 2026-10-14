@@ -722,6 +722,15 @@ LFM checkpoint 使用 `lm_tts` 的生成路径：沿用训练输入构造，加�
 - 导出：`UltraEval-Audio/init_model/emilia2-lfm230m-text2048-spk-refmask-step-00005000/`；权重 SHA256 `dd8c2a7d757bd8d408a86be27799b80ba1dbf1904055110f4662b7843ff2978d`。
 - 结果：`UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/`。
 - 复现命令为结果目录的 `run.sh`；阶段及日志为 `pipeline_status.json` / `run.log`；完整结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频和逐条评分在 `full/speaker_icl/`。
-- 后台会话：`seedtts-emilia2-lfm230m-s5000-sampling-full`。中英文各两条生成、评分与审计均已通过，现已进入全量 sampling；未安排 greedy，当前尚无完整结果。
+- 后台会话：`seedtts-emilia2-lfm230m-s5000-sampling-full`。中英文各两条生成、评分与审计均已通过；3,108 条全量音频已生成，评分中断后正在恢复（见下文）。未安排 greedy，当前尚无完整评分结果。
 
 预检四条时长 **2.48、2.80、5.28、6.48 秒**，单条生成耗时约 **3.18–7.11 秒**；英文平均 WER **13.393%**、SIM **45.209%**，中文平均 CER **9.091%**、SIM **61.383%**。无超长排除，speaker 与 ICL 条件均通过运行校验。这只是流程预检，不能代表全量质量或用于模型优劣结论。
+
+
+### LFM 评分中断与恢复（2026-10-14）
+
+全量音频已全部生成。评分于 **04:02:17 UTC** 中断：中文 index **282** 的生成音频只有 **0.08 秒**，SeACo-Paraformer 预测不到识别 token，返回空结果列表；原适配器直接读取 `[0]["text"]` 导致 `IndexError`。一个评分分片失败后，协调进程按既定机制终止其他评分分片。日志里的 `FireRedASR failed` 是原错误信息写错模型名，实际使用的是 Paraformer。
+
+已修复空假设处理：**返回空转写并正常计分**，对非空目标文本计为全部删除（CER 100%），保留该样本及 SIM 评分。没有把短音频排除，也没有重生成或改动已有 WAV；真实模型异常仍会抛出。回归验证覆盖空转写错误率、正常转写不变及模型异常不被吞掉，连同既有评测测试共 **29 项通过**。
+
+从原目录的 `run.sh` 恢复，保留中断前 **616 条**成功评分和历史错误记录；所有生成分片均确认 `remaining=0`。**04:14:26 UTC** 已重新进入全量评分。故障样本 index 282 随后成功评分：空转写、**CER 100.000%**、**SIM -14.922%**，保留在统计内；四个评分分片均已越过中断位置，确认时成功评分已从 616 条增至 **713 条**。剩余评分继续运行，完整结果待汇总和审计。修复提交：UltraEval-Audio `0cfbb2b`。
