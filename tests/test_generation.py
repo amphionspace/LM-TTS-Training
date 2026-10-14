@@ -76,3 +76,81 @@ def test_icl_preserves_text_token_boundary_and_trims_reference():
     assert len(wav) == 1920 and rate == 24000
     with pytest.raises(ValueError, match="requires reference_text"):
         synth.synthesize("world", "reference.wav")
+
+
+def test_speaker_generation_matches_training_prefix_next_frame():
+    from test_lfm import speaker_model
+
+    from lm_tts.data.batch import collate
+    from lm_tts.inference.codec import generate_codes
+
+    torch.set_num_threads(2)
+    model = speaker_model().eval()
+    text = [18, 25, 27, 19]
+    prefix = torch.arange(32).reshape(2, 16)
+    speaker = torch.linspace(-1, 1, model.config.hidden_size)
+    settings = dict(
+        do_sample=True,
+        top_k=10,
+        temperature=0.9,
+        subtalker_dosample=True,
+        subtalker_top_k=10,
+        subtalker_temperature=0.9,
+        repetition_penalty=1.05,
+    )
+    torch.manual_seed(42)
+    expected = prefix.clone()
+    with torch.inference_mode():
+        for _ in range(2):
+            batch = collate([{"text_ids": text, "codes": expected, "speaker_embedding": speaker}])
+            frame, stop = model(batch, mode="next_frame", suppress_eos=True, generation=settings)
+            assert not stop.item()
+            expected = torch.cat([expected, frame])
+    torch.manual_seed(42)
+    actual = generate_codes(
+        model,
+        text,
+        prefix,
+        speaker_embedding=speaker,
+        max_new_tokens=2,
+        min_new_tokens=2,
+        **settings,
+    )
+    torch.testing.assert_close(actual, expected[2:], atol=0, rtol=0)
+    with pytest.raises(ValueError, match="conditioning configuration"):
+        generate_codes(model, text, prefix)
+    for bad in (torch.zeros(64), torch.ones(63), torch.full((64,), float("nan"))):
+        with pytest.raises(ValueError, match="finite nonzero vector"):
+            generate_codes(model, text, prefix, speaker_embedding=bad)
+
+
+def test_speaker_frontend_matches_official_extraction(tmp_path):
+    from types import SimpleNamespace
+
+    import librosa
+    import numpy as np
+    import soundfile as sf
+    from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSSpeakerEncoderConfig
+    from qwen_tts.core.models.modeling_qwen3_tts import (
+        Qwen3TTSForConditionalGeneration,
+        Qwen3TTSSpeakerEncoder,
+    )
+    from test_lfm import SPEAKER
+
+    from lm_tts.inference.codec import extract_speaker_embedding
+
+    encoder = Qwen3TTSSpeakerEncoder(
+        Qwen3TTSSpeakerEncoderConfig(**{**SPEAKER, "mel_dim": 128})
+    ).eval()
+    path = tmp_path / "reference.wav"
+    t = np.arange(16000) / 16000
+    sf.write(
+        path, np.stack([np.sin(2 * np.pi * 230 * t), np.sin(2 * np.pi * 410 * t)], axis=1), 16000
+    )
+    audio, sr = librosa.load(path, sr=24000, mono=True)
+    wrapper = SimpleNamespace(
+        speaker_encoder=encoder, device=torch.device("cpu"), dtype=torch.float32
+    )
+    expected = Qwen3TTSForConditionalGeneration.extract_speaker_embedding(wrapper, audio, sr)
+    actual = extract_speaker_embedding(encoder, path)
+    torch.testing.assert_close(actual, expected, atol=0, rtol=0)

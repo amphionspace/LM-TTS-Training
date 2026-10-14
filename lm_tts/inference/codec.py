@@ -1,4 +1,4 @@
-"""Correctness-first pure-codec generation using complete prefixes, without KV caching."""
+"""Codec generation using the training input protocol and complete prefixes, without KV caching."""
 
 import json
 from pathlib import Path
@@ -50,10 +50,11 @@ def validate_generation(settings):
 
 
 @torch.inference_mode()
-def generate_codes(model, text_ids, reference_codes=None, **settings):
+def generate_codes(model, text_ids, reference_codes=None, *, speaker_embedding=None, **settings):
     validate_generation(settings)
-    if getattr(model.config, "lm_tts_use_speaker_embedding", True):
-        raise ValueError("Pure-codec generation requires a no-speaker model")
+    use_speaker = getattr(model.config, "lm_tts_use_speaker_embedding", True)
+    if use_speaker != (speaker_embedding is not None):
+        raise ValueError("Speaker embedding must match the model conditioning configuration")
     device = next(model.parameters()).device
     text = torch.as_tensor(text_ids, device=device, dtype=torch.long)
     if (
@@ -76,6 +77,15 @@ def generate_codes(model, text_ids, reference_codes=None, **settings):
         raise ValueError("Reference codec shape or vocabulary range is invalid")
     reference_frames = len(codes)
     batch = {"text_ids": text, "text_lengths": text.new_tensor([len(text)])}
+    if use_speaker:
+        speaker = torch.as_tensor(speaker_embedding, device=device)
+        if (
+            speaker.shape != (model.config.hidden_size,)
+            or not torch.isfinite(speaker).all()
+            or speaker.norm() == 0
+        ):
+            raise ValueError("Speaker embedding must be a finite nonzero vector of hidden_size")
+        batch["speaker_embeddings"] = speaker.unsqueeze(0)
     model.eval()
     for frame in range(settings.get("max_new_tokens", 2048)):
         batch.update(codes=codes, frame_lengths=text.new_tensor([len(codes)]))
@@ -89,6 +99,27 @@ def generate_codes(model, text_ids, reference_codes=None, **settings):
             break
         codes = torch.cat([codes, next_codes])
     return codes[reference_frames:]
+
+
+@torch.inference_mode()
+def extract_speaker_embedding(encoder, audio_path):
+    """Use the Qwen speaker frontend on one unpadded, mono 24 kHz reference."""
+    import librosa
+    from qwen_tts.core.models.modeling_qwen3_tts import mel_spectrogram
+
+    audio, _ = librosa.load(str(audio_path), sr=24000, mono=True)
+    mels = mel_spectrogram(
+        torch.from_numpy(audio).unsqueeze(0),
+        n_fft=1024,
+        num_mels=128,
+        sampling_rate=24000,
+        hop_size=256,
+        win_size=1024,
+        fmin=0,
+        fmax=12000,
+    ).transpose(1, 2)
+    parameter = next(encoder.parameters())
+    return encoder(mels.to(device=parameter.device, dtype=parameter.dtype))[0]
 
 
 class CodecSynthesizer:
@@ -106,7 +137,9 @@ class CodecSynthesizer:
         )
 
     @torch.inference_mode()
-    def synthesize(self, text, reference_audio=None, reference_text=None, **settings):
+    def synthesize(
+        self, text, reference_audio=None, reference_text=None, *, speaker_audio=None, **settings
+    ):
         if reference_audio is not None and not (reference_text and reference_text.strip()):
             raise ValueError("Codec-prefix ICL requires reference_text matching reference_audio")
         if reference_audio is None and reference_text:
@@ -119,11 +152,24 @@ class CodecSynthesizer:
             self.raw["tts_eos_token_id"],
         ]
         prefix = self.codec.encode(str(reference_audio)).audio_codes[0] if reference_audio else None
-        codes = generate_codes(self.model, ids, prefix, **settings)
+        use_speaker = getattr(self.model.config, "lm_tts_use_speaker_embedding", True)
+        speaker = None
+        if use_speaker:
+            source = speaker_audio if speaker_audio is not None else reference_audio
+            if source is None:
+                raise ValueError("Speaker-conditioned generation requires reference audio")
+            speaker = extract_speaker_embedding(self.model.speaker_encoder, source)
+        elif speaker_audio is not None:
+            raise ValueError("A no-speaker model cannot consume speaker_audio")
+        codes = generate_codes(self.model, ids, prefix, speaker_embedding=speaker, **settings)
         if not len(codes):
             raise ValueError("Model generated EOS before any audio frame")
         combined = codes if prefix is None else torch.cat([prefix.to(codes.device), codes])
         wavs, rate = self.codec.decode({"audio_codes": [combined]})
         # Decode the prefix too, preserving decoder context at the continuation boundary.
         trim = 0 if prefix is None else int(len(wavs[0]) * len(prefix) / len(combined))
+        self.last_conditioning = {
+            "speaker_embedding": speaker is not None,
+            "icl_calls": int(prefix is not None),
+        }
         return wavs[0][trim:], rate

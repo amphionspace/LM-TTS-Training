@@ -2,7 +2,7 @@
 
 本报告记录 all16 的三种训练方案：**frozen-conditioning** 使用冻结的 TTS 文本 embedding / projector；**textbase** 使用纯文本 Qwen3-0.6B-Base 初始化的可训练 embedding，以及随机初始化的可训练 projector；**no-speaker** 保留 frozen-conditioning 的文本前端与音频结构，移除 speaker embedding 条件后独立训练。三者共用同一数据划分。第 1–4 节说明共同设置与主要差异，第 5–9 节保留前两种方案的评测和诊断，第 10 节记录 no-speaker step 10,000，**第 11 节记录 no-speaker step 17,500 的结构、设置和完整结果，第 12 节记录同一实验 step 25,000 的接续评测**。
 
-更新于 **2026-10-14**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；No-speaker step 25,000 的双采样结果见第 12 节，双 greedy 已完成、结果待补录。**Emilia2 refmask step 10,000 的 speaker + ICL 双采样已完成，双 greedy 已启动接续**，模型差异与结果见第 13 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
+更新于 **2026-10-14**。Frozen-conditioning 与 textbase 的已完成历史评测见第 8 节。No-speaker step 17,500 的全量双采样与双 greedy 均已完成，结果见第 11 节；No-speaker step 25,000 的双采样结果见第 12 节，双 greedy 已完成、结果待补录。**Emilia2 refmask step 10,000 的 speaker + ICL 双采样已完成，双 greedy 按要求停止**，结果见第 13 节。当前测试 LFM230M step 5,000，仅运行 sampling，说明见第 14 节。Step 10,000 的旧任务与 speaker-only 保持暂停。
 
 ## 1. 实验与目录怎么对应
 
@@ -671,7 +671,7 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 
 每组的 `run.sh` 保存复现命令，`pipeline_status.json` / `run.log` 记录阶段与日志；最终评分表、汇总、审计在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/speaker_icl/`。Greedy 目录中的 `wait-and-run.py` / `queue_status.json` 负责接续：只有双采样 checkpoint 身份匹配、全部 3,108 条评分或按规则排除且审计通过后才启动。
 
-导出权重 SHA256：`eaf81e93de6ef498843d018d9b5e95236b7cf72bb0f8e25b3032601aab86ba54`。导出保存 FP32 权重及配套 tokenizer，推理使用 BF16；已确认 speaker 标记为 true。中英文各两条生成、评分及完整性审计均已通过：英文 WER **0.000%**、SIM **65.933%**，中文 CER **15.909%**、SIM **77.900%**；四条均未超过 30 秒，运行断言确认 speaker embedding 与 ICL 均实际使用。上述仅为预检，不能代表全量质量。全量双采样现已完成，结果见下文；双 greedy 已启动接续，尚无完整评分结果。后台会话为 `seedtts-emilia2-refmask-s10000-sampling-full` 与 `seedtts-emilia2-refmask-s10000-greedy-queued`。
+导出权重 SHA256：`eaf81e93de6ef498843d018d9b5e95236b7cf72bb0f8e25b3032601aab86ba54`。导出保存 FP32 权重及配套 tokenizer，推理使用 BF16；已确认 speaker 标记为 true。中英文各两条生成、评分及完整性审计均已通过：英文 WER **0.000%**、SIM **65.933%**，中文 CER **15.909%**、SIM **77.900%**；四条均未超过 30 秒，运行断言确认 speaker embedding 与 ICL 均实际使用。上述仅为预检，不能代表全量质量。全量双采样已完成，结果见下文；双 greedy 按后续要求停止，不再推进全量评分。后台会话为 `seedtts-emilia2-refmask-s10000-sampling-full` 与 `seedtts-emilia2-refmask-s10000-greedy-queued`。
 
 
 ### Emilia2 refmask step 10,000 全量双采样结果
@@ -689,4 +689,39 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 
 原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `speaker_icl/`。
 
-双 greedy 接续任务于 **2026-10-14 02:36:54 UTC** 启动，完整结果待补充；上述结果仅属于双采样。
+双 greedy 于 **2026-10-14 02:36:54 UTC** 启动，后于 **03:10 UTC** 按要求停止，接续进程与八个生成分片均已退出。停止时保留 **827** 条成功生成记录，其中 **130** 条超过 30 秒；未完成全量生成或评分，不作为正式结果。状态文件中的 `failed` 来自主动中断，接续状态为 `stopped`。上述完整结果仅属于双采样。
+
+
+## 14. Emilia2 LFM230M step 5,000：仅双采样评测（2026-10-14）
+
+读取 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf16-8gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00005000`。完整标记与组装身份已核验，checkpoint 为 `epoch=0`、已消费 **34,642,179** 条样本。按要求只跑 sampling，不接 greedy。
+
+### 模型与训练条件
+
+| 模块 | 结构、初始化与本轮更新范围 |
+| --- | --- |
+| 文本 tokenizer / embedding | 使用 LFM tokenizer；65,536 × 2,048 embedding，以 LFM 的 1,024 维权重初始化为 `[E, -E]`，TTS 控制 token 使用预留词表行；**可训练**，LR `1e-4` |
+| 文本 projector | 2,048 → 2,048 → 1,024、SiLU；采用 paired-SiLU 初始化，初始投影组合还原 LFM embedding；**可训练**，LR `3e-4`，不是随机 projector |
+| Talker 主干 | `LFM2.5-230M-Base`，14 层、hidden 1,024，混合短卷积与 attention；**可训练**，LR `1e-4` |
+| Codec embedding / head、Code Predictor | 首码本 3,072 类、16 张音频 embedding、5 层 Code Predictor 与 15 个 residual heads；训练开始时随机初始化，**可训练**，LR `3e-4` |
+| Speaker encoder | 从 Qwen3-TTS 模板继承 ECAPA，1,024 维输出；**冻结并参与条件输入** |
+| 音频 codec | Qwen3-TTS-Tokenizer-12Hz，24 kHz、16 码本；**独立冻结** |
+
+主模型共 **459,812,672** 个参数，其中 **450,958,336** 可训练，不含独立 codec。组装目录为 `assets/assembled/lfm2.5-230m-base-text2048-spk`；训练配置为 `configs/supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf16-8gpu-acc2-lr3e-4-bblr1e-4-ep3-wsd.yaml`。
+
+使用与第 13 节相同的 Emilia2 划分：训练 **76,607,724** 条、验证 **76,684** 条，build 为 `supervised-tts-20261012-emilia2-reference-lfm2.5-230m`，文本 token 改为 LFM tokenizer。BF16、8 卡 × accumulation 2、每卡 32,000 frames / 50,000 tokens；token loss、reference mask、峰值 LR 与样本进度 WSD 沿用上一组，目标 3 epochs。Step 5,000 仍处于 steady 阶段；消费样本量不同，不能直接把与 Qwen step 10,000 的分数差异归因于主干结构。
+
+### 推理适配与评测范围
+
+LFM checkpoint 使用 `lm_tts` 的生成路径：沿用训练输入构造，加入参考音频的 speaker embedding、参考文本 / codec 前缀，再生成目标音频；每帧 16 个码本参与后续帧的输入。文本 BOS / EOS / PAD 使用 LFM 组装配置中的 ID，参考文本和目标文本分别 tokenize 后拼接。参考与生成 codec 一起解码，再裁掉参考部分。
+
+本次为这条路径补齐 speaker 条件，speaker 音频前处理与官方 Qwen 方法一致；通过“生成与训练协议逐帧计算一致”和“speaker 提取与官方实现一致”的测试。LFM 暂使用 **完整前缀计算、无 KV cache**；计算速度不能直接与 Qwen 的缓存推理相比。本次修改限于推理和评测适配，不改变训练模型参数结构、optimizer 或 resume 状态。
+
+评测为 **speaker + ICL、batch size 1、Auto、non-streaming、BF16 + SDPA**；Talker / Code Predictor 均采样，top-k 50、top-p 1.0、temperature 0.9，Talker repetition penalty 1.05。英文 1,088 条、中文 2,020 条；8 卡生成、GPU 0–3 评分，每进程生成显存上限 8 GiB、预留 2 GiB。继续使用相同的 WER / CER、WavLM SIM 和独立 30 秒排除规则，DNSMOS 不计算。
+
+- 导出：`UltraEval-Audio/init_model/emilia2-lfm230m-text2048-spk-refmask-step-00005000/`；权重 SHA256 `dd8c2a7d757bd8d408a86be27799b80ba1dbf1904055110f4662b7843ff2978d`。
+- 结果：`UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/`。
+- 复现命令为结果目录的 `run.sh`；阶段及日志为 `pipeline_status.json` / `run.log`；完整结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频和逐条评分在 `full/speaker_icl/`。
+- 后台会话：`seedtts-emilia2-lfm230m-s5000-sampling-full`。中英文各两条生成、评分与审计均已通过，现已进入全量 sampling；未安排 greedy，当前尚无完整结果。
+
+预检四条时长 **2.48、2.80、5.28、6.48 秒**，单条生成耗时约 **3.18–7.11 秒**；英文平均 WER **13.393%**、SIM **45.209%**，中文平均 CER **9.091%**、SIM **61.383%**。无超长排除，speaker 与 ICL 条件均通过运行校验。这只是流程预检，不能代表全量质量或用于模型优劣结论。
