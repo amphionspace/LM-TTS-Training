@@ -136,12 +136,12 @@ step 17,500 时 frozen-conditioning、textbase、no-speaker 均消费约 1.42 �
 | --- | ---: | ---: | ---: | ---: | ---: |
 | textbase 17,500 | 约 1.42 亿 | 5.15 | 47.1 | 12.86 | 57.7 |
 | LFM 5,000 | 0.35 亿 | 8.68 | 39.2 | 9.40 | 55.2 |
-| LFM 6,000 | 0.42 亿 | 9.43 | 43.2 | 8.73 | 58.6 |
+| LFM 6,000 | 0.42 亿 | 9.42 | 43.3 | 8.73 | 58.6 |
 | Qwen Emilia2 refmask 10,000 | 0.67 亿 | 5.02 | 53.5 | 4.59 | 65.5 |
 
-LFM 6,000 结果取自 `UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md`，记录时英文 1,086 / 1,088 条已评分、审计尚未写出，数值可能小幅变化。
+LFM 6,000 结果取自 `UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md`，3,108 条全部评分、审计通过（09:50 UTC）。首次汇总时英文 index 329、552 已算出分数但记录不在评分文件中，从原目录 `run.sh` 恢复补评后完成。
 
-LFM 6,000 只用约 0.3 倍样本，中文 SIM 已超过 textbase 17,500（58.6 vs 57.7），中文 CER 更低；英文 SIM 仍低 3.9。5,000 → 6,000（约 690 万样本）SIM 英文 +4.0、中文 +3.4，仍在快速上升。数据（Emilia2 vs all16）、refmask、主干均不同，只能作为“保持函数的初始化可能避免 textbase 问题”的旁证。
+LFM 6,000 只用约 0.3 倍样本，中文 SIM 已超过 textbase 17,500（58.6 vs 57.7），中文 CER 更低；英文 SIM 仍低 3.8。5,000 → 6,000（约 690 万样本）SIM 英文 +4.1、中文 +3.4，仍在快速上升。数据（Emilia2 vs all16）、refmask、主干均不同，只能作为“保持函数的初始化可能避免 textbase 问题”的旁证。
 
 ## 5. 被否定的初始化改法
 
