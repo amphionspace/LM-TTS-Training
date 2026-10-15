@@ -892,7 +892,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 
 评测沿用 **speaker + ICL、Talker / Code Predictor 双采样、BF16 + SDPA、batch size 1、Auto、non-streaming**；top-k 50、top-p 1.0、temperature 0.9，Talker repetition penalty 1.05。Seed-TTS 英文 1,088 条、中文 2,020 条，生成与评分各 **8 卡 × 每卡 4 worker，共 32 个**。指标及独立 30 秒超长排除规则不变，DNSMOS 不计算。
 
-运行目录为 `UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/`，后台会话为 `seedtts-emilia2-refmask-avg17500-20000`。`merge.sh` 保存合并命令（目标目录必须不存在），`merge_verification.json` 保存逐张量核验；`run.sh` 为评测 / 恢复命令，阶段和日志为 `pipeline_status.json`、`run.log`、`logs/`，正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。中英文各两条预检生成、评分及审计通过：英文 WER **0.000%**、SIM **64.755%**；中文 CER **6.818%**、SIM **78.992%**，无超长排除。全量生成已启动；预检仅验证流程，尚无正式全量评分。
+运行目录为 `UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/`，后台会话为 `seedtts-emilia2-refmask-avg17500-20000`。`merge.sh` 保存合并命令（目标目录必须不存在），`merge_verification.json` 保存逐张量核验；`run.sh` 为评测 / 恢复命令，阶段和日志为 `pipeline_status.json`、`run.log`、`logs/`，正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。中英文各两条预检生成、评分及审计通过：英文 WER **0.000%**、SIM **64.755%**；中文 CER **6.818%**、SIM **78.992%**，无超长排除。全量评测随后已完成，见下文；预检仅验证流程。
 
 Step 22,500 的每十分钟自动检查继续运行；其启动条件改为本轮平均模型评测完成并通过审计，再接续评测，避免与本轮争抢 GPU。
 
@@ -905,3 +905,31 @@ Step 22,500 的每十分钟自动检查继续运行；其启动条件改为本�
 | step 20,000 | 3.367 | 59.638 | 3.244 | 69.735 | 0 / 1 |
 
 两份源模型均生成全部 3,108 条音频，英文评分 1,088 条、中文评分 2,019 条。来源：[step 17,500 结果表](../../../UltraEval-Audio/res/emilia2-refmask-step17500-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md)、[step 20,000 结果表](../../../UltraEval-Audio/res/emilia2-refmask-step20000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md)。平均模型须完成独立全量评分后再比较，分别保留各自超长排除数。
+
+
+### 两模型平均的全量结果
+
+于 **2026-10-15 01:58:13 UTC** 完成，3,108 条全部生成并评分，无超长排除，完整性审计通过；均分从全部唯一成功评分记录重新核验。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 1088/1088 | 1088/1088 | 3.035 | 59.818 | — | — | 完整 |
+| speaker_icl | seed_tts_eval_zh | 2020/2020 | 2020/2020 | 2.662 | 70.013 | — | — | 完整 |
+
+相较单独 step 20,000，两模型平均的英文 WER **3.367% → 3.035%**、SIM **59.638% → 59.818%**，中文 CER **3.244% → 2.662%**、SIM **69.735% → 70.013%**。平均模型未排除超长样本，单独 step 20,000 排除 1 条中文，比较时需考虑分母变化。
+
+原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/audit.json)。
+
+
+## 20. Step 17,500 / 20,000 / 22,500 三模型平均：自动接续
+
+新增三份原始模型的**等权平均，各占 1/3**，不会将两模型平均结果与 step 22,500 再做 50/50 平均。`scripts/average_exports.py` 已支持至少两份源导出，校验每份模型的配置、tokenizer、形状、dtype、哈希与有限值；浮点张量以 FP32 等权累加，所有源中完全相同的张量直接保留，避免冻结权重因 1/3 舍入而变化，整数 buffer 必须一致。三模型均分、第三份模型不兼容拒绝、冻结权重严格不变及既有两模型行为测试共 **10 项通过**，Ruff 检查通过。
+
+当前尚缺 step 22,500，检查器每 **10 分钟**检查源导出；先由已有的 step 22,500 检查器完成导出、单模型评测和审计，再自动运行三模型合并、逐张量核验和评测，避免任务重叠。逐张量核验将平均结果与 FP64 参考均值比较，检查相同源张量严格不变，通过后才开始评测。任一步失败会记录错误并在 10 分钟后重试，已有成功音频和评分会复用。
+
+- 后台会话：`seedtts-emilia2-refmask-avg17500-20000-22500-watch`。
+- 独立模型：`UltraEval-Audio/init_model/emilia2-refmask-average-step17500-step20000-step22500/`。
+- 运行目录：`UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/`。
+- `watch-and-run.py` 自动等待与接续；`watch_status.json` / `watch_events.jsonl` 记录状态和检查历史；`watch.log` / `merge.log` / `run.log` 保存日志。
+- `merge.sh` 为合并命令（先写入 `.exporting` 目录再由检查器重命名）；`verify-merge.py` / `merge_verification.json` 为逐张量核验及记录；`run.sh` 为固定评测与恢复命令。
+- 评测继续使用 **speaker + ICL 双采样、BF16 + SDPA、batch size 1、Auto、non-streaming**；采样参数与第 19 节一致，生成和评分各 **32 worker（8 卡 × 每卡 4 个）**。正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频在 `full/speaker_icl/`，使用相同指标和独立 30 秒排除规则。

@@ -48,9 +48,10 @@ def test_rejects_different_integer_buffers():
         average_exports.average_states({"x": torch.tensor(1)}, {"x": torch.tensor(2)})
 
 
-def test_complete_export_records_sources_and_loads(tmp_path, monkeypatch):
-    sources = [tmp_path / "a", tmp_path / "b"]
-    for source, value in zip(sources, [2.0, 6.0], strict=True):
+@pytest.mark.parametrize("values", [[2.0, 6.0], [0.0, 0.0, 9.0]])
+def test_complete_export_records_sources_and_loads(tmp_path, monkeypatch, values):
+    sources = [tmp_path / str(i) for i in range(len(values))]
+    for source, value in zip(sources, values, strict=True):
         source.mkdir()
         save_file({"weight": torch.tensor([value])}, source / "model.safetensors")
         (source / "config.json").write_text("{}")
@@ -71,12 +72,28 @@ def test_complete_export_records_sources_and_loads(tmp_path, monkeypatch):
         sys, "argv", ["average", "--sources", *map(str, sources), "--output", str(output)]
     )
     average_exports.main()
-    assert load_file(output / "model.safetensors")["weight"].item() == 4.0
+    assert load_file(output / "model.safetensors")["weight"].item() == sum(values) / len(values)
     report = json.loads((output / "export.json").read_text())
     assert report["weights_sha256"] == file_hash(output / "model.safetensors")
-    assert [r["weight"] for r in report["sources"]] == [0.5, 0.5]
+    assert [r["weight"] for r in report["sources"]] == [1 / len(values)] * len(values)
     assert report["use_speaker_embedding"] is True
     assert (output / "speech_tokenizer/codec").read_bytes() == b"codec"
     from lm_tts.models.loading import verify_export
 
     verify_export(output)
+
+
+def test_three_sources_preserve_shared_frozen_values_exactly():
+    frozen = torch.tensor([1.1, -0.7, 0.1234567])
+    result = average_exports.average_states(
+        *[{"weight": torch.tensor([value]), "frozen": frozen.clone()} for value in [0.0, 0.0, 9.0]]
+    )
+    assert result["weight"].item() == 3.0
+    assert torch.equal(result["frozen"], frozen)
+
+
+def test_third_source_must_also_be_compatible():
+    with pytest.raises(ValueError, match="shape or dtype"):
+        average_exports.average_states(
+            {"x": torch.ones(1)}, {"x": torch.ones(1)}, {"x": torch.ones(2)}
+        )

@@ -1,4 +1,4 @@
-"""Create an FP32 equal-weight average of two compatible flat model exports."""
+"""Create an FP32 equal-weight average of compatible flat model exports."""
 
 import argparse
 import json
@@ -11,20 +11,32 @@ from safetensors.torch import load_file, save_file
 from lm_tts.artifacts import file_hash
 
 
-def average_states(left, right):
-    if left.keys() != right.keys():
+def average_states(*states):
+    if len(states) < 2:
+        raise ValueError("At least two source models are required")
+    left, *others = states
+    if any(left.keys() != right.keys() for right in others):
         raise ValueError("Source tensor keys differ")
     averaged = {}
     for key, a in left.items():
-        b = right[key]
-        if a.shape != b.shape or a.dtype != b.dtype:
+        tensors = [a, *(right[key] for right in others)]
+        if any(a.shape != b.shape or a.dtype != b.dtype for b in tensors[1:]):
             raise ValueError(f"Source tensor shape or dtype differs: {key}")
+        identical = all(torch.equal(a, b) for b in tensors[1:])
         if a.is_floating_point():
-            if not torch.isfinite(a).all() or not torch.isfinite(b).all():
+            if any(not torch.isfinite(b).all() for b in tensors):
                 raise ValueError(f"Non-finite source tensor: {key}")
-            averaged[key] = a.float().mul(0.5).add_(b.float(), alpha=0.5).contiguous()
+            # Preserve shared frozen parameters exactly, including for thirds.
+            if identical:
+                averaged[key] = a.float().clone().contiguous()
+            else:
+                weight = 1.0 / len(tensors)
+                value = a.float().mul(weight)
+                for b in tensors[1:]:
+                    value.add_(b.float(), alpha=weight)
+                averaged[key] = value.contiguous()
         else:
-            if not torch.equal(a, b):
+            if not identical:
                 raise ValueError(f"Non-floating source tensor differs: {key}")
             averaged[key] = a.contiguous()
     return averaged
@@ -32,9 +44,11 @@ def average_states(left, right):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sources", type=Path, nargs=2, required=True)
+    parser.add_argument("--sources", type=Path, nargs="+", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if len(args.sources) < 2:
+        parser.error("--sources requires at least two model directories")
     torch.set_num_threads(4)
     reports = []
     for source in args.sources:
@@ -48,9 +62,9 @@ def main():
     artifacts = [
         {k: v for k, v in r["artifact_sha256"].items() if k != "model.safetensors"} for r in reports
     ]
-    if artifacts[0] != artifacts[1]:
+    if any(artifacts[0] != artifact for artifact in artifacts[1:]):
         raise ValueError("Source configuration or tokenizer artifacts differ")
-    if reports[0]["use_speaker_embedding"] != reports[1]["use_speaker_embedding"]:
+    if any(reports[0]["use_speaker_embedding"] != r["use_speaker_embedding"] for r in reports[1:]):
         raise ValueError("Source speaker conditioning differs")
     states = [load_file(str(source / "model.safetensors")) for source in args.sources]
     state = average_states(*states)
@@ -66,7 +80,7 @@ def main():
         "precision": "fp32",
         "use_speaker_embedding": reports[0]["use_speaker_embedding"],
         "sources": [
-            {"path": str(p.resolve()), "weight": 0.5, "export": r}
+            {"path": str(p.resolve()), "weight": 1.0 / len(reports), "export": r}
             for p, r in zip(args.sources, reports, strict=True)
         ],
         "weights_sha256": file_hash(args.output / "model.safetensors"),
