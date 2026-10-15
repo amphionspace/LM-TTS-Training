@@ -1,0 +1,54 @@
+extends: base.yaml
+
+# ---- Anneal the 16-GPU emilia2 refmask run from its plateau checkpoint at step 22,500 ----
+model:
+  use_speaker_embedding: true
+
+data:
+  config: ${paths.project}/configs/data-emilia2-reference.yaml
+  build_id: supervised-tts-20261012-emilia2-reference
+
+train:
+  run_name: supervised-tts-20261015-emilia2-refmask-anneal-s22500-bf16-8gpu-acc2-lr3e-4-bblr1e-4-decay0.3ep
+  precision: bf16
+  mask_reference: true  # Exclude reference targets in all 16 codebooks; retain EOS.
+  loss_reduction: token
+  residual_weight: 0.3
+
+  # Weights and AdamW moments from the plateau; progress, RNG and data order start fresh.
+  init_from:
+    checkpoint: /workspace/LM-TTS-Training-Runs/supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00022500
+    load_optimizer: true
+
+  # The source WSD decay phase alone: 10% of 3 epochs = 0.3 epoch of samples, cosine to 0.1x.
+  epochs: 1
+  max_steps: null
+  schedule_steps: null
+  warmup_steps: null
+  lr: 3.0e-4
+  backbone_lr: 1.0e-4
+  scheduler:
+    name: anneal
+    decay_epochs: 0.3
+    min_lr_ratio: 0.1
+
+  # Same per-GPU budgets; 8 GPUs x 2 microbatches matches the source 16 x 1 global batch.
+  max_batch_frames: 32000
+  max_batch_tokens: 50000
+  accumulation: 2
+  num_workers: 4
+  prefetch_factor: 2
+  length_bucket_size: 65536
+
+  log_every: 10
+  first_check_step: 100
+  keep_checkpoints: null
+  save_every: 500
+  eval_every: 500
+
+eval:
+  batch_size: 32
+
+acp:
+  nodes: 1
+  worker_spec: N3lS.Ii.I60.80c896g  # 8 A800 GPUs, 80 vCPU, 896 GiB per node

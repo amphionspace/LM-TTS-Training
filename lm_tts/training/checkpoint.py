@@ -8,7 +8,11 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.distributed.checkpoint as dcp
-from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
+from torch.distributed.checkpoint.state_dict import (
+    get_state_dict,
+    set_model_state_dict,
+    set_state_dict,
+)
 
 
 def prune_checkpoints(root, keep):
@@ -114,3 +118,46 @@ def load_checkpoint(path, model, optimizer, scheduler, signature):
     torch.set_rng_state(rng["torch"])
     torch.cuda.set_rng_state(rng["cuda"])
     return metadata["progress"]
+
+
+def initialize_from(source, model, optimizer, signature):
+    """Start a new run from another run's weights, optionally with its AdamW moments.
+
+    Progress, RNG and the scheduler are not restored, so world size and accumulation may differ;
+    DCP reshards the FSDP state onto the current mesh.
+    """
+    path = Path(source["checkpoint"])
+    if not (path / "COMPLETE").is_file():
+        raise ValueError(f"Not a completed checkpoint: {path}")
+    metadata = json.loads((path / "metadata.json").read_text())
+    origin = metadata["signature"]
+    shared = ("protocol", "model", "assembly_sha256", "build", "val_build")
+    if any(origin[key] != signature[key] for key in shared):
+        raise ValueError("init_from requires the same model, assembly and data builds")
+    if source["load_optimizer"]:
+        # Parameter groups and their decay must match for the moments to mean the same thing.
+        for key, default in (
+            ("lr", None),
+            ("backbone_lr", None),
+            ("weight_decay", None),
+            ("text_embedding_lr_group", "fresh"),
+        ):
+            if origin["settings"].get(key, default) != signature["settings"].get(key, default):
+                raise ValueError(f"init_from with optimizer state requires the same {key}")
+    model_state, optim_state = get_state_dict(model, optimizer)
+    state = {"model": model_state}
+    if source["load_optimizer"]:
+        state["optimizer"] = optim_state
+    dcp.load(state, checkpoint_id=path / "distributed")
+    if source["load_optimizer"]:
+        set_state_dict(
+            model, optimizer, model_state_dict=state["model"], optim_state_dict=state["optimizer"]
+        )
+    else:
+        set_model_state_dict(model, state["model"])
+    return {
+        "checkpoint": str(path.resolve()),
+        "step": metadata["progress"]["step"],
+        "world_size": metadata["world_size"],
+        "load_optimizer": source["load_optimizer"],
+    }

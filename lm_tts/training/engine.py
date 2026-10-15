@@ -20,7 +20,7 @@ from ..data.sampler import TokenBatchSampler
 from ..evaluation.validation import validate
 from ..models.loading import load_model
 from ..objectives.tts import loss_normalizers, tts_loss
-from .checkpoint import load_checkpoint, save_checkpoint
+from .checkpoint import initialize_from, load_checkpoint, save_checkpoint
 from .distributed import batch_health, initialize, move, shard
 from .optimizer import parameter_groups
 from .precision import training_precision
@@ -178,6 +178,16 @@ def run(config, resume=None, eval_only=False):
             progress = load_checkpoint(checkpoint, model, optimizer, scheduler, signature)
             metadata = json.loads((checkpoint / "metadata.json").read_text())
             validation_pending = metadata.get("validation_pending", False)
+        elif settings.get("init_from"):
+            origin = initialize_from(settings["init_from"], model, optimizer, signature)
+            # Loaded param groups carry the source learning rate; restart this run's schedule.
+            for group, base, lr in zip(
+                optimizer.param_groups, scheduler.base_lrs, scheduler.get_last_lr(), strict=True
+            ):
+                group["initial_lr"], group["lr"] = base, lr
+            if rank == 0:
+                (output / "initialized_from.json").write_text(json.dumps(origin, indent=2))
+                print(json.dumps({"initialized_from": origin}), flush=True)
         if rank == 0:
             writer = SummaryWriter(
                 str(output / "tensorboard"), purge_step=progress["step"] + 1 if resume else None
@@ -288,7 +298,7 @@ def run(config, resume=None, eval_only=False):
             elif retry:
                 run_validation(model, val_data, config, device, output, step, writer)
                 last_validated_step = step
-        while not finished(settings, progress):
+        while not finished(settings, progress, epoch_fraction()):
             started = time.perf_counter()
             torch.cuda.reset_peak_memory_stats(device)
             batches = []
@@ -307,7 +317,7 @@ def run(config, resume=None, eval_only=False):
                     progress["epoch"] += 1
                     progress["next_batch"] = 0
                     progress["samples_in_epoch"] = 0
-                    if finished(settings, progress):
+                    if finished(settings, progress, epoch_fraction()):
                         break
                     sampler.set_epoch(progress["epoch"])
                     reader = iter(loader)
@@ -448,7 +458,7 @@ def run(config, resume=None, eval_only=False):
                     journal.write(json.dumps({"step": step, "train": metrics}) + "\n")
             if step % settings["log_every"] == 0:
                 skipped_since_log = discarded_since_log = 0
-            final = finished(settings, progress)
+            final = finished(settings, progress, epoch_fraction())
             first_check = step == settings.get("first_check_step")
             validation_due = val_data is not None and (
                 first_check or step % settings["eval_every"] == 0 or final

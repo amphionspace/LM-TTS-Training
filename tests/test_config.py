@@ -86,3 +86,45 @@ def test_training_applies_communication_defaults_before_initialization(monkeypat
         "NCCL_IB_RETRY_CNT": "13",
         "NCCL_IB_AR_THRESHOLD": "0",
     }
+
+
+def test_anneal_config_requires_initialization_and_no_warmup():
+    root = Path(__file__).resolve().parents[1]
+    config = load_config(
+        root
+        / "configs/supervised-tts-20261015-emilia2-refmask-anneal-s22500-bf16-8gpu-acc2-lr3e-4-bblr1e-4-decay0.3ep.yaml"
+    )
+    train = config["train"]
+    assert train["scheduler"] == {"name": "anneal", "decay_epochs": 0.3, "min_lr_ratio": 0.1}
+    assert train["init_from"]["load_optimizer"] is True
+    assert train["accumulation"] == 2 and read_yaml(config["config_path"])["acp"]["nodes"] == 1
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"init_from": None}, "requires train.init_from"),
+        ({"warmup_steps": 10}, "no warmup"),
+        ({"epochs": 2}, "no warmup"),
+        (
+            {"scheduler": {"name": "anneal", "decay_epochs": 1.5, "min_lr_ratio": 0.1}},
+            "decay_epochs",
+        ),
+        ({"init_from": {"checkpoint": "x"}}, "init_from needs"),
+    ],
+)
+def test_bad_anneal_settings_fail_before_execution(tmp_path, change, message):
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    source = (
+        root
+        / "configs/supervised-tts-20261015-emilia2-refmask-anneal-s22500-bf16-8gpu-acc2-lr3e-4-bblr1e-4-decay0.3ep.yaml"
+    )
+    config = yaml.safe_load(source.read_text())
+    config["extends"] = str(root / "configs/base.yaml")
+    config["train"].update(change)
+    path = tmp_path / "anneal.yaml"
+    path.write_text(yaml.safe_dump(config))
+    with pytest.raises(ValueError, match=message):
+        load_config(path)

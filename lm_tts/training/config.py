@@ -96,8 +96,17 @@ def load_config(path):
         horizon = train.get("schedule_steps")
         if type(horizon) is not int or horizon < 1 or (steps is not None and steps > horizon):
             raise ValueError("Invalid stopping/schedule horizon")
+    elif schedule.get("name") == "anneal":
+        decay, floor = schedule.get("decay_epochs"), schedule.get("min_lr_ratio")
+        if epochs != 1 or train.get("warmup_steps") is not None or "warmup_ratio" in schedule:
+            raise ValueError("Anneal requires epochs=1 and no warmup")
+        for key, value in (("decay_epochs", decay), ("min_lr_ratio", floor)):
+            if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= 1:
+                raise ValueError(f"scheduler.{key} must be in (0, 1]")
+        if not train.get("init_from"):
+            raise ValueError("Anneal requires train.init_from")
     else:
-        raise ValueError("scheduler.name must be cosine or wsd")
+        raise ValueError("scheduler.name must be cosine, wsd or anneal")
     if "warmup_ratio" in schedule:
         ratio = schedule["warmup_ratio"]
         if (
@@ -110,10 +119,21 @@ def load_config(path):
             raise ValueError(
                 "WSD warmup_ratio requires warmup_steps=null and a nonempty steady phase"
             )
-    elif type(train["warmup_steps"]) is not int or train["warmup_steps"] < 0:
+    elif schedule.get("name") != "anneal" and (
+        type(train["warmup_steps"]) is not int or train["warmup_steps"] < 0
+    ):
         raise ValueError("warmup_steps must be a nonnegative integer")
     if schedule.get("name") == "cosine" and train["warmup_steps"] > train["schedule_steps"]:
         raise ValueError("warmup_steps must be within schedule_steps")
+    source = train.get("init_from")
+    if source is not None and (
+        not isinstance(source, dict)
+        or set(source) != {"checkpoint", "load_optimizer"}
+        or not isinstance(source["checkpoint"], str)
+        or not source["checkpoint"]
+        or type(source["load_optimizer"]) is not bool
+    ):
+        raise ValueError("train.init_from needs checkpoint and a boolean load_optimizer")
     bucket = train.get("length_bucket_size", 0)
     if type(bucket) is not int or bucket < 0:
         raise ValueError("length_bucket_size must be a nonnegative integer")
