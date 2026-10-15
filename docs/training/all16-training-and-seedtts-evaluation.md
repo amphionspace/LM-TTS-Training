@@ -1007,3 +1007,49 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 - GPU **0、1、6、7**，生成并发 **16**、固定 **32 个逻辑分片**，评分并发 **8**。启动前检查每卡至少 30 GiB 空闲，生成进程上限 6 GiB、预留 6 GiB。
 
 已实际启动，状态确认 `greedy=true`，当前先进行四条预检，随后自动完成全量生成、评分和审计。已有双采样结果完整保留。
+
+
+### 三模型平均双 greedy 全量结果
+
+于 **2026-10-15 08:06:36 UTC** 完成，3,108 条全部生成，无运行错误；按本轮自身 30 秒规则排除 **193 条（6.21%）**，其中英文 50 条、中文 143 条。其余 **2,915 条全部评分**，完整性审计通过，均分从唯一成功记录重新核验。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 1088/1088 | 1038/1038 | 2.152 | 58.245 | — | — | 完整（排除 50 条） |
+| speaker_icl | seed_tts_eval_zh | 2020/2020 | 1877/1877 | 2.164 | 68.254 | — | — | 完整（排除 143 条） |
+
+与同一模型双采样相比，greedy 保留样本的英文 WER **2.880% → 2.152%**、中文 CER **2.479% → 2.164%**；英文 SIM **60.314% → 58.245%**、中文 SIM **70.233% → 68.254%**。Greedy 排除了 193 条，而双采样无排除，因此不能仅凭保留样本上更低的错误率判定 greedy 整体更好；生成超长比例和相似度也需同时考虑。DNSMOS 未计算。
+
+原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/full/results_table.md) · [汇总及排除清单](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/full/audit.json)。
+
+
+## 22. 三模型平均混合解码：十条 smoke
+
+按要求仅测试 **10 条，中英文各 5 条**，模型仍为第 20 节三模型等权平均，使用各语言原始 index 0–4。
+
+| 解码模块 | 设置 |
+| --- | --- |
+| Talker | 采样，temperature **0.3**、top-p **1**、top-k **10**、repetition penalty **2** |
+| Code Predictor | **Greedy**，`subtalker_dosample=false` |
+
+保留 speaker + ICL、Auto、non-streaming、BF16 + SDPA、batch size 1，30 秒超长规则与既有指标相同。使用 GPU 0、1 两个生成进程，固定两份逻辑分片；生成后中英文各一个进程评分，再汇总与审计。运行时会断言实际 `settings` 中的采样开关和参数符合上表。
+
+- 运行目录：`UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-smoke10-20261015/`。
+- 后台会话：`seedtts-average3-mixed-smoke10`；复现 / 恢复命令为 `envs/tts/bin/python -u <运行目录>/run.py`（在 UltraEval-Audio 根目录执行）。
+- `inputs/` 保存固定的十条输入与哈希，`pipeline_status.json` / `run.log` / `logs/` 保存状态和日志；音频在 `smoke/speaker_icl/`，评分表、汇总、审计为 `smoke/results_table.md`、`smoke/summary.json`、`smoke/audit.json`。
+
+推理 CLI 新增独立 Code Predictor greedy 开关及 Talker 参数覆盖；旧默认参数保持原值，已有推理记录可继续恢复。独立混合采样参数、审计成功与错误开关拒绝等相关测试 **25 项通过**。本轮仅做 smoke，十条分数不代表全量质量。
+
+
+### 混合解码十条 smoke 结果
+
+10 条均已生成并评分，完整性审计通过，无超长排除或生成 / 评分错误。实际参数逐一核对符合上表，音频时长 **2.24–9.28 秒**。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 5/5 | 5/5 | 0.000 | 57.168 | — | — | 完整 |
+| speaker_icl | seed_tts_eval_zh | 5/5 | 5/5 | 2.771 | 75.651 | — | — | 完整 |
+
+英文五条 WER 均为 0；中文 CER 均值为 2.771%。这是固定的各语言前五条，只适合流程确认与试听，不与全量均分直接比较。本轮十条完成后已退出。
+
+[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-smoke10-20261015/smoke/results_table.md) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-smoke10-20261015/smoke/audit.json) · [英文音频](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-smoke10-20261015/smoke/speaker_icl/seed_tts_eval_en/) · [中文音频](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-smoke10-20261015/smoke/speaker_icl/seed_tts_eval_zh/)。
