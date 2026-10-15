@@ -892,6 +892,16 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 
 评测沿用 **speaker + ICL、Talker / Code Predictor 双采样、BF16 + SDPA、batch size 1、Auto、non-streaming**；top-k 50、top-p 1.0、temperature 0.9，Talker repetition penalty 1.05。Seed-TTS 英文 1,088 条、中文 2,020 条，生成与评分各 **8 卡 × 每卡 4 worker，共 32 个**。指标及独立 30 秒超长排除规则不变，DNSMOS 不计算。
 
-运行目录为 `UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/`，后台会话为 `seedtts-emilia2-refmask-avg17500-20000`。`merge.sh` 保存合并命令（目标目录必须不存在），`merge_verification.json` 保存逐张量核验；`run.sh` 为评测 / 恢复命令，阶段和日志为 `pipeline_status.json`、`run.log`、`logs/`，正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。当前已启动评测，尚无正式全量评分。
+运行目录为 `UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/`，后台会话为 `seedtts-emilia2-refmask-avg17500-20000`。`merge.sh` 保存合并命令（目标目录必须不存在），`merge_verification.json` 保存逐张量核验；`run.sh` 为评测 / 恢复命令，阶段和日志为 `pipeline_status.json`、`run.log`、`logs/`，正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。中英文各两条预检生成、评分及审计通过：英文 WER **0.000%**、SIM **64.755%**；中文 CER **6.818%**、SIM **78.992%**，无超长排除。全量生成已启动；预检仅验证流程，尚无正式全量评分。
 
 Step 22,500 的每十分钟自动检查继续运行；其启动条件改为本轮平均模型评测完成并通过审计，再接续评测，避免与本轮争抢 GPU。
+
+
+### 平均模型的源模型对照
+
+| 模型（均为双采样 speaker + ICL） | 英文 WER/% ↓ | 英文 SIM/% ↑ | 中文 CER/% ↓ | 中文 SIM/% ↑ | 超长排除（英 / 中） |
+| --- | ---: | ---: | ---: | ---: | --- |
+| step 17,500 | 3.368 | 58.359 | 3.272 | 67.995 | 0 / 1 |
+| step 20,000 | 3.367 | 59.638 | 3.244 | 69.735 | 0 / 1 |
+
+两份源模型均生成全部 3,108 条音频，英文评分 1,088 条、中文评分 2,019 条。来源：[step 17,500 结果表](../../../UltraEval-Audio/res/emilia2-refmask-step17500-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md)、[step 20,000 结果表](../../../UltraEval-Audio/res/emilia2-refmask-step20000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md)。平均模型须完成独立全量评分后再比较，分别保留各自超长排除数。
