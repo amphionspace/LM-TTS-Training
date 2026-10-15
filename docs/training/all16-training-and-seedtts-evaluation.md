@@ -875,7 +875,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 
 ### Step 22,500 自动接续（2026-10-15）
 
-已将同一 Qwen Emilia2 refmask 训练的 `checkpoints/step-00022500/` 加入自动评测，每 **10 分钟**检查一次。完整标记与元数据核验通过、且 step 20,000 已完成并通过审计后，自动导出并运行相同的 **speaker + ICL 双采样**全量评测：BF16 推理、batch size 1，生成和评分各 32 worker（8 卡 × 每卡 4 个）。失败后每 10 分钟重试并复用成功记录。
+已将同一 Qwen Emilia2 refmask 训练的 `checkpoints/step-00022500/` 加入自动评测，每 **1 分钟**检查一次。完整标记与元数据核验通过、且 step 20,000 已完成并通过审计后，自动导出并运行相同的 **speaker + ICL 双采样**全量评测：BF16 推理、batch size 1，生成和评分各 32 worker（8 卡 × 每卡 4 个）。失败后每 1 分钟重试并复用成功记录。
 
 后台会话为 `seedtts-emilia2-refmask-s22500-watch`，运行目录为 `UltraEval-Audio/res/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/`。检查器、固定评测命令、当前状态和历史分别为该目录的 `watch-and-run.py`、`run.sh`、`watch_status.json`、`watch_events.jsonl`；日志与结果布局同上。导出模型为 `UltraEval-Audio/init_model/emilia2-refmask-step-00022500/`。设置时 step 20,000 已完成，step 22,500 尚未出现。
 
@@ -894,7 +894,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 
 运行目录为 `UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/`，后台会话为 `seedtts-emilia2-refmask-avg17500-20000`。`merge.sh` 保存合并命令（目标目录必须不存在），`merge_verification.json` 保存逐张量核验；`run.sh` 为评测 / 恢复命令，阶段和日志为 `pipeline_status.json`、`run.log`、`logs/`，正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。中英文各两条预检生成、评分及审计通过：英文 WER **0.000%**、SIM **64.755%**；中文 CER **6.818%**、SIM **78.992%**，无超长排除。全量评测随后已完成，见下文；预检仅验证流程。
 
-Step 22,500 的每十分钟自动检查继续运行；其启动条件改为本轮平均模型评测完成并通过审计，再接续评测，避免与本轮争抢 GPU。
+Step 22,500 的每分钟自动检查继续运行；其启动条件改为本轮平均模型评测完成并通过审计，再接续评测，避免与本轮争抢 GPU。
 
 
 ### 平均模型的源模型对照
@@ -925,7 +925,7 @@ Step 22,500 的每十分钟自动检查继续运行；其启动条件改为本�
 
 新增三份原始模型的**等权平均，各占 1/3**，不会将两模型平均结果与 step 22,500 再做 50/50 平均。`scripts/average_exports.py` 已支持至少两份源导出，校验每份模型的配置、tokenizer、形状、dtype、哈希与有限值；浮点张量以 FP32 等权累加，所有源中完全相同的张量直接保留，避免冻结权重因 1/3 舍入而变化，整数 buffer 必须一致。三模型均分、第三份模型不兼容拒绝、冻结权重严格不变及既有两模型行为测试共 **10 项通过**，Ruff 检查通过。
 
-当前尚缺 step 22,500，检查器每 **10 分钟**检查源导出；先由已有的 step 22,500 检查器完成导出、单模型评测和审计，再自动运行三模型合并、逐张量核验和评测，避免任务重叠。逐张量核验将平均结果与 FP64 参考均值比较，检查相同源张量严格不变，通过后才开始评测。任一步失败会记录错误并在 10 分钟后重试，已有成功音频和评分会复用。
+当前尚缺 step 22,500，检查器每 **1 分钟**检查源导出；先由已有的 step 22,500 检查器完成导出、单模型评测和审计，再自动运行三模型合并、逐张量核验和评测，避免任务重叠。逐张量核验将平均结果与 FP64 参考均值比较，检查相同源张量严格不变，通过后才开始评测。任一步失败会记录错误并在 1 分钟后重试，已有成功音频和评分会复用。
 
 - 后台会话：`seedtts-emilia2-refmask-avg17500-20000-22500-watch`。
 - 独立模型：`UltraEval-Audio/init_model/emilia2-refmask-average-step17500-step20000-step22500/`。
