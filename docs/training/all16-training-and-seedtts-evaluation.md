@@ -878,3 +878,20 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 已将同一 Qwen Emilia2 refmask 训练的 `checkpoints/step-00022500/` 加入自动评测，每 **10 分钟**检查一次。完整标记与元数据核验通过、且 step 20,000 已完成并通过审计后，自动导出并运行相同的 **speaker + ICL 双采样**全量评测：BF16 推理、batch size 1，生成和评分各 32 worker（8 卡 × 每卡 4 个）。失败后每 10 分钟重试并复用成功记录。
 
 后台会话为 `seedtts-emilia2-refmask-s22500-watch`，运行目录为 `UltraEval-Audio/res/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/`。检查器、固定评测命令、当前状态和历史分别为该目录的 `watch-and-run.py`、`run.sh`、`watch_status.json`、`watch_events.jsonl`；日志与结果布局同上。导出模型为 `UltraEval-Audio/init_model/emilia2-refmask-step-00022500/`。设置时 step 20,000 已完成，step 22,500 尚未出现。
+
+
+## 19. Step 17,500 / 20,000 等权平均模型（2026-10-15）
+
+按 **50% × step 17,500 + 50% × step 20,000** 对同一 Qwen Emilia2 refmask 实验的已导出模型进行参数平均。使用 `scripts/average_exports.py`，在 CPU 上以 FP32 计算，对全部对应浮点张量平均；非浮点 buffer 必须相同并原样保留。先核对源导出文件哈希、配置 / tokenizer、tensor keys、shape、dtype 与有限性，再写入独立目录。原 checkpoint 与源导出模型均保留。
+
+- 平均模型：`UltraEval-Audio/init_model/emilia2-refmask-average-step17500-step20000/`。
+- 权重 SHA256：`81b6f374e7ca8ee10f7f69ca6d7e37de218287767a0f6f5a9d48b37780297770`。
+- `export.json` 记录两份源导出的完整身份及各自 `weight=0.5`；合并产物是推理模型，不包含可恢复训练的 optimizer / scheduler 状态。
+- **478 张量逐张量核验通过**：81 张源张量相同且合并后不变，397 张不同并严格符合 FP32 等权平均。冻结的文本前端、speaker encoder 保持对应源权重，独立音频 codec 复用已有冻结模型。
+- 回归测试 **7 项通过**，覆盖平均值、原张量不被修改、冻结权重 / 整数 buffer 保留、不兼容或非有限输入拒绝、完整导出身份与加载校验；Ruff 检查通过。
+
+评测沿用 **speaker + ICL、Talker / Code Predictor 双采样、BF16 + SDPA、batch size 1、Auto、non-streaming**；top-k 50、top-p 1.0、temperature 0.9，Talker repetition penalty 1.05。Seed-TTS 英文 1,088 条、中文 2,020 条，生成与评分各 **8 卡 × 每卡 4 worker，共 32 个**。指标及独立 30 秒超长排除规则不变，DNSMOS 不计算。
+
+运行目录为 `UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/`，后台会话为 `seedtts-emilia2-refmask-avg17500-20000`。`merge.sh` 保存合并命令（目标目录必须不存在），`merge_verification.json` 保存逐张量核验；`run.sh` 为评测 / 恢复命令，阶段和日志为 `pipeline_status.json`、`run.log`、`logs/`，正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。当前已启动评测，尚无正式全量评分。
+
+Step 22,500 的每十分钟自动检查继续运行；其启动条件改为本轮平均模型评测完成并通过审计，再接续评测，避免与本轮争抢 GPU。
