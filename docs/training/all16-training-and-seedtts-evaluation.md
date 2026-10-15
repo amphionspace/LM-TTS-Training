@@ -1053,3 +1053,17 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 英文五条 WER 均为 0；中文 CER 均值为 2.771%。这是固定的各语言前五条，只适合流程确认与试听，不与全量均分直接比较。本轮十条完成后已退出。
 
 [结果表](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-smoke10-20261015/smoke/results_table.md) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-smoke10-20261015/smoke/audit.json) · [英文音频](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-smoke10-20261015/smoke/speaker_icl/seed_tts_eval_en/) · [中文音频](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-smoke10-20261015/smoke/speaker_icl/seed_tts_eval_zh/)。
+
+
+## 23. 三模型平均混合解码：全量评测
+
+按要求将第 22 节十条 smoke 的参数推广到完整 Seed-TTS：**英文 1,088 条、中文 2,020 条，共 3,108 条**。Talker 采样参数为 **temperature 0.3、top-p 1、top-k 10、repetition penalty 2**；Code Predictor 使用 **greedy**。继续使用相同三模型平均权重、speaker + ICL、Auto、non-streaming、BF16 + SDPA、batch size 1。
+
+使用 GPU **0、1、6、7**，固定 **32 个生成逻辑分片**、并发 **16 worker** 分两批运行；评分并发 **8 worker**，英文使用 0、1，中文使用 6、7。启动前核对模型权重哈希及四卡各至少 30 GiB 空闲，生成每进程分配上限 6 GiB、预留 6 GiB。全部生成后再次断言实际采样参数匹配，再自动评分、汇总与完整性审计；超过 30 秒的输出按本轮独立规则排除并报告数量，DNSMOS 不计算。
+
+- 运行目录：`UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/`。
+- 后台会话：`seedtts-average3-mixed-full`。
+- 复现 / 恢复命令：在 UltraEval-Audio 根目录运行上述目录的 `run.sh`，脚本保留分片与随机种子并复用成功生成 / 评分记录。
+- `model_identity.json` 保存源模型身份；`pipeline_status.json`、`run.log`、`logs/` 为阶段和日志；音频与逐条记录在 `full/speaker_icl/`；正式结果为 `full/results_table.md`、`full/summary.json`、`full/audit.json`。
+
+当前已启动全量任务，尚无正式全量分数。
