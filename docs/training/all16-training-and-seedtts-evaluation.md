@@ -1099,3 +1099,25 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 后台会话为 `seedtts-emilia2-new-checkpoints`。检查器已升级为以 `<step>:<variant>` 分别记录两组状态，保留旧默认采样队列及已完成结果，只新增缺少的混合组。生成参数也进入 run 身份，恢复时不允许混用两组配置。完整 checkpoint 发现、旧队列迁移、两组去重与排序、单任务启动持久化、独立命令参数及既有审计等 **39 项测试通过**，静态检查通过。
 
 服务已重启，当前已发现 step **25,000**，`25000:default` 和 `25000:mixed` 均已排队，等待当前 average 的混合参数全量评测结束。仍每分钟检查一次后续 checkpoint。
+
+
+### Average 混合参数全量结果
+
+第 23 节任务已完成：3,108 条全部生成并评分，无超长排除，完整性审计通过。首次汇总曾被 **5 行损坏的评分 JSONL** 阻断，已保留原文件在运行目录的 `score-recovery/`，保留 3,103 条有效评分，仅补算英文 2 条、中文 3 条后重新汇总和审计，没有重生成音频或排除这些样本。`finish-scoring.py` 保存评分恢复命令；损坏记录的具体原因尚未确定。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 1088/1088 | 1088/1088 | 2.199 | 59.224 | — | — | 完整 |
+| speaker_icl | seed_tts_eval_zh | 2020/2020 | 2020/2020 | 1.769 | 69.827 | — | — | 完整 |
+
+该组为 Talker temperature 0.3、top-p 1、top-k 10、repetition penalty 2，Code Predictor greedy。与同模型默认双采样比较，英文 WER **2.880% → 2.199%**、中文 CER **2.479% → 1.769%**；英文 SIM **60.314% → 59.224%**、中文 SIM **70.233% → 69.827%**。两组都无排除，混合参数错误率更低、相似度略低。上述是补齐五条后的正式全量值，替代此前 3,103 条的暂定均分。
+
+[正式结果表](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/full/audit.json)。
+
+### 自动队列改为动态选择 GPU（2026-10-15）
+
+Step 25,000 默认采样在已生成 1,556 条后，因 GPU 0 被其他任务占用、剩余显存约 8 GiB，第二批启动失败。旧策略等待固定 0、1、6、7 全部空出 30 GiB，造成任务长时间等待。现已改为从 `config.json` 的 `gpu_candidates`（当前 0–7）中，每次启动 / 恢复时选择空闲显存最多且各至少 30 GiB 的 **四张卡**，不足四张才继续等待。
+
+实际卡号写入每个队列任务的 `selected_gpus`，也保存在评测状态与精确命令中。生成仍固定 32 个逻辑分片、并发 16，评分并发 8，参数及每条随机种子保持不变，已有成功音频和评分复用；若执行期间资源变化导致失败，下一次重试重新选卡。选卡、固定分片恢复及队列相关 **15 项测试通过**，静态检查通过。
+
+Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组继续排队自动接续。
