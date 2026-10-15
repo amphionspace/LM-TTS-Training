@@ -871,3 +871,10 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 两轮按顺序运行：17,500 等 15,000 完成并通过审计，20,000 等 17,500 完成并通过审计，避免并行占用同一组 GPU。完整 checkpoint 的检查、等待前轮、导出、评测和失败重试均由各目录的 `watch-and-run.py` 执行；单实例锁防止重复启动。导出或评测失败后记录错误，10 分钟后重试，复用已有成功音频与评分。已完成并通过审计的任务不会因重启检查器而重复执行。
 
 各目录的 `watch_status.json` 为当前状态，`watch_events.jsonl` 为检查历史，`watch.log` / `export.log` / `run.log` 保存日志；固定评测命令为 `run.sh`。正式结果仍在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频在 `full/speaker_icl/`。导出模型分别为 `UltraEval-Audio/init_model/emilia2-refmask-step-00017500/` 与 `emilia2-refmask-step-00020000/`。创建时两份 checkpoint 均未出现，首次检查状态为 `waiting_checkpoint`。
+
+
+### Step 22,500 自动接续（2026-10-15）
+
+已将同一 Qwen Emilia2 refmask 训练的 `checkpoints/step-00022500/` 加入自动评测，每 **10 分钟**检查一次。完整标记与元数据核验通过、且 step 20,000 已完成并通过审计后，自动导出并运行相同的 **speaker + ICL 双采样**全量评测：BF16 推理、batch size 1，生成和评分各 32 worker（8 卡 × 每卡 4 个）。失败后每 10 分钟重试并复用成功记录。
+
+后台会话为 `seedtts-emilia2-refmask-s22500-watch`，运行目录为 `UltraEval-Audio/res/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/`。检查器、固定评测命令、当前状态和历史分别为该目录的 `watch-and-run.py`、`run.sh`、`watch_status.json`、`watch_events.jsonl`；日志与结果布局同上。导出模型为 `UltraEval-Audio/init_model/emilia2-refmask-step-00022500/`。设置时 step 20,000 已完成，step 22,500 尚未出现。
