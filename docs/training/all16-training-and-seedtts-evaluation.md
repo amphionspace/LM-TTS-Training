@@ -1069,13 +1069,20 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 当前已启动全量任务，尚无正式全量分数。
 
 
-## 24. 新 checkpoint 自动默认采样评测
+## 24. 新 checkpoint 自动双配置评测
 
 监控同一训练 run 的目录：`/workspace/workspace/yanglin/LM-TTS-Training-Runs/supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/`。每 **60 秒**发现一次 **step > 22,500** 的新完整 checkpoint，逐个独立导出和评测；须有 `COMPLETE`、可解析且步数匹配的 `metadata.json` 和 `distributed/`。不会仅取最新一份而漏掉中间 checkpoint，也不会把这些单独 checkpoint 自动做平均。
 
-按更正要求，后续自动任务使用 **默认双采样**：Talker 和 Code Predictor 均采样，temperature **0.9**、top-p **1**、top-k **50**，Talker repetition penalty **1.05**。Speaker + ICL、Auto、non-streaming、BF16 + SDPA、batch size 1；全量英文 1,088 条、中文 2,020 条，30 秒独立排除规则及指标不变，DNSMOS 不计算。当前 average 的混合参数全量任务继续使用第 23 节参数，不受此自动队列影响。
+按最新要求，每个新 checkpoint 都运行以下 **两组独立评测**：
 
-队列先等第 23 节当前任务释放运行锁，再串行运行新 checkpoint。使用 GPU **0、1、6、7**，每卡至少 30 GiB 空闲才启动；生成并发 **16**、逻辑分片 **32**，评分并发 **8**。每份 checkpoint 先做四条预检及评分审计，再自动全量生成、评分、汇总与审计。只有完整结果与审计均通过才标记完成；失败记录在该轮日志中，一分钟后重试，已有成功音频 / 评分复用。检查器或任务重启后会重新核对成功状态，已完成 checkpoint 不重复运行。
+| 任务标记 | Talker | Code Predictor |
+| --- | --- | --- |
+| `default` | 采样，temperature 0.9、top-p 1、top-k 50、repetition penalty 1.05 | 采样，temperature 0.9、top-p 1、top-k 50 |
+| `mixed` | 采样，temperature 0.3、top-p 1、top-k 10、repetition penalty 2 | Greedy |
+
+两组共用一次 checkpoint 导出，分别保存音频、评分及审计。Speaker + ICL、Auto、non-streaming、BF16 + SDPA、batch size 1；全量英文 1,088 条、中文 2,020 条，30 秒独立排除规则及指标不变，DNSMOS 不计算。当前 average 的混合参数全量任务继续使用第 23 节参数，不受此自动队列影响。
+
+队列先等第 23 节当前任务释放运行锁，再按 step 排序，串行运行每个 checkpoint 的 `default`、`mixed` 两组。使用 GPU **0、1、6、7**，每卡至少 30 GiB 空闲才启动；生成并发 **16**、逻辑分片 **32**，评分并发 **8**。每份 checkpoint 先做四条预检及评分审计，再自动全量生成、评分、汇总与审计。只有完整结果与审计均通过才标记完成；失败记录在该轮日志中，一分钟后重试，已有成功音频 / 评分复用。检查器或任务重启后会重新核对成功状态，已完成 checkpoint 不重复运行。
 
 | 内容 | 位置（相对 UltraEval-Audio 根目录） |
 | --- | --- |
@@ -1084,8 +1091,11 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 | 当前队列 / 历史检查 | 同目录 `queue.json`、`checks.jsonl` |
 | 检查器日志 | 同目录 `watch.log` |
 | 每个 checkpoint 的独立导出 | `init_model/emilia2-refmask-step-<8位step>/` |
-| 每轮结果目录 | `res/emilia2-refmask-auto-step<step>-seedtts-default-sampling-4gpu/` |
+| 默认采样结果 | `res/emilia2-refmask-auto-step<step>-seedtts-default-sampling-4gpu/` |
+| 混合解码结果 | `res/emilia2-refmask-auto-step<step>-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/` |
 
-每轮的 `export_command.json` / `eval_command.json` 保存精确参数，`launcher.log` / `job.log` / `logs/` 保存日志；评分结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。需要手动恢复某一轮时，可在 UltraEval-Audio 根目录执行 `envs/tts/bin/python -m scripts.watch_seed_tts_checkpoints --config res/auto-emilia2-refmask-default-sampling/config.json --step <step>`。
+每轮的 `export_command.json` / `eval_command.json` 保存精确参数，`launcher.log` / `job.log` / `logs/` 保存日志；评分结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。需要手动恢复某一轮时，可在 UltraEval-Audio 根目录执行 `envs/tts/bin/python -m scripts.watch_seed_tts_checkpoints --config res/auto-emilia2-refmask-default-sampling/config.json --step <step> --variant default`；混合解码使用 `--variant mixed`。
 
-后台会话为 `seedtts-emilia2-new-checkpoints`。发现完整 checkpoint、审计完成判定、失败后继续排队、已有运行锁等待、复用导出及默认采样参数验证等相关测试 **11 项通过**，静态检查通过。服务已启动，首次检查尚无 22,500 之后的新完整 checkpoint。
+后台会话为 `seedtts-emilia2-new-checkpoints`。检查器已升级为以 `<step>:<variant>` 分别记录两组状态，保留旧默认采样队列及已完成结果，只新增缺少的混合组。生成参数也进入 run 身份，恢复时不允许混用两组配置。完整 checkpoint 发现、旧队列迁移、两组去重与排序、单任务启动持久化、独立命令参数及既有审计等 **39 项测试通过**，静态检查通过。
+
+服务已重启，当前已发现 step **25,000**，`25000:default` 和 `25000:mixed` 均已排队，等待当前 average 的混合参数全量评测结束。仍每分钟检查一次后续 checkpoint。
