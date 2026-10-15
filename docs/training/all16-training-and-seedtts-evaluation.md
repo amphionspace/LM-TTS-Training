@@ -995,3 +995,15 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 首次汇总曾发现英文 index **981** 的 WAV 存在但缺少成功生成记录，完整性检查因此拒绝结束任务。自动恢复仅补齐该条生成与评分，其余 3,107 条评分复用；重生成 WAV 与保留的原 WAV **SHA256 完全一致**，没有通过删除样本或忽略审计获得完整结果。原 WAV 和恢复说明保存在运行目录的 `recovery/`，缺失记录的具体原因尚未确定。最终 3,108 条生成记录及评分均唯一、无未恢复错误。
 
 原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/audit.json)。后台检查器已在成功完成后退出。
+
+
+## 21. 三模型平均双 greedy 评测（2026-10-15）
+
+按后续更正，新增第 20 节三模型平均的 **greedy** 评测，复用同一平均模型，独立生成和评分。**Talker `do_sample=false`、Code Predictor `subtalker_dosample=false`**；其余沿用 speaker + ICL、Auto、non-streaming、BF16 + SDPA、batch size 1、Talker repetition penalty 1.05。使用完整 Seed-TTS 英文 1,088 条、中文 2,020 条，超过 30 秒的生成输出按本轮自身规则排除并报告数量，DNSMOS 不计算。
+
+- 运行目录：`UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/`。
+- 后台会话：`seedtts-emilia2-refmask-avg3-greedy`。
+- `run.sh` 为固定运行 / 恢复命令；`pipeline_status.json`、`run.log`、`logs/` 为状态和日志；正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/speaker_icl/`。
+- GPU **0、1、6、7**，生成并发 **16**、固定 **32 个逻辑分片**，评分并发 **8**。启动前检查每卡至少 30 GiB 空闲，生成进程上限 6 GiB、预留 6 GiB。
+
+已实际启动，状态确认 `greedy=true`，当前先进行四条预检，随后自动完成全量生成、评分和审计。已有双采样结果完整保留。
