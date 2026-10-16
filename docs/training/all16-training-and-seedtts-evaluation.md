@@ -1121,3 +1121,22 @@ Step 25,000 默认采样在已生成 1,556 条后，因 GPU 0 被其他任务占
 实际卡号写入每个队列任务的 `selected_gpus`，也保存在评测状态与精确命令中。生成仍固定 32 个逻辑分片、并发 16，评分并发 8，参数及每条随机种子保持不变，已有成功音频和评分复用；若执行期间资源变化导致失败，下一次重试重新选卡。选卡、固定分片恢复及队列相关 **15 项测试通过**，静态检查通过。
 
 Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组继续排队自动接续。
+
+
+## 25. 最新三份 checkpoint 平均：27,500 / 30,000 / 32,500
+
+按 **2026-10-16 本次请求时**目录中的最新三份完整 checkpoint，固定选取同一 Emilia2 refmask 实验的 **step 27,500、30,000、32,500**，以 FP32 **各 1/3 等权平均**。三份 `COMPLETE` 与元数据步数均已核对，复用各自独立导出；源权重及已有评测结果保留。使用既有 `scripts/average_exports.py` 校验源文件哈希、配置、tokenizer、张量形状与 dtype，并对合并产物逐张量核验，冻结的相同源张量严格保持原值。
+
+平均模型为 `UltraEval-Audio/init_model/emilia2-refmask-average-step27500-step30000-step32500/`。协调目录为 `UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-20261016/`，后台会话为 `seedtts-refmask-average27500-30000-32500`。其中 `merge.sh`、`verify-merge.py`、`merge_verification.json` 为合并及核验，`run.py` 自动串行接续两组评测，`pipeline_status.json` / `run.log` / `merge.log` 保存状态和日志。
+
+| 组别 | 参数 | `UltraEval-Audio/res/` 下的结果目录 |
+| --- | --- | --- |
+| 默认双采样 | Talker / Code Predictor 均为 temperature 0.9、top-p 1、top-k 50；Talker repetition penalty 1.05 | `emilia2-refmask-average-step27500-step30000-step32500-default-sampling-20261016-4gpu/` |
+| 混合参数 | Talker temperature 0.3、top-p 1、top-k 10、repetition penalty 2；Code Predictor greedy | `emilia2-refmask-average-step27500-step30000-step32500-talkert03-k10-rp2-cpgreedy-20261016-4gpu/` |
+
+两组均为 speaker + ICL、Auto、non-streaming、BF16 + SDPA、batch size 1，完整英文 1,088 条、中文 2,020 条；独立 30 秒排除规则及指标沿用前文，DNSMOS 不计算。动态选择四卡，各至少空闲 30 GiB；生成并发 16、逻辑分片 32，评分并发 8。两组各目录的 `eval_command.json` / `run.sh` 保存精确评测和恢复命令，日志在 `job.log` / `logs/`，正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。
+
+协调任务先在 CPU 合并，再等当前自动队列任务结束；评测期间通过运行锁让新 checkpoint 自动队列继续发现并排队，避免 GPU 任务重叠。两组完成或停止后释放锁，自动队列正常接续。失败每分钟重试，保留成功生成与评分。合并与核验已完成，默认采样组已启动，尚无本次平均模型的全量分数。
+
+
+本次 **478 张量全部核验通过**：81 张源张量相同且严格保持不变，397 张按各 1/3 平均；相对 FP64 参考的最大绝对误差为 `1.0173e-5`，通过既定误差校验。平均权重 SHA256 为 `7357688ad14df7fd262f2bf0c17b8d537424d4debe0f3b3b4be04fdc5810068c`。**2026-10-16 03:19:18 UTC** 默认组在 GPU **1、2、4、5** 启动；默认组完整评分并通过审计后接混合组。新 checkpoint 自动检查器已重载并识别该协调任务的运行锁，仍每分钟发现新 checkpoint，但在本次平均模型评测期间只排队、不重叠启动。
