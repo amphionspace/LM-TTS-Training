@@ -1169,3 +1169,16 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 - 混合结果：`UltraEval-Audio/res/emilia2-refmask-auto-step34257-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/`。
 
 当前默认组实际使用 GPU **1、2、4、5**，生成并发 16、逻辑分片 32、评分并发 8；混合组等待接续。每组的精确命令、状态及日志布局与第 24 节一致，最终评分表、汇总和审计在 `full/`。尚无 step 34,257 的正式全量分数。
+
+
+## 27. 最终三份 checkpoint 平均：30,000 / 32,500 / 34,257
+
+按后续要求，在 step 34,257 的默认与混合两组均完成并通过完整性审计后，自动追加 **step 30,000、32,500、34,257 各 1/3 等权平均**及双配置全量评测。所选三份是当前同一 Emilia2 refmask 训练目录的最新完整 checkpoint。合并前保留等待条件，不会提前占用 GPU；FP32 合并与逐张量核验完成后，按默认双采样、混合参数顺序执行，参数与第 25 节一致。
+
+- 模型：`UltraEval-Audio/init_model/emilia2-refmask-average-step30000-step32500-step34257/`。
+- 协调目录：`UltraEval-Audio/res/emilia2-refmask-average-step30000-step32500-step34257-20261016/`。
+- 后台会话：`seedtts-refmask-average30000-32500-34257`。
+- 默认结果：`UltraEval-Audio/res/emilia2-refmask-average-step30000-step32500-step34257-default-sampling-20261016-4gpu/`。
+- 混合结果：`UltraEval-Audio/res/emilia2-refmask-average-step30000-step32500-step34257-talkert03-k10-rp2-cpgreedy-20261016-4gpu/`。
+
+每分钟检查前置任务状态。两组均为 speaker + ICL、BF16 + SDPA、batch size 1，全量各 3,108 条；动态选择显存充足的四卡，生成并发 16、逻辑分片 32，评分并发 8。失败重试、成功结果复用、日志和正式评分布局与第 25 节相同。当前等待 step 34,257 混合组结束；默认组已完成，本次平均模型尚未开始合并或生成。
