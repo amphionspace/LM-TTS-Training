@@ -1208,3 +1208,17 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 采用默认双采样：Talker / Code Predictor 均为 temperature 0.9、top-p 1、top-k 50，Talker repetition penalty 1.05；Auto、non-streaming、BF16 + SDPA、batch size 1。Seed-TTS 英文 1,088 条、中文 2,020 条，指标和独立 30 秒排除规则沿用前文。**08:41 UTC** 在 GPU 1、2、4、5 启动，先进行中英文各两条 smoke 及审计，再自动执行全量；生成并发 16、固定逻辑分片 32，评分并发 8。
 
 结果目录：`UltraEval-Audio/res/emilia2-refmask-step34257-speaker-only-default-sampling-20261016-4gpu/`。精确命令在 `eval_command.json` / `run.sh`，评测状态在 `pipeline_status.json`，日志在 `job.log` / `logs/`，最终结果在 `full/results_table.md` / `summary.json` / `audit.json`。`continue-after-speaker-only.py` 与 `continuation_status.json` 负责本次优先任务和 average 混合组的自动接续，后台会话为 `seedtts-step34257-speaker-only`；执行期间持有 average 协调锁，避免自动 checkpoint 队列重叠占卡。当前尚无 speaker only 的正式全量结果。
+
+
+### Speaker only 已生成音频检查（09:22 UTC，非全量结论）
+
+按要求此次不额外做 ASR 或相似度诊断，检查当时已生成的 **1,734 条**（英文 722、中文 1,012）实际 PCM 波形、WAV 信息和条件路径。全部可完整解码，均为 24 kHz 单声道，时长与日志一致；无缺失文件、空音频、非有限数值、损坏的完整日志记录或条件路径错误。所有样本均记录 speaker embedding 启用、ICL 调用为零；无 RMS 低于 −60 dBFS 的极低音量输出，也无削波比例超过 1% 的输出。英文时长中位数 5.64 秒、95 分位 10.00 秒；中文中位数 6.00 秒、95 分位 9.192 秒。
+
+发现少量时长异常，不能据此宣称整体效果正常：
+
+| 样本 | 目标文本 | Speaker only 时长 | 同 step 默认 ICL 时长 |
+| --- | --- | ---: | ---: |
+| EN 291 | And they're really good. | 25.68 秒 | 1.44 秒 |
+| ZH 323 | 你们让我在世界大赛上丢了脸。 | 30.16 秒 | 3.12 秒 |
+
+其中 ZH 323 触及生成长度上限，已按既定大于 30 秒规则标记排除；ZH 1602 开头另有约 2.96 秒低能量区段。在此次同句对比中，55 条的 speaker only 时长超过 ICL 两倍且多于 5 秒，这只是偏长筛查，不代表 55 条都读错。波形检查无法判定文本准确性或确认是否重复、拖音；本次没有运行额外 ASR / 相似度诊断。详细检查记录为 speaker only 结果目录内的 `audio_integrity_check.json`。正常全量推理和完成后接续 average 的安排保持进行。
