@@ -1189,3 +1189,22 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 - 混合结果：`UltraEval-Audio/res/emilia2-refmask-average-step30000-step32500-step34257-talkert03-k10-rp2-cpgreedy-20261016-4gpu/`。
 
 每分钟检查前置任务状态。两组均为 speaker + ICL、BF16 + SDPA、batch size 1，全量各 3,108 条；动态选择显存充足的四卡，生成并发 16、逻辑分片 32，评分并发 8。失败重试、成功结果复用、日志和正式评分布局与第 25 节相同。**2026-10-16 07:30 UTC**，step 34,257 两组均完整评分并通过审计，协调任务已自动进入 CPU 合并阶段。合并核验通过后接默认双采样，再接混合参数；本次平均模型尚无评测分数。
+
+
+### 最终三份 average：默认组完成，混合组临时暂停
+
+30,000 / 32,500 / 34,257 的等权平均核验通过：478 张量，其中 81 张保持源值，397 张平均；相对 FP64 参考最大绝对误差 `5.0863e-6`。默认双采样全量 3,108 条评分完成、无超长排除，审计通过。
+
+| 解码方式 | 英文 WER/% ↓ | 英文 SIM/% ↑ | 中文 CER/% ↓ | 中文 SIM/% ↑ | 评分数 / 超长排除 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 默认双采样 | 3.008 | 63.415 | 2.242 | 72.279 | 3,108 / 0 |
+
+**2026-10-16 08:40 UTC** 按要求暂停该 average 的混合参数（low temperature）任务，保留已生成音频与评分，优先评测以下 step 34,257 的 speaker only。该测试完成并通过完整性审计后，自动恢复 average 混合组；恢复时复用成功结果，逻辑分片与每条随机种子保持不变。
+
+## 28. Step 34,257：speaker only 默认采样
+
+使用第 26 节相同的单独 checkpoint，比较去掉 ICL 参考 codec / 参考文本后的效果。参考音频仍由冻结的 speaker encoder 提取 speaker embedding；设置 `x_vector_only_mode=true`、`ref_text=None`，目标文本保持不变。推理对每次调用检查 speaker embedding 实际启用且 ICL 调用次数为零，记录在 `conditioning-verified-*.json` 与生成日志中。
+
+采用默认双采样：Talker / Code Predictor 均为 temperature 0.9、top-p 1、top-k 50，Talker repetition penalty 1.05；Auto、non-streaming、BF16 + SDPA、batch size 1。Seed-TTS 英文 1,088 条、中文 2,020 条，指标和独立 30 秒排除规则沿用前文。**08:41 UTC** 在 GPU 1、2、4、5 启动，先进行中英文各两条 smoke 及审计，再自动执行全量；生成并发 16、固定逻辑分片 32，评分并发 8。
+
+结果目录：`UltraEval-Audio/res/emilia2-refmask-step34257-speaker-only-default-sampling-20261016-4gpu/`。精确命令在 `eval_command.json` / `run.sh`，评测状态在 `pipeline_status.json`，日志在 `job.log` / `logs/`，最终结果在 `full/results_table.md` / `summary.json` / `audit.json`。`continue-after-speaker-only.py` 与 `continuation_status.json` 负责本次优先任务和 average 混合组的自动接续，后台会话为 `seedtts-step34257-speaker-only`；执行期间持有 average 协调锁，避免自动 checkpoint 队列重叠占卡。当前尚无 speaker only 的正式全量结果。
