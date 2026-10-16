@@ -11,7 +11,7 @@ import pyarrow as pa
 
 from ..artifacts import digest, file_hash
 from .build import INDEX_DTYPE, feature_reference, read_complete
-from .reference import is_reference, validate_reference
+from .reference import REFERENCE_POLICIES, is_reference, validate_reference
 
 METADATA_COLUMNS = [
     "target_id",
@@ -55,7 +55,7 @@ def validate_row(row, binding):
         raise ValueError("Invalid merged native audio range")
     profile = binding["merged_profile"]
     if is_reference(binding):
-        validate_reference(row)
+        validate_reference(row, prefix=profile["speaker_mode"] == "codec_grid_prefix_reference")
     # Published runs pin either the original two-frame tolerance or the later 20 ms policy.
     tolerance = (
         max(2, math.ceil(rate * profile["native_duration_tolerance_seconds"]))
@@ -152,7 +152,8 @@ def bind_merged(
         # Reference merges drop targets without a legal reference crop; sources still cover
         # the full selection, so account for the published exclusions instead of dropping rows.
         source_rows = manifest["rows"]
-        if manifest["profile"].get("speaker_mode") == "codec_grid_reference":
+        mode = manifest["profile"].get("speaker_mode")
+        if mode in REFERENCE_POLICIES:
             filtering = manifest.get("reference_filtering", {})
             source_rows = filtering.get("input_rows")
             if (
@@ -198,11 +199,11 @@ def bind_merged(
                 raise ValueError("Merged source identity, profile or selection changed")
             sources[kind], source_manifests[kind] = source, source_manifest
         policy = source_manifests["speaker"]["profile"].get("reference", {})
-        if manifest["profile"].get("speaker_mode") == "codec_grid_reference" and (
+        if mode in REFERENCE_POLICIES and (
             policy.get("version"),
             policy.get("codec_sample_rate"),
             policy.get("codec_hop_samples"),
-        ) != ("codec-grid-reference-v1", 24000, 1920):
+        ) != (REFERENCE_POLICIES[mode], 24000, 1920):
             raise ValueError("Unsupported reference timing profile")
         binding = {
             "binding_slot": slot,
@@ -307,7 +308,7 @@ def bind_merged(
         "representation": "merged_indexed_references",
         "build_id": output.name,
         "reference_policy": "self",
-        "reference_scope": "codec_grid_reference" if reference else "target",
+        "reference_scope": bound[0]["merged_profile"]["speaker_mode"] if reference else "target",
         "reference_count": 1,
         "model_protocol": {
             "conditioning": "speaker_only",

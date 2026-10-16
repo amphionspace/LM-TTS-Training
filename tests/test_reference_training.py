@@ -21,7 +21,13 @@ from lm_tts.objectives.tts import loss_normalizers, tts_loss
 
 
 def reference_fixture(
-    root, *, embedding_dim=64, speaker_profile=None, tokenizer_info=None, tokenizer=None
+    root,
+    *,
+    embedding_dim=64,
+    speaker_profile=None,
+    tokenizer_info=None,
+    tokenizer=None,
+    prefix=False,
 ):
     source = root / "unified"
     recipe, selection, selection_path = merged_fixture(
@@ -61,7 +67,7 @@ def reference_fixture(
     speaker["profile"] = {
         **speaker["profile"],
         "reference": {
-            "version": "codec-grid-reference-v1",
+            "version": f"codec-grid-{'prefix-' if prefix else ''}reference-v1",
             "codec_sample_rate": 24000,
             "codec_hop_samples": 1920,
         },
@@ -85,7 +91,7 @@ def reference_fixture(
     for i, row in enumerate(rows):
         if i in removed:
             continue
-        start = (i % 3) * 2
+        start = 0 if prefix else (i % 3) * 2
         row.update(
             speaker_profile_id=speaker["profile_id"],
             speaker_start_frame=start * 1920,
@@ -101,7 +107,7 @@ def reference_fixture(
     table = lance.write_dataset(pa.Table.from_pylist(kept), directory / "features.lance")
     profile = {
         **old["profile"],
-        "speaker_mode": "codec_grid_reference",
+        "speaker_mode": "codec_grid_prefix_reference" if prefix else "codec_grid_reference",
         "sources": {**old["profile"]["sources"], "speaker": speaker["profile_id"]},
     }
     merged = {
@@ -126,6 +132,9 @@ def reference_fixture(
         workers=1,
         bindings=[{"dataset_id": "test", "merged_manifest": str(path)}],
     )
+    if prefix:
+        # Prefix references are built fresh; reuse_build only supports the uniform policy.
+        return path, recipe, selection_path, removed
     create_reference_build(
         recipe, root / "reference-build", tokenizer_info, file_hash(selection_path)
     )
@@ -210,6 +219,46 @@ def test_filtered_reference_merge_builds_without_baseline(tmp_path):
     path.write_text(json.dumps(merged))
     with pytest.raises(ValueError, match="reference subset"):
         bind_merged(recipe, tmp_path / "bad", *arguments[:3], arguments[3], Tokenizer())
+
+
+def test_prefix_reference_merge_starts_every_reference_at_frame_zero(tmp_path):
+    path, recipe, selection_path, removed = reference_fixture(tmp_path, prefix=True)
+    selection = json.loads(selection_path.read_text())
+    arguments = (selection, selection_path, file_hash(selection_path), {"sha256": "fixture"})
+    manifest = bind_merged(recipe, tmp_path / "fresh", *arguments, Tokenizer())
+    assert manifest["reference_scope"] == "codec_grid_prefix_reference"
+    split_build(tmp_path / "fresh/manifest.json", fraction=0.25)
+    train = FeatureDataset(tmp_path / "fresh/train/manifest.json", (200, 201), mask_reference=True)
+    assert all(train[i]["reference_interval"] == (0, 7) for i in range(len(train)))
+
+    from lm_tts.data.merged import validate_row
+
+    row = open_snapshot(train.bindings[0]["merged"]).take([0]).to_pylist()[0]
+    row.update(
+        speaker_reference_codec_start=2,
+        speaker_reference_codec_end=9,
+        speaker_start_frame=2 * 1920,
+        speaker_end_frame=9 * 1920,
+    )
+    with pytest.raises(ValueError, match="reference-to-codec"):
+        validate_row(row, train.bindings[0])
+
+    # A prefix merge must pin the prefix timing policy, not the uniform one.
+    merged = json.loads(path.read_text())
+    speaker = next(s for s in merged["inputs"] if s["alias"] == "speaker")
+    speaker_manifest = json.loads(Path(speaker["manifest_path"]).read_text())
+    speaker_manifest["profile"]["reference"]["version"] = "codec-grid-reference-v1"
+    speaker_manifest["profile_id"] = digest(speaker_manifest["profile"])
+    Path(speaker["manifest_path"]).write_text(json.dumps(speaker_manifest))
+    speaker.update(
+        manifest_sha256=file_hash(speaker["manifest_path"]),
+        profile_id=speaker_manifest["profile_id"],
+    )
+    merged["profile"]["sources"]["speaker"] = speaker_manifest["profile_id"]
+    merged["profile_id"] = digest(merged["profile"])
+    path.write_text(json.dumps(merged))
+    with pytest.raises(ValueError, match="reference timing"):
+        bind_merged(recipe, tmp_path / "bad", *arguments, Tokenizer())
 
 
 @pytest.mark.parametrize("reduction", ["token", "sample", "sqrt"])
