@@ -1140,3 +1140,32 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 
 本次 **478 张量全部核验通过**：81 张源张量相同且严格保持不变，397 张按各 1/3 平均；相对 FP64 参考的最大绝对误差为 `1.0173e-5`，通过既定误差校验。平均权重 SHA256 为 `7357688ad14df7fd262f2bf0c17b8d537424d4debe0f3b3b4be04fdc5810068c`。**2026-10-16 03:19:18 UTC** 默认组在 GPU **1、2、4、5** 启动；默认组完整评分并通过审计后接混合组。新 checkpoint 自动检查器已重载并识别该协调任务的运行锁，仍每分钟发现新 checkpoint，但在本次平均模型评测期间只排队、不重叠启动。
+
+
+### 最新三份 average 的完整结果
+
+27,500 / 30,000 / 32,500 各 1/3 平均模型的默认与混合两组均已完成，**每组 3,108 条全部生成并评分，无超长排除**，两份完整性审计均通过。均分从各组唯一成功评分记录重新核验。
+
+| 解码方式 | 英文 WER/% ↓ | 英文 SIM/% ↑ | 中文 CER/% ↓ | 中文 SIM/% ↑ | 评分数 / 超长排除 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 默认双采样 | 3.030 | 62.935 | 2.304 | 71.766 | 3,108 / 0 |
+| 混合参数 | 2.582 | 62.156 | 1.727 | 71.647 | 3,108 / 0 |
+
+混合参数在同一完整测试集上的中英文错误率更低，相似度略低。英文报告逐句 WER 均值、中文报告逐句 CER 均值，SIM 为余弦相似度乘 100，DNSMOS 未计算。
+
+默认组：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-default-sampling-20261016-4gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-default-sampling-20261016-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-default-sampling-20261016-4gpu/full/audit.json)。
+
+混合组：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-talkert03-k10-rp2-cpgreedy-20261016-4gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-talkert03-k10-rp2-cpgreedy-20261016-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-talkert03-k10-rp2-cpgreedy-20261016-4gpu/full/audit.json)。
+
+
+## 26. 最终 checkpoint step 34,257：双配置评测
+
+按要求评测同一 Emilia2 refmask 训练的最后一份 `checkpoints/step-00034257/`。`COMPLETE`、分布式状态和元数据步数均已核对；训练进度为 `epoch=3`、`next_batch=0`，三轮训练已完成，组装身份仍为 `c0845dba275aeef9da2b2f4524393f269aed9b594ade3c289cb7fadad374dca5`。本轮使用该单独 checkpoint，模型结构、冻结范围与训练设置沿用第 13 节。
+
+自动队列于 **2026-10-16 05:17 UTC** 已发现并启动默认组，先导出 FP32 权重，再按照第 24 节流程运行默认与混合两组完整评测：speaker + ICL、BF16 + SDPA、batch size 1；默认为双采样 temperature 0.9、top-p 1、top-k 50，Talker repetition penalty 1.05；混合为 Talker temperature 0.3、top-p 1、top-k 10、repetition penalty 2，Code Predictor greedy。两组各 3,108 条，独立时长排除与指标定义沿用前文。
+
+- 模型：`UltraEval-Audio/init_model/emilia2-refmask-step-00034257/`。
+- 默认结果：`UltraEval-Audio/res/emilia2-refmask-auto-step34257-seedtts-default-sampling-4gpu/`。
+- 混合结果：`UltraEval-Audio/res/emilia2-refmask-auto-step34257-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/`。
+
+当前默认组实际使用 GPU **1、2、4、5**，生成并发 16、逻辑分片 32、评分并发 8；混合组等待接续。每组的精确命令、状态及日志布局与第 24 节一致，最终评分表、汇总和审计在 `full/`。尚无 step 34,257 的正式全量分数。
