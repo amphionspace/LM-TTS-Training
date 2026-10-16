@@ -1,0 +1,38 @@
+== regions (25 frames = 2 s)
+pre-reference [0,a)                n=  99580  first=1.306  resid=5.461
+reference (masked) [a,b)           n=  92992  first=1.304  resid=5.438
+post-reference [b,T)               n= 103801  first=1.353  resid=5.475
+EOS                                n=   4000  first=0.251  resid=nan
+== absolute position from BOS, pre-reference frames only
+t in [0,1)                         n=   3849  first=1.240  resid=5.078
+t in [1,2)                         n=   3683  first=1.133  resid=5.263
+t in [2,3)                         n=   3524  first=1.541  resid=5.389
+t in [3,5)                         n=   6586  first=1.454  resid=5.449
+t in [5,10)                        n=  13724  first=1.381  resid=5.468
+t in [10,25)                       n=  24640  first=1.309  resid=5.472
+t in [25,50)                       n=  17983  first=1.276  resid=5.507
+t in [50,100)                      n=  14526  first=1.275  resid=5.510
+t in [100,1000000)                 n=  11065  first=1.210  resid=5.518
+== same, restricted to samples with a >= 50 (pre region >= 4 s)
+t in [0,1)                         n=    481  first=1.253  resid=5.214
+t in [1,3)                         n=    962  first=1.314  resid=5.395
+t in [3,10)                        n=   3367  first=1.401  resid=5.482
+t in [10,25)                       n=   7215  first=1.329  resid=5.481
+t in [25,50)                       n=  12025  first=1.288  resid=5.500
+== right after the masked reference, frames t-b
+t-b in [0,1)                       n=   3977  first=1.339  resid=5.486
+t-b in [1,3)                       n=   7497  first=1.323  resid=5.508
+t-b in [3,10)                      n=  21436  first=1.322  resid=5.493
+t-b in [10,25)                     n=  26332  first=1.299  resid=5.490
+t-b in [25,1000000)                n=  44559  first=1.405  resid=5.451
+== paired per sample (a >= 25): first 3 frames minus frames [10,a)
+first: n=1126 mean diff=+0.011 (95% CI -0.038..+0.060), share>0=0.43
+resid: n=1126 mean diff=-0.203 (95% CI -0.237..-0.170), share>0=0.28
+== relative position deciles (supervised frames, pre and post separately)
+pre 1.34 1.34 1.30 1.27 1.18 1.31 1.29 1.42 1.24   - 
+post   -  1.40 1.26 1.25 1.18 1.31 1.30 1.35 1.36 1.44
+== paired per sample: pre-reference mean minus post-reference mean (>= 5 frames each)
+all pre frames first: n=2593 diff=+0.007 (95% CI -0.017..+0.030), share(pre>post)=0.50
+all pre frames resid: n=2593 diff=-0.056 (95% CI -0.072..-0.040), share(pre>post)=0.41
+pre frames t >= 10 first: n=1543 diff=-0.045 (95% CI -0.075..-0.015), share(pre>post)=0.45
+pre frames t >= 10 resid: n=1543 diff=-0.002 (95% CI -0.026..+0.021), share(pre>post)=0.50
