@@ -1235,4 +1235,4 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 - 后台会话：`seedtts-prefixref-step30000`；`01:19 UTC` 已启动，先导出模型，再使用 GPU **3、5、6**，生成并发 12、固定逻辑分片 32，评分并发 6。执行前检查每卡至少空闲 30 GiB，失败每分钟重试并复用成功结果。
 - `job_config.json`、`export_command.json`、`eval_command.json` 保存配置与精确命令；`coordinator_status.json` / `coordinator.log` 为导出及接续状态，`pipeline_status.json` / `job.log` / `logs/` 为评测状态和日志；正式评分表、汇总、审计在 `full/results_table.md` / `summary.json` / `audit.json`。
 
-当前处于独立模型导出阶段，尚无本 checkpoint 的正式评测分数。
+独立模型已导出并核对身份及权重哈希（SHA256 `7c874d33ea6597d780d2007c7cbd0a23e1925c3d6ae7dcf8c49e14e740ef2e12`）。**01:21 UTC** 按后续要求切换为 GPU **0–7 共八卡**：全量生成并发 **32**（每卡 4 worker），评分并发 **16**（每卡 2 worker）。固定 32 个逻辑分片、每条种子和解码设置均保持不变，复用原导出与成功结果；结果目录保留最初的 `3gpu` 名称以避免移动打断恢复，实际资源以 `job_config.json` / `eval_command.json` 和状态记录为准。当前正在执行 smoke，尚无本 checkpoint 的正式全量分数。
