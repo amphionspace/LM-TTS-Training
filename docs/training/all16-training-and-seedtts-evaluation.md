@@ -1236,3 +1236,10 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 - `job_config.json`、`export_command.json`、`eval_command.json` 保存配置与精确命令；`coordinator_status.json` / `coordinator.log` 为导出及接续状态，`pipeline_status.json` / `job.log` / `logs/` 为评测状态和日志；正式评分表、汇总、审计在 `full/results_table.md` / `summary.json` / `audit.json`。
 
 独立模型已导出并核对身份及权重哈希（SHA256 `7c874d33ea6597d780d2007c7cbd0a23e1925c3d6ae7dcf8c49e14e740ef2e12`）。**01:21 UTC** 按后续要求切换为 GPU **0–7 共八卡**：全量生成并发 **32**（每卡 4 worker），评分并发 **16**（每卡 2 worker）。固定 32 个逻辑分片、每条种子和解码设置均保持不变，复用原导出与成功结果；结果目录保留最初的 `3gpu` 名称以避免移动打断恢复，实际资源以 `job_config.json` / `eval_command.json` 和状态记录为准。当前正在执行 smoke，尚无本 checkpoint 的正式全量分数。
+
+
+### Prefixref step 30,000：全量生成完成与评分恢复（2026-10-19 02:03 UTC）
+
+八卡生成已完成 **3,108 / 3,108**，无生成错误、无大于 30 秒排除。Smoke 四条及审计通过。全量已评分 **2,836 条**：中文 **2,020 / 2,020** 完成，英文 **816 / 1,088**，尚缺 272 条。完整中文评分的逐句 CER 均值为 **2.133%**、SIM 为 **69.315%**；这只是中文完整分数，整组尚未最终审计通过。
+
+英文剩余分片 3 / 7 原先均在物理 GPU 3；评分期间该卡其他进程占用增加，Whisper 加载 OOM 后子进程退出，上层评分进程仍等待结果，未及时失败。已停止本次卡住的评测及其子进程，保留所有成功音频和评分，改用 **GPU 5、6** 恢复，仅补算缺失评分。逻辑分片仍为 32、推理参数和随机种子不变，评分每卡 4 worker；已有成功记录跨评分分片复用。恢复命令及当前卡号已写入本次结果目录的 `job_config.json` / `eval_command.json`，协调状态为 `coordinator_status.json`。全部评分完成后仍需重新汇总并通过全量审计，方可认定整组完成。
