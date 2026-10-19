@@ -1222,3 +1222,17 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 | ZH 323 | 你们让我在世界大赛上丢了脸。 | 30.16 秒 | 3.12 秒 |
 
 其中 ZH 323 触及生成长度上限，已按既定大于 30 秒规则标记排除；ZH 1602 开头另有约 2.96 秒低能量区段。在此次同句对比中，55 条的 speaker only 时长超过 ICL 两倍且多于 5 秒，这只是偏长筛查，不代表 55 条都读错。波形检查无法判定文本准确性或确认是否重复、拖音；本次没有运行额外 ASR / 相似度诊断。详细检查记录为 speaker only 结果目录内的 `audio_integrity_check.json`。正常全量推理和完成后接续 average 的安排保持进行。
+
+
+## 29. Emilia2 prefix-reference：step 30,000 默认采样评测
+
+**2026-10-19** 按要求评测 `supervised-tts-20261015-emilia2-prefixref-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00030000/`。已核对 `COMPLETE`、分布式状态和元数据：step 30,000、epoch 2、16 卡，组装身份仍为 `c0845dba275aeef9da2b2f4524393f269aed9b594ade3c289cb7fadad374dca5`，speaker embedding 启用。模型结构、初始化与冻结范围沿用第 13 节的 Qwen 模型；这一轮使用从音频开头截取的 prefix reference `[0, b)`，屏蔽参考段所有码本的 loss、保留 EOS 监督。训练配置为 `configs/supervised-tts-20261015-emilia2-prefixref-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd.yaml`，数据配置为 `configs/data-emilia2-prefix-reference.yaml`。训练采用 BF16、token loss、residual 权重 0.3、3 epoch 的样本进度 WSD，峰值 LR 为主干 `1e-4`、其余可训练参数 `3e-4`；本 checkpoint 元数据记录当前 LR 仍为这两个峰值。
+
+本次使用 **speaker embedding + ICL**，匹配该训练配置的评测要求。默认 Talker / Code Predictor 均采样，temperature 0.9、top-p 1、top-k 50，Talker repetition penalty 1.05；Auto、non-streaming、BF16 + SDPA、batch size 1。Seed-TTS 英文 1,088 条、中文 2,020 条，先中英文各两条 smoke 生成、评分及审计，通过后自动执行全量。英文 WER、中文 CER、WavLM SIM 与独立大于 30 秒排除规则沿用前文，不计算 DNSMOS。
+
+- 独立导出：`UltraEval-Audio/init_model/emilia2-prefixref-step-00030000/`，CPU 加载该 checkpoint 后保存 FP32 权重并复制 tokenizer，核对 checkpoint 身份、元数据和权重哈希。
+- 结果目录：`UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/`。
+- 后台会话：`seedtts-prefixref-step30000`；`01:19 UTC` 已启动，先导出模型，再使用 GPU **3、5、6**，生成并发 12、固定逻辑分片 32，评分并发 6。执行前检查每卡至少空闲 30 GiB，失败每分钟重试并复用成功结果。
+- `job_config.json`、`export_command.json`、`eval_command.json` 保存配置与精确命令；`coordinator_status.json` / `coordinator.log` 为导出及接续状态，`pipeline_status.json` / `job.log` / `logs/` 为评测状态和日志；正式评分表、汇总、审计在 `full/results_table.md` / `summary.json` / `audit.json`。
+
+当前处于独立模型导出阶段，尚无本 checkpoint 的正式评测分数。
