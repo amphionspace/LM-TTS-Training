@@ -1288,4 +1288,37 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 - 后台会话：`seedtts-prefixref-step30000-lowtemp`。
 - 配置、精确命令、协调与评测状态和最终评分布局沿用本节默认组。
 
-当前正在 smoke 阶段，尚无本次 prefixref low-temperature 的正式全量分数。
+本组于 **2026-10-19 03:19:29 UTC** 完成。3,108 条全部生成并评分，无超长排除，smoke 与全量审计均通过；以下均分已从唯一成功评分记录重新核验。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 1088/1088 | 1088/1088 | 2.301 | 59.422 | — | — | 完整 |
+| speaker_icl | seed_tts_eval_zh | 2020/2020 | 2020/2020 | 1.597 | 68.942 | — | — | 完整 |
+
+相对同一 prefixref checkpoint 的默认采样，英文 WER **3.007% → 2.301%**，中文 CER **2.133% → 1.597%**；SIM 分别 **60.339% → 59.422%**、**69.315% → 68.942%**。两组都覆盖完整 3,108 条，低温的错误率更低，相似度略低。
+
+原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/full/audit.json)。
+
+
+## 30. Prefixref / refmask 两份 step 30,000 平均：仅低温评测
+
+按要求各取一份已独立导出的 **prefixref step 30,000**（第 29 节实验）与原 **Emilia2 refmask step 30,000**（`supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd`），以 FP32 **各 50% 等权平均**。两份源导出的实际 checkpoint 路径、step、配置和 tokenizer 已核对一致兼容；使用 `scripts/average_exports.py` 校验源文件哈希、张量结构和有限值，公共相同张量严格保持原值。合并后逐张量对照 FP64 参考均值核验，通过后才启动推理。源 checkpoint、独立导出和已有评分均保留。
+
+本次只跑 speaker + ICL 的低温参数：Talker temperature 0.3、top-p 1、top-k 10、repetition penalty 2，Code Predictor greedy；BF16 + SDPA、Auto、non-streaming、batch size 1。完整 Seed-TTS 英文 1,088 条、中文 2,020 条，指标与独立 30 秒排除规则沿用第 29 节。固定逻辑分片 32，每卡生成 4 worker、评分 2 worker；按显存余量选择 4–8 卡，每卡启动前至少空闲 30 GiB。
+
+- 平均模型：`UltraEval-Audio/init_model/emilia2-average-prefixref30000-refmask30000/`。
+- 结果目录：`UltraEval-Audio/res/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/`。
+- 后台会话：`seedtts-prefixref-refmask-average30k`。
+- `control/config.json` / `merge_command.json` 保存合并来源和命令，`control/merge_verification.json` 为核验记录，`control/status.json` / `run.log` 为协调状态与日志；推理命令在结果目录的 `eval_command.json` / `run.sh`，最终结果在 `full/`。
+
+**2026-10-19 03:30 UTC** 已优先启动 CPU 平均，完成核验后自动接 smoke 和全量低温评测；当前尚无平均模型的正式分数。后续 prefixref checkpoint 自动队列等待本任务释放运行锁。
+
+## 31. Prefixref 新 checkpoint 自动评测
+
+持续检查第 29 节训练目录的 `checkpoints/`，**每 60 秒**发现 `step > 30000` 的新完整 checkpoint。只有存在 `COMPLETE`、元数据 step 与目录一致且分布式状态存在时才入队；当前 step 30,000 的已完成两组不重复执行。每份新 checkpoint 串行跑 **默认双采样 → 同一 low-temperature 参数**，分别保存结果、共用独立导出，成功音频与评分复用。
+
+后台会话为 `seedtts-prefixref-new-checkpoints`。配置与状态在 `UltraEval-Audio/res/auto-emilia2-prefixref-checkpoints/`：`config.json` 指定训练目录、阈值、参数组和等待任务；`queue.json` 显示队列与实际卡号，`checks.jsonl` / `watch.log` 保存巡检与错误，`watch.sh` 可重新启动检查器。新结果使用 `emilia2-prefixref-auto-step<step>-seedtts-<参数组>-auto-gpu/` 命名。
+
+队列等待第 30 节平均模型评测结束；即使期间出现新 checkpoint，也先登记、后执行。启动任务时从 GPU 0–7 中选择显存足够的 **4–8 卡**，每卡至少空闲 30 GiB；数量不足则等待，不占满显存强行启动。物理卡号可以变化，32 个逻辑分片、每条随机种子和参数保持不变。失败每分钟重试并保留成功结果；Whisper 子进程退出时现在会让评分报错，避免此前 OOM 后无限等待。自动队列、资源变化和 Whisper 退出/正常返回相关 **19 项测试通过**。
+
+**2026-10-19 03:30 UTC** 检查器已启动，首轮无新增完整 checkpoint、无发现错误，等待后续发布。
