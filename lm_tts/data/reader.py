@@ -71,8 +71,12 @@ class FeatureDataset:
                 raise ValueError("Sampling metadata changed")
             self.indices.append(np.load(path, mmap_mode="r")[: binding["ready_rows"]])
             lengths.append(binding["ready_rows"])
-            for kind in ("merged",) if "merged" in binding else ("codec", "speaker"):
-                ref = binding[kind]
+            refs = [
+                binding[k] for k in (("merged",) if "merged" in binding else ("codec", "speaker"))
+            ]
+            if "alternate" in binding:
+                refs.append(binding["alternate"]["merged"])
+            for ref in refs:
                 if verify_integrity and file_hash(ref["manifest_path"]) != ref["manifest_sha256"]:
                     raise ValueError("Feature manifest changed")
         self.offsets = np.cumsum([0, *lengths])
@@ -130,7 +134,9 @@ class FeatureDataset:
     def table(self, slot, kind):
         key = (slot, kind)
         if key not in self.tables:
-            self.tables[key] = open_snapshot(self.bindings[slot][kind])
+            binding = self.bindings[slot]
+            reference = binding["alternate"]["merged"] if kind == "alternate" else binding[kind]
+            self.tables[key] = open_snapshot(reference)
         return self.tables[key]
 
     def __getitem__(self, index):
@@ -160,7 +166,7 @@ class FeatureDataset:
                 if pair is None:
                     continue
                 try:
-                    result[position] = self._sample(*pair, self.bindings[slot])
+                    result[position] = self._sample(*pair, self._binding(slot, locator))
                 except errors as error:
                     self._report_bad_row(slot, locator, error)
         return result
@@ -174,13 +180,36 @@ class FeatureDataset:
             )
         self.bad_rows_reported += 1
 
+    def _binding(self, slot, row):
+        # Mixed builds offset alternate-reference rows; they validate against that reference.
+        binding = self.bindings[slot]
+        alternate = binding.get("alternate")
+        if alternate is not None and row >= alternate["offset"]:
+            return {**binding, **alternate}
+        return binding
+
     def _read_rows(self, slot, locators):
         binding = self.bindings[slot]
+        alternate = binding.get("alternate")
+        if alternate is None:
+            return self._read_table(slot, "merged", binding, locators)
+        offset, result = alternate["offset"], [None] * len(locators)
+        for kind, shift in (("merged", 0), ("alternate", offset)):
+            items = [(i, r - shift) for i, r in enumerate(locators) if (r >= offset) == bool(shift)]
+            if items:
+                positions, rows = zip(*items)
+                for i, pair in zip(
+                    positions, self._read_table(slot, kind, binding, rows), strict=True
+                ):
+                    result[i] = pair
+        return result
+
+    def _read_table(self, slot, kind, binding, locators):
         if "merged" in binding:
             from .merged import METADATA_COLUMNS
 
             rows = (
-                self.table(slot, "merged")
+                self.table(slot, kind)
                 .take(
                     list(locators),
                     columns=[*METADATA_COLUMNS, "codec_codes", "text_ids"]

@@ -44,8 +44,10 @@ def verify_conditioning(model, dataset):
     if not getattr(model.config, "lm_tts_freeze_speaker_encoder", False):
         raise ValueError("Cached embeddings require a frozen speaker encoder")
     state = model.speaker_encoder.state_dict()
-    for binding in dataset.bindings:
-        tensors = binding["speaker_profile"]["model"]["tensors"]
+    profiles = [b["speaker_profile"] for b in dataset.bindings]
+    profiles += [b["alternate"]["speaker_profile"] for b in dataset.bindings if "alternate" in b]
+    for profile in profiles:
+        tensors = profile["model"]["tensors"]
         if set(tensors) != {"speaker_encoder." + k for k in state}:
             raise ValueError("Cached speaker profile has a different architecture")
         for name, tensor in state.items():

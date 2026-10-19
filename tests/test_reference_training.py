@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import lance
+import numpy as np
 import pyarrow as pa
 import pytest
 import torch
@@ -259,6 +260,56 @@ def test_prefix_reference_merge_starts_every_reference_at_frame_zero(tmp_path):
     path.write_text(json.dumps(merged))
     with pytest.raises(ValueError, match="reference timing"):
         bind_merged(recipe, tmp_path / "bad", *arguments, Tokenizer())
+
+
+def fresh_reference_build(root, prefix):
+    if prefix:
+        _, recipe, selection_path, _ = reference_fixture(root, prefix=True)
+    else:
+        build, _, _ = reference_fixture(root)
+        recipe = json.loads((build / "data_recipe.json").read_text())
+        recipe.pop("reuse_build")
+        selection_path = Path(recipe["root"]) / "selection.json"
+    selection = json.loads(selection_path.read_text())
+    arguments = (selection, selection_path, file_hash(selection_path), {"sha256": "fixture"})
+    bind_merged(recipe, root / "build", *arguments, Tokenizer())
+    split_build(root / "build/manifest.json", fraction=0.25)
+    return root / "build"
+
+
+def test_mixed_reference_build_routes_each_target_to_one_placement(tmp_path):
+    from lm_tts.data.mixed_reference import compose_mixed_build
+
+    uniform = fresh_reference_build(tmp_path / "uniform", prefix=False)
+    prefix = fresh_reference_build(tmp_path / "prefix", prefix=True)
+    compose_mixed_build(uniform, prefix, tmp_path / "mixed", 0.5, 3)
+    alternates = 0
+    for role in ("train", "validation"):
+        mixed = FeatureDataset(
+            tmp_path / f"mixed/{role}/manifest.json", (200, 201), mask_reference=True
+        )
+        sources = {
+            name: FeatureDataset(build / f"{role}/manifest.json", (200, 201), mask_reference=True)
+            for name, build in (("uniform", uniform), ("prefix", prefix))
+        }
+        offset = mixed.bindings[0]["alternate"]["offset"]
+        for i in range(len(mixed)):
+            row = mixed[i]
+            alternate = int(mixed.indices[0][i]["row"]) >= offset
+            alternates += alternate
+            expected = sources["prefix" if alternate else "uniform"][i]
+            assert row["id"] == expected["id"]
+            assert row["text_ids"] == expected["text_ids"]
+            torch.testing.assert_close(row["codes"], expected["codes"])
+            torch.testing.assert_close(row["speaker_embedding"], expected["speaker_embedding"])
+            assert row["reference_interval"] == expected["reference_interval"]
+        assert np.array_equal(
+            mixed.indices[0][["frames", "tokens", "language", "duration"]],
+            sources["uniform"].indices[0][["frames", "tokens", "language", "duration"]],
+        )
+    assert 0 < alternates < 6
+    with pytest.raises(ValueError, match="beyond the reference placement"):
+        compose_mixed_build(uniform, uniform, tmp_path / "same", 0.5, 3)
 
 
 @pytest.mark.parametrize("reduction", ["token", "sample", "sqrt"])

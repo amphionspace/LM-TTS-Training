@@ -155,8 +155,16 @@ def create_build(recipe_path, output, *, paths=None):
             "validation_fraction",
             "split_seed",
             "reuse_build",
+            "mix_reference",
         ),
     )
+    if "mix_reference" in recipe:
+        from .mixed_reference import compose_mixed_build
+
+        mix = recipe["mix_reference"]
+        return compose_mixed_build(
+            mix["primary"], mix["alternate"], output, mix["fraction"], mix["seed"]
+        )
     root = Path(recipe["root"]).resolve()
     selection_path = root / recipe["selection_manifest"]
     selection = read_complete(selection_path)

@@ -248,6 +248,8 @@ def create_reference_build(recipe, output, tokenizer_info, selection_sha):
         or val["split"]["source_build_sha256"] != file_hash(baseline_path)
     ):
         raise ValueError("Reuse requires the original token cache and its isolated holdout")
+    if any("alternate" in b for b in baseline["bindings"]):
+        raise ValueError("A mixed-reference build cannot serve as a token-cache baseline")
     configured = recipe["bindings"]
     old = {b["dataset_id"]: b for b in baseline["bindings"]}
     heldout = {b["dataset_id"]: b for b in val["bindings"]}

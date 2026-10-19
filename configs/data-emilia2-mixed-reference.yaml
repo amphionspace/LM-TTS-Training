@@ -1,0 +1,10 @@
+extends: base.yaml
+
+# ---- emilia2: half the targets use the uniform reference, half the prefix reference ----
+# Composed from two published builds with identical rows, tokens and holdout; each target keeps
+# one placement for the whole run, chosen by a seeded draw over merged rows.
+mix_reference:
+  primary: ${paths.project}/data/builds/supervised-tts-20261012-emilia2-reference
+  alternate: ${paths.project}/data/builds/supervised-tts-20261015-emilia2-prefix-reference
+  fraction: 0.5
+  seed: 42
