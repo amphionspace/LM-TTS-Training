@@ -22,6 +22,7 @@ from lm_tts.artifacts import file_hash
 from lm_tts.models.assembly.common import copy_codec
 from lm_tts.models.assembly.qwen import (
     audit_sources,
+    codebook_residual_embeddings,
     initialize_model,
     save_model,
     validate_saved,
@@ -88,6 +89,12 @@ def main():
         default="qwen3_non_streaming",
     )
     p.add_argument(
+        "--residual-codec-init",
+        choices=["random", "codebook"],
+        default="random",
+        help="Initialize the 15 residual codec embeddings randomly or from the codec RVQ codebooks",
+    )
+    p.add_argument(
         "--audit-only",
         action="store_true",
         help="Write a JSON report; do not download weights or build a model",
@@ -124,6 +131,8 @@ def main():
         dtype=args.dtype,
         text_projection_init=args.text_projection_init,
     )
+    if args.residual_codec_init != "random":
+        report["residual_codec_init"] = args.residual_codec_init
     report["sources"] = {
         name: {"requested": getattr(args, name), "revision": getattr(args, name + "_revision")}
         for name in DEFAULTS
@@ -150,6 +159,12 @@ def main():
         args.text_projection_init,
         args.text_initialization,
     )
+    if args.residual_codec_init == "codebook":
+        codebook_residual_embeddings(model, paths["codec"], args.seed)
+        report["adaptations"]["residual_codec_embeddings"] = (
+            "centered rvq_rest codebooks x seeded orthogonal 256->1024 maps, rescaled to the "
+            "initializer std; trainable"
+        )
     report["parameters"] = {
         "total": sum(p.numel() for p in model.parameters()),
         "trainable": sum(p.numel() for p in model.parameters() if p.requires_grad),

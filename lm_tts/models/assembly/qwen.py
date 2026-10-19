@@ -245,6 +245,38 @@ def initialize_model(
     return model
 
 
+def codebook_residual_embeddings(model, codec_directory, seed):
+    """Initialize the 15 residual codec embeddings from the codec's own RVQ codebooks.
+
+    Each table is the centered codebook (2048 x 256) times a seeded random orthogonal
+    256 x 1024 map, rescaled to the configured initializer std. Distances between codes in
+    the codec carry over to the start of training; the tables stay ordinary free parameters.
+    """
+    from safetensors import safe_open
+
+    tables = model.talker.code_predictor.get_input_embeddings()
+    std = model.config.talker_config.code_predictor_config.initializer_range
+    with safe_open(Path(codec_directory) / "model.safetensors", "pt") as codec:
+        for group, table in enumerate(tables):
+            prefix = f"decoder.quantizer.rvq_rest.vq.layers.{group}._codebook."
+            usage = codec.get_tensor(prefix + "cluster_usage").double()
+            # The codec decodes with embedding_sum / max(cluster_usage, 1e-5).
+            codebook = (
+                codec.get_tensor(prefix + "embedding_sum").double() / usage.clamp(min=1e-5)[:, None]
+            )
+            if codebook.shape[0] != table.num_embeddings:
+                raise ValueError("Codec codebook size differs from the residual embedding")
+            generator = torch.Generator().manual_seed(seed * 1000 + group)
+            gaussian = torch.randn(
+                table.embedding_dim, codebook.shape[1], generator=generator, dtype=torch.float64
+            )
+            projection = torch.linalg.qr(gaussian).Q.T  # orthonormal rows: 256 x 1024
+            value = (codebook - codebook.mean(0)) @ projection
+            value = value / value.std() * std
+            with torch.no_grad():
+                table.weight.copy_(value.to(table.weight.dtype))
+
+
 def save_model(model, directory):
     model.save_pretrained(directory, safe_serialization=True, max_shard_size="2GB")
     path = Path(directory) / "config.json"

@@ -50,6 +50,7 @@ def assembly_recipe(config):
         "input_protocol": "qwen3_non_streaming",
         "seed": 42,
         "dtype": "float32",
+        "residual_codec_init": "random",
     }
     overrides = {k: v for k, v in config.get("assembly", {}).items() if k != "family"}
     if set(overrides) - set(recipe):
@@ -72,6 +73,8 @@ def assembly_recipe(config):
         raise ValueError("Invalid assembly dtype")
     if recipe["input_protocol"] not in {"qwen3_non_streaming", "legacy_prefix"}:
         raise ValueError("Invalid assembly input_protocol")
+    if recipe["residual_codec_init"] not in {"random", "codebook"}:
+        raise ValueError("Invalid assembly residual_codec_init")
     return recipe
 
 
@@ -86,6 +89,9 @@ def verify_assembly(directory, recipe, sources):
         "freeze_text_frontend": not recipe["train_text_frontend"],
         "freeze_speaker_encoder": not recipe["train_speaker_encoder"],
     }
+    # Assemblies made before the option existed used random residual codec embeddings.
+    if report.get("residual_codec_init", "random") != recipe["residual_codec_init"]:
+        raise ValueError(f"Assembled recipe mismatch for residual_codec_init: {directory}")
     for key, value in expected.items():
         if report.get(key) != value:
             raise ValueError(f"Assembled recipe mismatch for {key}: {directory}")
