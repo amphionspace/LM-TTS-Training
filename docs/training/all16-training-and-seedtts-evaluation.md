@@ -1311,7 +1311,16 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 - 后台会话：`seedtts-prefixref-refmask-average30k`。
 - `control/config.json` / `merge_command.json` 保存合并来源和命令，`control/merge_verification.json` 为核验记录，`control/status.json` / `run.log` 为协调状态与日志；推理命令在结果目录的 `eval_command.json` / `run.sh`，最终结果在 `full/`。
 
-**2026-10-19 03:30 UTC** 已优先启动 CPU 平均，完成核验后自动接 smoke 和全量低温评测；当前尚无平均模型的正式分数。后续 prefixref checkpoint 自动队列等待本任务释放运行锁。
+**2026-10-19 03:30 UTC** 启动 CPU 平均，478 个张量核验通过：81 张保持共同源值、397 张等权平均，相对 FP64 参考最大绝对误差为 `7.6294e-6`。但随后 smoke 的英文 WER、中文 CER 均为 **100%**，表明本次平均模型效果不可用。张量核验只证明平均计算、结构和文件一致性，不证明合并后保留语音能力。
+
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 2/2 | 2/2 | 100.000 | 4.156 | smoke，停止该实验 |
+| speaker_icl | seed_tts_eval_zh | 2/2 | 2/2 | 100.000 | 16.147 | smoke，停止该实验 |
+
+按用户要求**停止本次 merge 评测及自动重试**，确认协调、推理子进程均退出。已有权重、smoke 和部分生成结果保留用于追溯；没有本次平均模型的正式全量评分，不参与全量对比。停止原因写入 `control/cancelled.json`，启动脚本检测该文件后直接退出，避免意外恢复。
+
+本次 smoke 审计仅检查 WAV、参数和覆盖率，未设质量门槛，因此 100% 错误率仍进入了全量生成；不应将该审计通过理解为音频质量可用。这里记录失败结果，不再继续该平均模型。Prefixref 新 checkpoint 自动评测保持启用，merge 运行锁已经释放。
 
 ## 31. Prefixref 新 checkpoint 自动评测
 
