@@ -1331,3 +1331,40 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 队列等待第 30 节平均模型评测结束；即使期间出现新 checkpoint，也先登记、后执行。启动任务时从 GPU 0–7 中选择显存足够的 **4–8 卡**，每卡至少空闲 30 GiB；数量不足则等待，不占满显存强行启动。物理卡号可以变化，32 个逻辑分片、每条随机种子和参数保持不变。失败每分钟重试并保留成功结果；Whisper 子进程退出时现在会让评分报错，避免此前 OOM 后无限等待。自动队列、资源变化和 Whisper 退出/正常返回相关 **19 项测试通过**。
 
 **2026-10-19 03:30 UTC** 检查器已启动，首轮无新增完整 checkpoint、无发现错误，等待后续发布。
+
+
+## 32. 两份 step 30,000：refmask 与 prefixref 对比
+
+这里比较第 13 节原 refmask 实验的 **step 30,000** 与第 29 节 prefixref 实验的 **step 30,000**。两份 checkpoint 的组装身份相同，训练进度均为 `epoch=2`、`next_batch=7162`、本轮消费 47,380,547 条，LR 均为主干 `1e-4` / 其余 `3e-4`。数据划分、训练预算与冻结范围一致，主要配方差异是参考片段从句内合法区间改为固定开头，及其 loss mask 位置。对比组的解码参数、batch size 1、32 个逻辑分片和随机种子一致；四组均完整生成并评分 3,108 条、无超长排除，审计通过。物理 GPU 分配不同，结论来自单次生成结果，不把差值直接视为因果证明或显著性结论。
+
+### 同设置评测结果
+
+| 解码 | 模型 | 英文 WER/% ↓ | 英文 SIM/% ↑ | 中文 CER/% ↓ | 中文 SIM/% ↑ |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 默认双采样 | refmask 30k | 3.099 | 61.719 | 2.463 | 70.546 |
+| 默认双采样 | prefixref 30k | 3.007 | 60.339 | 2.133 | 69.315 |
+| 低温、Code Predictor greedy | refmask 30k | 2.634 | 61.091 | 1.853 | 70.303 |
+| 低温、Code Predictor greedy | prefixref 30k | 2.301 | 59.422 | 1.597 | 68.942 |
+
+**Prefixref 的错误率更低，原 refmask 的相似度更高。** 默认组英文 WER 只降低 0.092 个百分点，中文 CER 降低 0.330 个百分点；SIM 分别下降 1.380 / 1.231 个百分点。低温组英文 WER 降低 **0.333 个百分点**（相对降低 **12.63%**），中文 CER 降低 **0.256 个百分点**（相对降低 **13.83%**），SIM 分别下降 **1.670 / 1.361 个百分点**。这些相对值按未四舍五入的逐条评分均值计算。
+
+按相同样本逐条配对，低温组 prefixref 英文 WER 更低 / 相同 / 更高为 **91 / 923 / 74** 条，中文 CER 为 **243 / 1,610 / 167** 条；因此并非每一条都改善。DNSMOS 没有计算，也没有单独量化韵律、自然度，不能仅据 WER/CER 推断整体听感更好。
+
+原 refmask 的 [默认结果](../../../UltraEval-Audio/res/emilia2-refmask-auto-step30000-seedtts-default-sampling-4gpu/full/results_table.md) / [低温结果](../../../UltraEval-Audio/res/emilia2-refmask-auto-step30000-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/full/results_table.md)，prefixref 的结果及审计见第 29 节。
+
+### 各模块权重差异与平均失败
+
+在 CPU 上逐张量比较两个独立 FP32 导出，并用共同组装模型作为训练初始权重。冻结的 text embedding、text projector、speaker encoder 共 **81 个张量全部逐元素一致**；其余 **397 个张量均有差异**。下表相对 L2 定义为 `||W_prefixref − W_refmask||₂ / ||W_refmask||₂`；余弦均在每个模块的全部张量展平并合并后计算，不是逐张量余弦的平均。
+
+| 模块 | 相对 L2 差异 | 权重余弦 | 相对共同初始化的训练增量余弦 |
+| --- | ---: | ---: | ---: |
+| Talker layers / norm | 36.27% | 0.9342 | 0.0911 |
+| 首码本 embedding | 94.11% | 0.5498 | 0.5090 |
+| 首码本 head | 82.76% | 0.6536 | 0.5995 |
+| Code Predictor 主干 / norm | 130.89% | 0.1441 | 0.0853 |
+| 15 张 residual embedding | 89.17% | 0.6013 | 0.6062 |
+| 15 个 residual head | 103.28% | 0.4646 | 0.5162 |
+
+Talker 的绝对权重余弦较高，部分原因是二者共享预训练主干；扣除共同初始化后，训练增量方向已明显不同。随机初始化并联合训练的 Code Predictor、codec embeddings / heads 也已分化，不能因为表的维度和 token ID 一样，就认为两套内部表示及上下游配合能在平均后保留。这与第 30 节 50% / 50% 平均模型的 smoke 失败相符，说明这次跨实验平均没有可用效果；尚未做分模块替换或插值消融，不能断言某一个模块单独造成 100% 错误率，也不把全量比较的结论推广到其他合并比例。
+
+完整数值记录：[source_model_comparison.json](../../../UltraEval-Audio/res/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/control/source_model_comparison.json)。本次仅读取权重和既有评分，没有恢复已停止的平均模型评测。
