@@ -1368,3 +1368,31 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 Talker 的绝对权重余弦较高，部分原因是二者共享预训练主干；扣除共同初始化后，训练增量方向已明显不同。随机初始化并联合训练的 Code Predictor、codec embeddings / heads 也已分化，不能因为表的维度和 token ID 一样，就认为两套内部表示及上下游配合能在平均后保留。这与第 30 节 50% / 50% 平均模型的 smoke 失败相符，说明这次跨实验平均没有可用效果；尚未做分模块替换或插值消融，不能断言某一个模块单独造成 100% 错误率，也不把全量比较的结论推广到其他合并比例。
 
 完整数值记录：[source_model_comparison.json](../../../UltraEval-Audio/res/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/control/source_model_comparison.json)。本次仅读取权重和既有评分，没有恢复已停止的平均模型评测。
+
+
+### Code Predictor 为什么差异大：早期 checkpoint 与分层核对
+
+进一步读取两轮原始分布式 checkpoint 的 **step 100 / 2,500**，仅恢复 Code Predictor 主干与 norm 张量，使用与 30k 相同的键集合比较；没有导出新模型或启动额外生成。
+
+| 训练步数 | Code Predictor 主干权重余弦 | 相对 L2 差异 |
+| --- | ---: | ---: |
+| 100 | 0.999746 | 2.25% |
+| 2,500 | 0.670498 | 81.09% |
+| 30,000 | 0.144137 | 130.89% |
+
+两轮的实际 run config 都指向同一组装模型，没有 `init_from` 或 `initialized_from.json`；早期 checkpoint 的组装身份与消费样本数也一致。加载代码校验组装文件哈希并以 `strict=True` 完整载入 state dict。结合 step 100 仍极其接近的结果，证据支持权重是在训练中逐步分化，而非开始时就用了两套无关随机初始化；这不是对所有潜在训练问题的排除。
+
+30k 时差异并非集中在一层：第 0–4 层的权重余弦分别约 **0.220 / 0.161 / 0.110 / 0.096 / 0.140**。按矩阵类型聚合：
+
+| 参数类型 | 权重余弦 |
+| --- | ---: |
+| Attention Q / K | 0.0846 / 0.1092 |
+| Attention V / O | 0.2635 / 0.1859 |
+| MLP gate / up / down | 0.0498 / 0.0564 / 0.0651 |
+| Norm | 0.9929 |
+
+更合理的解释是**不同条件与监督区间下的联合适应**：参考位置改变后，缓存 speaker embedding 和 codec loss mask 都改变；Talker 因此产生不同的隐藏表示，而 Code Predictor 的输入包含 Talker hidden state，它与上游共同训练。Code Predictor 又是随机初始化、使用 `3e-4` 学习率的模块，没有像 Talker 那样共享的大规模预训练权重作为强共同底座。因此同初始化并不约束两轮最终学到逐坐标接近的 attention / MLP 矩阵。
+
+这是结合代码与权重轨迹的解释，尚未通过固定 Talker、固定 mask 或参数对齐等消融分离各因素。低权重余弦不等于功能完全不同，两份单独模型都能正常评测；但不能保证把各自配合好的 Talker、Code Predictor 与 embedding/head 同时平均后还能配合。这里不把差异简单认定为正常，也不根据一个余弦值断言训练存在 bug。
+
+原始记录：[predictor_divergence_check.json](../../../UltraEval-Audio/res/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/control/predictor_divergence_check.json)。
