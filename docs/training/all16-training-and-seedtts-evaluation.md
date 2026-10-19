@@ -1228,6 +1228,33 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 **2026-10-19** 按要求评测 `supervised-tts-20261015-emilia2-prefixref-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00030000/`。已核对 `COMPLETE`、分布式状态和元数据：step 30,000、epoch 2、16 卡，组装身份仍为 `c0845dba275aeef9da2b2f4524393f269aed9b594ade3c289cb7fadad374dca5`，speaker embedding 启用。模型结构、初始化与冻结范围沿用第 13 节的 Qwen 模型；这一轮使用从音频开头截取的 prefix reference `[0, b)`，屏蔽参考段所有码本的 loss、保留 EOS 监督。训练配置为 `configs/supervised-tts-20261015-emilia2-prefixref-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd.yaml`，数据配置为 `configs/data-emilia2-prefix-reference.yaml`。训练采用 BF16、token loss、residual 权重 0.3、3 epoch 的样本进度 WSD，峰值 LR 为主干 `1e-4`、其余可训练参数 `3e-4`；本 checkpoint 元数据记录当前 LR 仍为这两个峰值。
 
+### Prefix reference 具体如何训练
+
+数据仍只用 **Emilia2**，沿用 selection-v2 和 seed 42 的固定约千分之一留出：实际训练索引 **76,607,724** 条、验证 **76,684** 条。特征来自发布的 `emilia2-merged-prefix-reference-features-v1-20261016T142123bjt-01`，同时包含整句文本、整句 16 码本 codec、参考区间和该区间提取的 speaker embedding。无合法参考区间的样本在数据发布时已被过滤。
+
+对一条总长为 T 帧的音频，参考固定为开头 `[0, b)`。参考长度沿用同一条样本原 reference 配方的确定性抽样结果：至少 0.5 秒且不少于整句约 10%，最多整句约 50%，按 80 ms codec 帧边界对齐；抽样 seed 为 20261008，合法长度均匀抽取，起点固定为零。区间已写入发布特征，每个 epoch 读取同一结果，不在线重新随机裁剪。冻结的 Qwen ECAPA 从**这段前缀音频**离线提取 1,024 维 FP32 speaker embedding，训练读取缓存向量。
+
+输入仍使用 `qwen3_non_streaming` 协议：`role / control tokens → speaker embedding → 整句文本 → codec BOS → C[0] … C[T−1]`。文本经冻结的 2,048 维 embedding 和 projector 转为 1,024 维；每个音频帧的 16 张 codec embedding 相加，作为 Talker 的一个时间步输入。**参考 codec 不从输入删除，也不再额外复制拼接一遍**：开头 `[0, b)` 本身就是可供后续生成关注的音频上下文。训练采用 teacher forcing，下一帧预测与标签保持移位对齐。
+
+`mask_reference=true` 只屏蔽预测 `[0, b)` 的损失：首码本和其余 15 个码本全部屏蔽；监督 `[b, T)` 和结尾 EOS，EOS 只属于首码本预测。损失为按有效 token 归一化的首码本交叉熵，加 **0.3 ×** 同样按有效 token 归一化的 residual 交叉熵，分母也排除参考帧。Talker 与 Code Predictor 联合优化。Loss mask 不等于 attention mask 或 detach：后续帧仍能关注参考前缀，参考 codec embedding 也可通过后续帧损失获得梯度。
+
+| 模块 | 初始化来源 / 结构 | 本轮更新 |
+| --- | --- | --- |
+| Text embedding / projector | Qwen3-TTS-12Hz-0.6B-Base；151,936 × 2,048，projector 2,048 → 2,048 → 1,024、SiLU | 冻结 |
+| Talker layers / norm | Qwen3-0.6B-Base；28 层、hidden 1,024、FFN 3,072 | 更新，峰值 LR `1e-4` |
+| 首码本 embedding / head | 随机初始化，3,072 类 | 更新，峰值 LR `3e-4` |
+| Code Predictor / residual embeddings、heads | 随机初始化；5 层，15 张 2,048 类 embedding / head；投影为 Identity | 更新，峰值 LR `3e-4` |
+| Speaker encoder | Qwen TTS 的 ECAPA-TDNN；本轮读取离线前缀 embedding | 冻结 |
+| 音频 codec | Qwen3-TTS-Tokenizer-12Hz，24 kHz、16 码本；离线编码 | 不参与训练更新 |
+
+训练为 BF16、FlashAttention 2、16 卡 FSDP、gradient accumulation 1、activation checkpointing；动态 batch 每卡上限 32,000 codec frames / 50,000 tokens。目标 3 epochs，WSD 按实际消费样本进度调度，warmup 1%、末尾 decay 10%、最低 LR 为峰值 10%，不是预先猜测动态 batch 的总 step。保存和训练内验证均每 2,500 step，保留所有 checkpoint。Step 30,000 的 `epoch=2` 是从零计数的第三轮，尚未完成该轮，当前 LR 仍在 steady。
+
+相对旧 refmask 的主要变化是**参考起点固定在零**：旧版本若参考位于句中，其前面的音频也会被监督；此版本只学习有参考前缀之后的续写，不监督无参考 codec 时直接起声。因此该实验按配置使用 speaker + ICL 评测，speaker only 的起声行为没有得到这种配方的直接监督。训练仍是同一条录音内的前缀与后续，使用整句文本；没有改成两条独立录音及分别转写的显式 ICL 配对，不能据此认为与外部参考音频的推理完全同分布。
+
+实现依据：[参考区间校验](../../lm_tts/data/reference.py)、[数据读取](../../lm_tts/data/reader.py)、[loss mask](../../lm_tts/data/batch.py)、[输入协议](../../lm_tts/models/protocol.py)、[损失](../../lm_tts/objectives/tts.py)。
+
+### 默认采样设置与执行
+
 本次使用 **speaker embedding + ICL**，匹配该训练配置的评测要求。默认 Talker / Code Predictor 均采样，temperature 0.9、top-p 1、top-k 50，Talker repetition penalty 1.05；Auto、non-streaming、BF16 + SDPA、batch size 1。Seed-TTS 英文 1,088 条、中文 2,020 条，先中英文各两条 smoke 生成、评分及审计，通过后自动执行全量。英文 WER、中文 CER、WavLM SIM 与独立大于 30 秒排除规则沿用前文，不计算 DNSMOS。
 
 - 独立导出：`UltraEval-Audio/init_model/emilia2-prefixref-step-00030000/`，CPU 加载该 checkpoint 后保存 FP32 权重并复制 tokenizer，核对 checkpoint 身份、元数据和权重哈希。
@@ -1235,11 +1262,30 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 - 后台会话：`seedtts-prefixref-step30000`；`01:19 UTC` 已启动，先导出模型，再使用 GPU **3、5、6**，生成并发 12、固定逻辑分片 32，评分并发 6。执行前检查每卡至少空闲 30 GiB，失败每分钟重试并复用成功结果。
 - `job_config.json`、`export_command.json`、`eval_command.json` 保存配置与精确命令；`coordinator_status.json` / `coordinator.log` 为导出及接续状态，`pipeline_status.json` / `job.log` / `logs/` 为评测状态和日志；正式评分表、汇总、审计在 `full/results_table.md` / `summary.json` / `audit.json`。
 
-独立模型已导出并核对身份及权重哈希（SHA256 `7c874d33ea6597d780d2007c7cbd0a23e1925c3d6ae7dcf8c49e14e740ef2e12`）。**01:21 UTC** 按后续要求切换为 GPU **0–7 共八卡**：全量生成并发 **32**（每卡 4 worker），评分并发 **16**（每卡 2 worker）。固定 32 个逻辑分片、每条种子和解码设置均保持不变，复用原导出与成功结果；结果目录保留最初的 `3gpu` 名称以避免移动打断恢复，实际资源以 `job_config.json` / `eval_command.json` 和状态记录为准。当前正在执行 smoke，尚无本 checkpoint 的正式全量分数。
+独立模型已导出并核对身份及权重哈希（SHA256 `7c874d33ea6597d780d2007c7cbd0a23e1925c3d6ae7dcf8c49e14e740ef2e12`）。**01:21 UTC** 按后续要求切换为 GPU **0–7 共八卡**：全量生成并发 **32**（每卡 4 worker），评分并发 **16**（每卡 2 worker）。固定 32 个逻辑分片、每条种子和解码设置均保持不变，复用原导出与成功结果；结果目录保留最初的 `3gpu` 名称以避免移动打断恢复，实际资源以 `job_config.json` / `eval_command.json` 和状态记录为准。默认采样现已完成，完整结果如下。
 
 
-### Prefixref step 30,000：全量生成完成与评分恢复（2026-10-19 02:03 UTC）
+### 默认采样完整结果（2026-10-19 02:09 UTC）
 
-八卡生成已完成 **3,108 / 3,108**，无生成错误、无大于 30 秒排除。Smoke 四条及审计通过。全量已评分 **2,836 条**：中文 **2,020 / 2,020** 完成，英文 **816 / 1,088**，尚缺 272 条。完整中文评分的逐句 CER 均值为 **2.133%**、SIM 为 **69.315%**；这只是中文完整分数，整组尚未最终审计通过。
+**3,108 条全部生成并评分，无超过 30 秒的排除项**，smoke 和全量审计均通过；核对了所有 WAV 头、32 个逻辑分片的推理设置、输入及评分身份、唯一覆盖率。以下均分已从逐条成功评分重新计算，无重复记录。
 
-英文剩余分片 3 / 7 原先均在物理 GPU 3；评分期间该卡其他进程占用增加，Whisper 加载 OOM 后子进程退出，上层评分进程仍等待结果，未及时失败。已停止本次卡住的评测及其子进程，保留所有成功音频和评分，改用 **GPU 5、6** 恢复，仅补算缺失评分。逻辑分片仍为 32、推理参数和随机种子不变，评分每卡 4 worker；已有成功记录跨评分分片复用。恢复命令及当前卡号已写入本次结果目录的 `job_config.json` / `eval_command.json`，协调状态为 `coordinator_status.json`。全部评分完成后仍需重新汇总并通过全量审计，方可认定整组完成。
+| 模型 | 数据集 | 合成/总数 | 评分/总数 | CER或WER/% ↓ | SIM/% ↑ | DNSMOS P808 ↑ | DNSMOS OVRL ↑ | 状态 |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| speaker_icl | seed_tts_eval_en | 1088/1088 | 1088/1088 | 3.007 | 60.339 | — | — | 完整 |
+| speaker_icl | seed_tts_eval_zh | 2020/2020 | 2020/2020 | 2.133 | 69.315 | — | — | 完整 |
+
+英文为逐句 WER 算术平均，中文为逐句 CER 算术平均，SIM 为 WavLM 余弦相似度乘 100；DNSMOS 未计算。原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/full/audit.json)。
+
+执行期间，英文分片 3 / 7 所在的物理 GPU 3 因其他进程增加显存占用，导致 Whisper 加载 OOM，子进程退出后上层仍等待。02:03 UTC 停止本次卡住的评分并迁至 GPU 5、6，保留全部成功结果，仅补算缺失的 272 条英文评分；02:09:22 UTC 完成并通过审计。未重生成音频、未改变参数或随机种子，未因 OOM 排除测试样本。
+
+### 同一 prefixref step 30,000：low-temperature 补充评测
+
+按后续要求，在**同一 prefixref checkpoint** 上追加 Talker temperature **0.3**、top-p **1**、top-k **10**、repetition penalty **2**，Code Predictor **greedy** 的完整 Seed-TTS 评测。模型导出、speaker + ICL 条件、BF16 + SDPA、batch size 1、每条随机种子及独立 30 秒排除规则保持一致，独立保存结果以便与上述默认采样对比。
+
+**2026-10-19 02:16 UTC** 已启动。物理 GPU 3 显存不足，本次使用 GPU **0、1、2、4、5、6、7**，生成并发上限 28、固定逻辑分片 32；评分固定 GPU **5、6**、每卡 4 worker，避免再次使用已发生 OOM 的卡。先跑 smoke 并审计，通过后自动执行全量，失败每分钟重试并复用成功结果。
+
+- 结果目录：`UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/`。
+- 后台会话：`seedtts-prefixref-step30000-lowtemp`。
+- 配置、精确命令、协调与评测状态和最终评分布局沿用本节默认组。
+
+当前正在 smoke 阶段，尚无本次 prefixref low-temperature 的正式全量分数。
