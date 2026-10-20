@@ -145,6 +145,13 @@ def load_config(path):
         or type(source["load_optimizer"]) is not bool
     ):
         raise ValueError("train.init_from needs checkpoint and a boolean load_optimizer")
+    sampler = train.get("sampler", "window_shuffle_token_budget_v2")
+    if sampler not in {"window_shuffle_token_budget_v2", "feistel_uniform_token_budget_v3"}:
+        raise ValueError("Unknown train.sampler")
+    if sampler == "feistel_uniform_token_budget_v3" and train.get("length_bucket_size", 0):
+        raise ValueError(
+            "The uniform sampler draws whole-epoch permutations; set length_bucket_size: 0"
+        )
     bucket = train.get("length_bucket_size", 0)
     if type(bucket) is not int or bucket < 0:
         raise ValueError("length_bucket_size must be a nonnegative integer")

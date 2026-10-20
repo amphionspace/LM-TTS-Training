@@ -2,6 +2,12 @@
 
 import numpy as np
 
+from .permutation import FeistelPermutation
+
+# window: window-shuffled contiguous index ranges (optionally length-sorted), kept for old runs.
+# feistel: a keyed uniform permutation of the whole epoch, so every batch is a uniform sample.
+ORDERS = {"window", "feistel"}
+
 
 class TokenBatchSampler:
     """Bounded window shuffling and streaming global-rank batch assignment.
@@ -23,6 +29,7 @@ class TokenBatchSampler:
         shuffle_window=65536,
         length_bucket_size=0,
         pad_to_longest=False,
+        order="window",
     ):
         if len(frames) != len(tokens) or len(frames) < world_size:
             raise ValueError("Sampling metadata must have at least one sample per rank")
@@ -37,6 +44,9 @@ class TokenBatchSampler:
         if type(length_bucket_size) is not int or length_bucket_size < 0:
             raise ValueError("length_bucket_size must be a nonnegative integer")
         self.length_bucket_size = length_bucket_size
+        if order not in ORDERS or (order == "feistel" and length_bucket_size):
+            raise ValueError("Sampler order must be window, or feistel without length buckets")
+        self.order_kind = order
         self.pad_to_longest = pad_to_longest
         self.window = shuffle_window
         self.epoch, self.start_batch, self.max_batches = 0, 0, None
@@ -45,6 +55,12 @@ class TokenBatchSampler:
         self.epoch, self.start_batch, self.max_batches = epoch, start_batch, max_batches
 
     def order(self):
+        if self.order_kind == "feistel":
+            permutation = FeistelPermutation(len(self.frames), [self.seed, self.epoch, 3])
+            for start in range(0, len(self.frames), 1 << 20):
+                stop = min(len(self.frames), start + (1 << 20))
+                yield from permutation(np.arange(start, stop)).tolist()
+            return
         rng = np.random.default_rng(np.random.SeedSequence([self.seed, self.epoch]))
         windows = rng.permutation((len(self.frames) + self.window - 1) // self.window)
         for window in windows:

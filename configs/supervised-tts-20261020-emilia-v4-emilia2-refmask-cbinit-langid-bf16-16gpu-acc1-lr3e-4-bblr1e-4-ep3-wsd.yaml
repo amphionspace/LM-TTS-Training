@@ -48,7 +48,10 @@ train:
   accumulation: 1
   num_workers: 4
   prefetch_factor: 2
-  length_bucket_size: 65536
+  # Every global batch is a uniform sample of the whole build (datasets, languages, lengths):
+  # a keyed per-epoch permutation, no length sorting (FlashAttention-2 packs without padding).
+  sampler: feistel_uniform_token_budget_v3
+  length_bucket_size: 0
 
   # Keep every checkpoint; validation and saves share the same cadence.
   log_every: 10

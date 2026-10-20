@@ -35,6 +35,11 @@ from .telemetry import (
 )
 from .validation import run_validation, validation_complete
 
+SAMPLER_ORDERS = {
+    "window_shuffle_token_budget_v2": "window",
+    "feistel_uniform_token_budget_v3": "feistel",
+}
+
 
 def verify_conditioning(model, dataset):
     tokenizer = tokenizer_identity(dataset.manifest["tokenizer"]["path"])
@@ -183,7 +188,7 @@ def run(config, resume=None, eval_only=False):
             "build": train_data.fingerprint,
             "val_build": val_data.fingerprint if val_data else None,
             "settings": {k: v for k, v in settings.items() if k not in operational},
-            "sampler": "window_shuffle_token_budget_v2",
+            "sampler": settings.get("sampler", "window_shuffle_token_budget_v2"),
             "torch": torch.__version__,
         }
         validation_pending = False
@@ -277,6 +282,7 @@ def run(config, resume=None, eval_only=False):
             shuffle_window=settings["shuffle_window"],
             length_bucket_size=settings.get("length_bucket_size", 0),
             pad_to_longest=backend == "sdpa",
+            order=SAMPLER_ORDERS[settings.get("sampler", "window_shuffle_token_budget_v2")],
         )
         sampler.set_epoch(
             progress["epoch"],
