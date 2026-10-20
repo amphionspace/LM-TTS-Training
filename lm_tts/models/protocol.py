@@ -3,6 +3,32 @@
 import torch
 from torch import nn
 
+# Training languages (ISO 639-1) and their codec language names.
+LANGUAGE_NAMES = {
+    "zh": "chinese",
+    "en": "english",
+    "de": "german",
+    "it": "italian",
+    "pt": "portuguese",
+    "es": "spanish",
+    "ja": "japanese",
+    "ko": "korean",
+    "fr": "french",
+    "ru": "russian",
+    "nl": "dutch",
+    "pl": "polish",
+}
+
+
+def language_codec_ids(config_language_ids):
+    """Map training languages (ISO codes) to the assembled config's codec language IDs."""
+    missing = sorted(set(LANGUAGE_NAMES.values()) - set(config_language_ids))
+    if missing:
+        raise ValueError(
+            f"Assembly lacks codec language IDs for {missing}; see extra_codec_languages"
+        )
+    return {code: config_language_ids[name] for code, name in LANGUAGE_NAMES.items()}
+
 
 def frame_embeddings(talker, groups, codes):
     value = talker.model.codec_embedding(codes[:, 0])
@@ -44,14 +70,27 @@ def build_inputs(talker, speaker_encoder, config, batch):
         role = talker.text_projection(
             talker.model.text_embedding(batch["text_ids"].new_tensor(config.lm_tts_role_ids))
         )
-        controls = (
-            embedding(
-                batch["text_ids"].new_tensor(
-                    [config.codec_nothink_id, config.codec_think_bos_id, config.codec_think_eos_id]
+        auto = [config.codec_nothink_id, config.codec_think_bos_id, config.codec_think_eos_id]
+        if getattr(config, "lm_tts_language_conditioning", "auto") == "codec_language_id":
+            if "language_codec_ids" not in batch:
+                raise ValueError("A language-conditioned model needs language_codec_ids")
+            # Official explicit-language prefill: think, think_bos, language, think_eos.
+            controls = [
+                embedding(
+                    batch["text_ids"].new_tensor(
+                        auto
+                        if language < 0
+                        else [config.codec_think_id, config.codec_think_bos_id, language]
+                        + [config.codec_think_eos_id]
+                    )
                 )
+                + text_pad
+                for language in batch["language_codec_ids"].tolist()
+            ]
+        else:
+            controls = [embedding(batch["text_ids"].new_tensor(auto)) + text_pad] * len(
+                batch["frame_lengths"]
             )
-            + text_pad
-        )
         text = text + embedding.weight[config.codec_pad_id]
         frames = frames + text_pad
         bos = bos + text_pad
@@ -63,7 +102,9 @@ def build_inputs(talker, speaker_encoder, config, batch):
     text_rows = text.split(batch["text_lengths"].tolist())
     frame_rows = frames.split(batch["frame_lengths"].tolist())
     for index, (text_row, frame_row) in enumerate(zip(text_rows, frame_rows)):
-        prefix = [role, controls, text_row] if protocol == "qwen3_non_streaming" else [text_row]
+        prefix = (
+            [role, controls[index], text_row] if protocol == "qwen3_non_streaming" else [text_row]
+        )
         if speaker is not None:
             prefix.insert(2 if protocol == "qwen3_non_streaming" else 1, speaker[index : index + 1])
         prefix_length = sum(len(part) for part in prefix)

@@ -20,6 +20,17 @@ def load_config(path):
         raise ValueError("train.mask_reference must be a boolean")
     if train.get("mask_reference", False) and not model.get("use_speaker_embedding", True):
         raise ValueError("Reference masking requires speaker conditioning")
+    language = model.get("language_conditioning", "auto")
+    if language not in {"auto", "codec_language_id"}:
+        raise ValueError("model.language_conditioning must be auto or codec_language_id")
+    if "language_auto_fraction" in train:
+        fraction = train["language_auto_fraction"]
+        if (
+            language != "codec_language_id"
+            or type(fraction) not in (int, float)
+            or not 0 <= fraction < 1
+        ):
+            raise ValueError("language_auto_fraction in [0, 1) requires codec_language_id")
     if "run_name" in train or "runs_root" in train:
         name = train.get("run_name")
         if (

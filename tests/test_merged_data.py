@@ -227,3 +227,56 @@ def test_bad_text_tokens_are_skipped_before_collation(tmp_path, monkeypatch, bad
     assert batch["skipped_samples"].item() == 1
     assert batch["frame_lengths"].tolist() == [1, 3]
     assert batch["text_ids"].max().item() < 256
+
+
+def test_binding_can_pin_its_own_selection(tmp_path):
+    recipe, selection, path = merged_fixture(tmp_path / "features")
+    default = path.with_name("other-selection.json")
+    default.write_text(json.dumps({**selection, "selection_id": "a-different-selection"}))
+    arguments = (json.loads(default.read_text()), default, file_hash(default))
+    # The default selection no longer matches the merged feature; the binding's own does.
+    with pytest.raises(ValueError, match="fully cover"):
+        bind_merged(recipe, tmp_path / "bad", *arguments, {"sha256": "fixture"}, Tokenizer())
+    recipe["bindings"][0]["selection_manifest"] = str(path)
+    manifest = bind_merged(
+        recipe, tmp_path / "build", *arguments, {"sha256": "fixture"}, Tokenizer()
+    )
+    binding = manifest["bindings"][0]
+    assert (binding["selection_manifest"], binding["selection_sha256"]) == (
+        str(path),
+        file_hash(path),
+    )
+    assert manifest["selection_sha256"] == file_hash(default)
+
+
+def test_language_ids_follow_a_fixed_per_target_auto_rule(tmp_path):
+    recipe, selection, path = merged_fixture(tmp_path / "features", num_rows=64)
+    output = tmp_path / "build"
+    bind_merged(
+        recipe, output, selection, path, file_hash(path), {"sha256": "fixture"}, Tokenizer()
+    )
+    languages = json.loads((output / "manifest.json").read_text())["languages"]
+    mapping = {language: 2050 + i for i, language in enumerate(sorted(languages))}
+
+    def ids(fraction):
+        dataset = FeatureDataset(
+            output / "manifest.json",
+            (200, 201),
+            language_codec_ids=mapping,
+            language_auto_fraction=fraction,
+        )
+        assert (
+            dataset.token_lengths[0]
+            == dataset.indices[0][0]["tokens"] + dataset.indices[0][0]["frames"] + 11
+        )
+        rows = dataset.__getitems__(list(range(len(dataset))))
+        return [row["language_codec_id"] for row in rows], rows
+
+    explicit, rows = ids(0.0)
+    assert explicit == [mapping[row["language"]] for row in rows]
+    first, _ = ids(0.5)
+    again, _ = ids(0.5)
+    assert first == again and 0 < first.count(-1) < len(first)
+    assert collate(rows)["language_codec_ids"].tolist() == explicit
+    with pytest.raises(ValueError, match="No codec language mapping"):
+        FeatureDataset(output / "manifest.json", (200, 201), language_codec_ids={})

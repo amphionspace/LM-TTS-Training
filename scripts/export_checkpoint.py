@@ -65,6 +65,13 @@ def main():
             not in {"assembly_report.json", "export.json", "model.safetensors.index.json"}
         ):
             shutil.copy2(source, args.output / source.name)
+    language = metadata["signature"].get("model", {}).get("language_conditioning", "auto")
+    if language != "auto":
+        # Inference must pass the language (or Auto) the official way; record how it was trained.
+        config_path = args.output / "config.json"
+        config = json.loads(config_path.read_text())
+        config.setdefault("talker_config", {})["lm_tts_language_conditioning"] = language
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
     use_speaker = metadata["signature"].get("model", {}).get("use_speaker_embedding", True)
     if not use_speaker:
         config_path = args.output / "config.json"

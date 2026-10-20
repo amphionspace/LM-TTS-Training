@@ -47,7 +47,8 @@ class CodecTTSModel(nn.Module):
         speaker = int(getattr(self.config, "lm_tts_use_speaker_embedding", True))
         if getattr(self.config, "lm_tts_input_protocol", "legacy_prefix") == "legacy_prefix":
             return 1 + speaker
-        return len(self.config.lm_tts_role_ids) + 4 + speaker
+        language = getattr(self.config, "lm_tts_language_conditioning", "auto") != "auto"
+        return len(self.config.lm_tts_role_ids) + 4 + language + speaker
 
     def input_embeddings(self, batch):
         from .protocol import build_inputs

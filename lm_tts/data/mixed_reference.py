@@ -10,7 +10,7 @@ from .build import open_snapshot, read_complete
 from .reference import is_reference
 
 ROLES = {"all": ".", "train": "train", "validation": "validation"}
-SHARED = ("dataset_id", "release_id", "ready_rows", "sampling_sha256")
+SHARED = ("dataset_id", "release_id", "ready_rows", "sampling_sha256", "selection_sha256")
 IDENTITY = ("manifest_sha256", "profile_id", "lance_version")
 
 

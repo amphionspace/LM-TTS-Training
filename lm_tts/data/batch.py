@@ -28,6 +28,8 @@ def collate(rows):
             masks.append(mask)
         batch["codec_loss_mask"] = torch.cat(masks)
         batch["supervised_frame_lengths"] = torch.tensor([int(m.sum()) for m in masks])
+    if "language_codec_id" in rows[0]:
+        batch["language_codec_ids"] = torch.tensor([r["language_codec_id"] for r in rows])
     if "speaker_mels" in rows[0]:
         batch["speaker_lengths"] = torch.tensor([len(r["speaker_mels"]) for r in rows])
         batch["speaker_mels"] = torch.cat([r["speaker_mels"] for r in rows])

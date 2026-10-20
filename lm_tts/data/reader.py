@@ -1,5 +1,6 @@
 """Batched fixed-snapshot feature reads with mmap sampling metadata."""
 
+import hashlib
 import warnings
 from collections import defaultdict
 from numbers import Integral
@@ -39,6 +40,8 @@ class FeatureDataset:
         use_speaker_embedding=True,
         mask_reference=False,
         text_vocab_size=None,
+        language_codec_ids=None,
+        language_auto_fraction=0.0,
     ):
         self.path = Path(build_path).resolve()
         self.manifest = read_complete(self.path)
@@ -55,7 +58,20 @@ class FeatureDataset:
             raise ValueError("Text special tokens must be inside the model vocabulary")
         self.use_speaker_embedding = use_speaker_embedding
         self.mask_reference = mask_reference
+        # ISO language -> codec language ID (-1 = Auto); None keeps the Auto-only prefix.
+        self.language_codec_ids = language_codec_ids
+        self.language_auto_fraction = language_auto_fraction
+        self.prefix_tokens = 10 + (language_codec_ids is not None)
         self.bindings = self.manifest["bindings"]
+        if language_codec_ids is not None:
+            # Fail before training instead of skipping every row of an unmapped language.
+            built = set(self.manifest.get("languages", {}))
+            for binding in self.bindings:
+                built |= set(binding.get("languages", {}))
+            if not built or built - set(language_codec_ids):
+                raise ValueError(
+                    f"No codec language mapping for {sorted(built - set(language_codec_ids))}"
+                )
         if mask_reference and not all(is_reference(b) for b in self.bindings):
             raise ValueError("Reference masking requires reference features for every binding")
         if (
@@ -85,7 +101,7 @@ class FeatureDataset:
         self.tables = {}
         self.bad_rows_reported = 0
         self.frame_lengths = MetadataColumn(self, "frames")
-        self.token_lengths = MetadataColumn(self, "tokens", extra=10)
+        self.token_lengths = MetadataColumn(self, "tokens", extra=self.prefix_tokens)
 
     def __len__(self):
         return int(self.offsets[-1])
@@ -95,7 +111,7 @@ class FeatureDataset:
             for start in range(0, len(index), 1000000):
                 part = index[start : start + 1000000]
                 if np.any(part["frames"] > max_frames) or np.any(
-                    part["tokens"] + part["frames"] + 10 > max_tokens
+                    part["tokens"] + part["frames"] + self.prefix_tokens > max_tokens
                 ):
                     raise ValueError(
                         "Training build contains samples exceeding frame/token budgets"
@@ -116,6 +132,8 @@ class FeatureDataset:
             "use_speaker_embedding": self.use_speaker_embedding,
             "mask_reference": self.mask_reference,
             "text_vocab_size": self.text_vocab_size,
+            "language_codec_ids": self.language_codec_ids,
+            "language_auto_fraction": self.language_auto_fraction,
         }
 
     def __setstate__(self, state):
@@ -127,6 +145,8 @@ class FeatureDataset:
             use_speaker_embedding=state["use_speaker_embedding"],
             mask_reference=state["mask_reference"],
             text_vocab_size=state["text_vocab_size"],
+            language_codec_ids=state["language_codec_ids"],
+            language_auto_fraction=state["language_auto_fraction"],
         )
         if self.fingerprint != state["fingerprint"]:
             raise ValueError("Training build changed while starting workers")
@@ -350,4 +370,15 @@ class FeatureDataset:
             sample["speaker_embedding"] = vector
         if self.mask_reference:
             sample["reference_interval"] = validate_reference(c)
+        if self.language_codec_ids is not None:
+            sample["language_codec_id"] = self._language_codec_id(c["target_id"], c["language"])
         return sample
+
+    def _language_codec_id(self, target_id, language):
+        if language not in self.language_codec_ids:
+            raise ValueError(f"No codec language mapping for {language!r}")
+        # A fixed hash of the target decides Auto, so resume, workers and validation agree.
+        digest = hashlib.sha256(f"language-auto-v1:{target_id}".encode()).digest()
+        if int.from_bytes(digest[:8], "little") < self.language_auto_fraction * 2**64:
+            return -1
+        return self.language_codec_ids[language]

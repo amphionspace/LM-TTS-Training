@@ -89,8 +89,9 @@ def bind_merged(
 ):
     root, output = Path(recipe["root"]).resolve(), Path(output).resolve()
     bindings = recipe["bindings"]
-    if not bindings or any(set(b) != {"dataset_id", "merged_manifest"} for b in bindings):
-        raise ValueError("Merged bindings require dataset_id and merged_manifest only")
+    required, optional = {"dataset_id", "merged_manifest"}, {"selection_manifest"}
+    if not bindings or any(not required <= set(b) <= required | optional for b in bindings):
+        raise ValueError("Merged bindings take dataset_id, merged_manifest and selection_manifest")
     names = [b["dataset_id"] for b in bindings]
     if len(set(names)) != len(names):
         raise ValueError("Duplicate merged datasets would repeat training samples")
@@ -148,7 +149,12 @@ def bind_merged(
             root, configured["merged_manifest"], "merged"
         )
         dataset = configured["dataset_id"]
-        selected = next((s for s in selection["outputs"] if s["dataset_id"] == dataset), None)
+        # A binding may pin its own selection, e.g. a newer selection covering only this dataset.
+        own_path, own, own_hash = selection_path, selection, selection_hash
+        if "selection_manifest" in configured:
+            own_path = root / configured["selection_manifest"]
+            own, own_hash = read_complete(own_path), file_hash(own_path)
+        selected = next((s for s in own["outputs"] if s["dataset_id"] == dataset), None)
         # Reference merges drop targets without a legal reference crop; sources still cover
         # the full selection, so account for the published exclusions instead of dropping rows.
         source_rows = manifest["rows"]
@@ -166,7 +172,7 @@ def bind_merged(
             or manifest["target_kind"] != "sample"
             or selected is None
             or selected["selected_rows"] != source_rows
-            or manifest["selection"]["manifest_sha256"] != selection_hash
+            or manifest["selection"]["manifest_sha256"] != own_hash
             or manifest["coverage"]["ok"] != manifest["rows"]
             or manifest["rows"] < 1
         ):
@@ -194,7 +200,7 @@ def bind_merged(
                 or source_manifest["dataset_id"] != dataset
                 or source_manifest["release_id"] != manifest["release_id"]
                 or source_manifest["rows"] != source_rows
-                or source_manifest["selection"]["manifest_sha256"] != selection_hash
+                or source_manifest["selection"]["manifest_sha256"] != own_hash
             ):
                 raise ValueError("Merged source identity, profile or selection changed")
             sources[kind], source_manifests[kind] = source, source_manifest
@@ -213,6 +219,9 @@ def bind_merged(
             "merged_profile": manifest["profile"],
             **sources,
             "speaker_profile": source_manifests["speaker"]["profile"],
+            "selection_manifest": str(own_path),
+            "selection_sha256": own_hash,
+            "selection_selected_rows": selected["selected_rows"],
             "ready_rows": manifest["rows"],
             "selected_rows": manifest["rows"],
             "coverage": {"ready": manifest["rows"]},
@@ -328,6 +337,7 @@ def bind_merged(
             "ready": sum(b["ready_rows"] for b in bound),
             "dataset_unbound": sum(s["selected_rows"] for s in unbound),
         },
+        # Default-selection accounting; bindings that pin their own selection record it themselves.
         "selected_rows": sum(s["selected_rows"] for s in selection["outputs"]),
         "unbound_sources": unbound,
         "recipe_sha256": digest(recipe),

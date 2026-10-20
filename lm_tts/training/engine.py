@@ -19,6 +19,7 @@ from ..data.reader import FeatureDataset
 from ..data.sampler import TokenBatchSampler
 from ..evaluation.validation import validate
 from ..models.loading import load_model
+from ..models.protocol import language_codec_ids
 from ..objectives.tts import loss_normalizers, tts_loss
 from .checkpoint import initialize_from, load_checkpoint, save_checkpoint
 from .distributed import batch_health, initialize, move, shard
@@ -76,6 +77,15 @@ def run(config, resume=None, eval_only=False):
             raise ValueError("Training requires a completed assembly, not an inference export")
         specials = (full_config["tts_bos_token_id"], full_config["tts_eos_token_id"])
         use_speaker = config["model"].get("use_speaker_embedding", True)
+        language = config["model"].get("language_conditioning", "auto")
+        languages = {}
+        if language == "codec_language_id":
+            languages = dict(
+                language_codec_ids=language_codec_ids(
+                    full_config["talker_config"]["codec_language_id"]
+                ),
+                language_auto_fraction=settings.get("language_auto_fraction", 0.0),
+            )
         train_data = FeatureDataset(
             config["data"]["build"],
             specials,
@@ -83,6 +93,7 @@ def run(config, resume=None, eval_only=False):
             use_speaker_embedding=use_speaker,
             mask_reference=settings.get("mask_reference", False),
             text_vocab_size=full_config["talker_config"]["text_vocab_size"],
+            **languages,
         )
         if rank == 0:
             train_data.validate_budgets(settings["max_batch_frames"], settings["max_batch_tokens"])
@@ -95,6 +106,7 @@ def run(config, resume=None, eval_only=False):
                 use_speaker_embedding=use_speaker,
                 mask_reference=settings.get("mask_reference", False),
                 text_vocab_size=full_config["talker_config"]["text_vocab_size"],
+                **languages,
             )
             if config["data"].get("val_build")
             else None
@@ -114,6 +126,10 @@ def run(config, resume=None, eval_only=False):
             attn_implementation=backend,
             use_speaker_embedding=use_speaker,
         )
+        if language == "codec_language_id":
+            if full_config.get("model_type") != "qwen3_tts":
+                raise ValueError("Language conditioning is implemented for Qwen talkers only")
+            model.config.lm_tts_language_conditioning = language
         verify_conditioning(model, train_data)
         if val_data is not None:
             verify_tokenizer_compatibility(assembled, val_data.manifest["tokenizer"])

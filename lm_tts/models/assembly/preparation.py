@@ -51,6 +51,7 @@ def assembly_recipe(config):
         "seed": 42,
         "dtype": "float32",
         "codec_embedding_init": "random",
+        "extra_codec_languages": False,
     }
     overrides = {k: v for k, v in config.get("assembly", {}).items() if k != "family"}
     if set(overrides) - set(recipe):
@@ -64,7 +65,7 @@ def assembly_recipe(config):
         recipe["text_projection_init"] == "pretrained"
     ):
         raise ValueError("Pretrained text projection requires qwen-tts initialization")
-    for key in ("train_text_frontend", "train_speaker_encoder"):
+    for key in ("train_text_frontend", "train_speaker_encoder", "extra_codec_languages"):
         if type(recipe[key]) is not bool:
             raise ValueError(f"assembly.{key} must be boolean")
     if type(recipe["seed"]) is not int or recipe["seed"] < 0:
@@ -89,6 +90,8 @@ def verify_assembly(directory, recipe, sources):
         "freeze_text_frontend": not recipe["train_text_frontend"],
         "freeze_speaker_encoder": not recipe["train_speaker_encoder"],
     }
+    if bool(report.get("extra_codec_languages")) != recipe["extra_codec_languages"]:
+        raise ValueError(f"Assembled recipe mismatch for extra_codec_languages: {directory}")
     # Assemblies made before the option existed used random codec embeddings.
     if report.get("codec_embedding_init", "random") != recipe["codec_embedding_init"]:
         raise ValueError(f"Assembled recipe mismatch for codec_embedding_init: {directory}")

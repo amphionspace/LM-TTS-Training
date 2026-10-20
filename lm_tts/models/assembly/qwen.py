@@ -245,6 +245,24 @@ def initialize_model(
     return model
 
 
+# The official checkpoint has no Dutch or Polish codec language ID. Rows 2072-2147 are unused by
+# every official ID; take the first two after the official language block.
+EXTRA_CODEC_LANGUAGES = {"dutch": 2072, "polish": 2073}
+
+
+def add_codec_languages(config):
+    talker = config.talker_config
+    special = {v for k, v in vars(talker).items() if k.startswith("codec_") and isinstance(v, int)}
+    taken = set(talker.codec_language_id.values()) | special
+    if set(EXTRA_CODEC_LANGUAGES) & set(talker.codec_language_id) or taken & set(
+        EXTRA_CODEC_LANGUAGES.values()
+    ):
+        raise ValueError("Extra codec language IDs collide with the template's")
+    if max(EXTRA_CODEC_LANGUAGES.values()) >= talker.vocab_size:
+        raise ValueError("Extra codec language IDs exceed the codec vocabulary")
+    talker.codec_language_id = {**talker.codec_language_id, **EXTRA_CODEC_LANGUAGES}
+
+
 def codebook_codec_embeddings(model, codec_directory, seed):
     """Initialize the 16 codec embedding tables from the codec's own RVQ codebooks.
 

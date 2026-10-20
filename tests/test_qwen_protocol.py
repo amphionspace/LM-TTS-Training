@@ -29,6 +29,20 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
 
     @torch.no_grad()
     def test_embeddings_match_official_generate_and_icl(self):
+        self.check_official_prefix(["Auto"], None)
+
+    @torch.no_grad()
+    def test_language_ids_match_official_generate(self):
+        cfg = self.model.config
+        cfg.codec_think_id = 2154
+        cfg.codec_language_id = {"english": 2050, "dutch": 2072}
+        cfg.lm_tts_language_conditioning = "codec_language_id"
+        for language, codec_id in (("English", 2050), ("Dutch", 2072), ("Auto", -1)):
+            self.check_official_prefix([language], codec_id)
+        with self.assertRaisesRegex(ValueError, "language_codec_ids"):
+            self.model.input_embeddings(collate([self.row]))
+
+    def check_official_prefix(self, languages, codec_id):
         full = Qwen3TTSConfig(
             talker_config=self.model.config.to_dict(),
             speaker_encoder_config={
@@ -62,6 +76,8 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
                     "codes": self.row["codes"][:history_length],
                 }
                 batch = collate([row])
+                if codec_id is not None:
+                    batch["language_codec_ids"] = torch.tensor([codec_id])
                 speaker = self.model.speaker_encoder(batch["speaker_mels"].unsqueeze(0))[0]
                 prompt = {
                     "ref_spk_embedding": [speaker],
@@ -81,7 +97,7 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
                             input_ids=ids,
                             ref_ids=refs,
                             voice_clone_prompt=prompt,
-                            languages=["Auto"],
+                            languages=languages,
                             non_streaming_mode=True,
                         )
                 inputs, _ = self.model.input_embeddings(batch)

@@ -21,6 +21,8 @@ from huggingface_hub import snapshot_download
 from lm_tts.artifacts import file_hash
 from lm_tts.models.assembly.common import copy_codec
 from lm_tts.models.assembly.qwen import (
+    EXTRA_CODEC_LANGUAGES,
+    add_codec_languages,
     audit_sources,
     codebook_codec_embeddings,
     initialize_model,
@@ -95,6 +97,11 @@ def main():
         help="Initialize the 16 codec embedding tables randomly or from the codec RVQ codebooks",
     )
     p.add_argument(
+        "--extra-codec-languages",
+        action="store_true",
+        help="Add Dutch and Polish codec language IDs to the config (unused embedding rows)",
+    )
+    p.add_argument(
         "--audit-only",
         action="store_true",
         help="Write a JSON report; do not download weights or build a model",
@@ -133,6 +140,9 @@ def main():
     )
     if args.codec_embedding_init != "random":
         report["codec_embedding_init"] = args.codec_embedding_init
+    if args.extra_codec_languages:
+        add_codec_languages(config)
+        report["extra_codec_languages"] = EXTRA_CODEC_LANGUAGES
     report["sources"] = {
         name: {"requested": getattr(args, name), "revision": getattr(args, name + "_revision")}
         for name in DEFAULTS
