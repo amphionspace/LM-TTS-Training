@@ -1396,3 +1396,70 @@ Talker 的绝对权重余弦较高，部分原因是二者共享预训练主干�
 这是结合代码与权重轨迹的解释，尚未通过固定 Talker、固定 mask 或参数对齐等消融分离各因素。低权重余弦不等于功能完全不同，两份单独模型都能正常评测；但不能保证把各自配合好的 Talker、Code Predictor 与 embedding/head 同时平均后还能配合。这里不把差异简单认定为正常，也不根据一个余弦值断言训练存在 bug。
 
 原始记录：[predictor_divergence_check.json](../../../UltraEval-Audio/res/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/control/predictor_divergence_check.json)。
+
+
+## 33. Codec embedding 与 codec 码本：分析与码本初始化实验
+
+**2026-10-19** 核对 Qwen3-TTS 的 LM 输入 codec embedding 与 codec 自身 RVQ 码本的关系，并据此启动一轮只改初始化的对照训练。分析脚本和结果在 [evidence/codec-embedding-codebook-20261019/](evidence/codec-embedding-codebook-20261019/)，全部只读权重或 checkpoint，没有加入训练代码。
+
+### 官方结构：编号空间相同，向量是 LM 自己的表
+
+- **codec 侧**（Qwen3-TTS-Tokenizer-12Hz）：16 个码本，每个 2048 个 code。第 1 个码本是 `rvq_first`，其余 15 个是 `rvq_rest`。码本向量为 256 维，解码时取 `embedding_sum / max(cluster_usage, 1e-5)`；量化前后各有一个 512↔256 的 `input_proj` / `output_proj`，这一层属于 codec 内部，LM 不接触。
+- **LM 侧**（Qwen3-TTS-12Hz-0.6B-Base）：两组普通 `nn.Embedding`，没有引用 codec 码本。
+  - 第 1 个码本：`talker.model.codec_embedding` [3072, 1024]。其中 0–2047 是 code，2048–3071 是控制 token 的位置，有 ID 的包括 pad 2148、bos 2149、eos 2150、think / nothink 2154–2157、10 种语言 ID 2050–2071，Base 模型的 `spk_id` 为空，其余行未使用。本仓库的 `qwen3_non_streaming` 协议实际只用到 pad、bos、eos 和三个 think 控制 token，语言用 Auto。
+  - 后 15 个码本：`talker.code_predictor.model.codec_embedding.0–14`，各 [2048, 1024]。它们既是 Code Predictor 的输入，也和第 1 个码本的 embedding 相加，作为 Talker 每一帧的输入。
+- LM 预测的 code 编号直接交给 codec decoder，所以两边编号一致，但向量不是同一份。
+
+### 线性关系：官方模型与我们训练的模型
+
+对每个码本，用 codec 码本 C_g（2048 × 256，加 bias）最小二乘拟合 LM 的 embedding E_g（2048 × 1024，第 1 个码本只取 0–2047 行），记 R²。打乱行对应作为基线时，R² 约为 0.12–0.13，这是 2048 行配 257 个参数的过拟合水平。
+
+| 模型 | 码本 1 | 2 | 3 | 4 | 6 | 8 | 10 | 12 | 14 | 16 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 官方 0.6B-Base | 0.770 | 0.914 | 0.932 | 0.959 | 0.961 | 0.960 | 0.965 | 0.970 | 0.974 | 0.966 |
+| refmask 10,000 | 0.745 | 0.943 | 0.852 | 0.812 | 0.734 | 0.679 | 0.637 | 0.591 | 0.535 | 0.424 |
+| refmask 34,257 | 0.813 | 0.972 | 0.945 | 0.928 | 0.894 | 0.869 | 0.854 | 0.838 | 0.811 | 0.722 |
+| prefixref 30,000 | 0.802 | 0.971 | 0.942 | 0.923 | 0.884 | 0.858 | 0.840 | 0.820 | 0.788 | 0.690 |
+
+我们的组装把这 16 张表全部随机初始化，refmask 在 step 100 时 16 个码本的 R² 都是 0.12–0.13，即随机水平。训练过程中它们自己向码本结构对齐：第 1 个码本最终比官方还高，后面的码本越靠后越低，并且到 34,257 步仍在上升。refmask 在 2,500 / 5,000 步时，residual 码本的 R² 分别为 0.20–0.83 和 0.28–0.90。完整数值见 `export_r2.jsonl` 和 `refmask_checkpoint_r2.jsonl`。
+
+同一轮讨论还做了另一项只读测量：官方 talker 的各层与 Qwen3-0.6B-Base 同层之间，attention / MLP 权重余弦约为 0；允许神经元重排后的最佳匹配也和随机对照相当（约 0.115 对 0.128）。说明官方 talker 不是从这份 Base 微调来的，两者的隐藏空间坐标系不同。因此逐个拷贝官方的 codec embedding、输出头或 Code Predictor 到我们的主干上，预计接近随机初始化，所以没有采用。这项测量的脚本没有保存。
+
+### 码本初始化实验
+
+组装选项 `assembly.codec_embedding_init: codebook`（`lm_tts/models/assembly/qwen.py` 的 `codebook_codec_embeddings`）：
+
+- 16 张表的 code 行，各自等于"去均值的 RVQ 码本 × 按 seed 生成的随机正交 256 → 1024 映射"，整体缩放到 initializer std 0.02。
+- 第 1 张表后 1024 个控制 token 行保持原随机值，因为 codec 里没有对应向量。
+- 之后这 16 张表和原来一样是普通的可训练参数，投影矩阵不保留，导出和推理格式不变。没有该字段的旧组装视为 `random`。
+
+组装产物 `assets/assembled/qwen3-tts-frozen-conditioning-codebook-codec` 已逐张量核对：478 个张量中只有这 16 张表与 refmask 使用的 `qwen3-tts-frozen-conditioning` 不同；控制 token 行逐元素一致；16 张表初始 R² 为 1.000、std 为 0.02000、FP32（`compare_assembly.py`）。曾先试过只初始化 15 个 residual 码本的版本，在启动训练前停止，相关产物已删除。
+
+训练配置为 `configs/supervised-tts-20261019-emilia2-refmask-cbinit-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd.yaml`，ACP job `pt-pxd0aqko`。除组装模型和 run_name 外，与第 13 节 Emilia2 refmask 完全相同：同一个数据 build 和 holdout、seed 42、2 节点 16 卡、acc 1、3 epoch WSD、峰值 LR 3e-4 / 1e-4。step 10 时 global_samples（9,826）、codec_tokens（5,656,050）、显存峰值和每步耗时与 refmask 一致，说明两轮每一步的样本完全相同，差异只来自初始化。
+
+### 训练过程中的结果（截至 2026-10-19 18:00 PDT，step 5,630）
+
+R² 从 checkpoint 直接读取（`checkpoint_r2.py`，结果在 `cbinit_checkpoint_r2.jsonl`）。LR 在约 step 340 到达峰值，此后码本结构基本保持：
+
+| 步数 | 码本 1 | residual 码本 2–16 |
+| --- | ---: | --- |
+| 100 | 1.000 | 全部 1.000 |
+| 2,500 | 0.88 | 0.95–0.98 |
+| 5,000 | 0.88 | 0.94–0.98 |
+
+验证集对比，两轮使用同一个 76,684 条 holdout（`validation_comparison.json`）：
+
+| 步数 | loss（cbinit / refmask） | first CE | residual CE | residual 差 |
+| --- | --- | --- | --- | ---: |
+| 100 | 9.246 / 9.430 | 7.056 / 7.187 | 7.300 / 7.475 | −0.175 |
+| 2,500 | 3.503 / 3.555 | 1.657 / 1.667 | 6.153 / 6.291 | −0.139 |
+| 5,000 | 3.323 / 3.353 | 1.543 / 1.553 | 5.933 / 6.001 | −0.068 |
+
+step 5,000 的逐码本 residual CE：码本 2 为 3.97 / 3.99，码本 9 为 6.03 / 6.08，码本 16 为 6.55 / 6.69。越靠后的码本，领先越大，正好是随机初始化对齐最差的那些码本。
+
+目前的结论：
+
+- 码本初始化让早期收敛更快，所有码本都受益，靠后的码本最明显。
+- 自由训练没有把结构冲掉，因此不需要在训练全程保留"码本 × 投影"的分解约束。
+- 验证 loss 的优势在缩小（residual 差从 −0.175 缩到 −0.068），最终能保留多少、能否体现在 WER/SIM 上还没有结论。
+- 后续每 2,500 步的验证照常对比；到 step 30,000 时用与第 32 节相同的解码设置做 SeedTTS 评测，与 refmask 30,000 对照。
