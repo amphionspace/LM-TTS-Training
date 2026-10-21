@@ -1507,3 +1507,108 @@ R²（与码本拟合）：
 - **码本初始化相当于提前了若干步。** cbinit 在 5,000 步时码本 16 的 CE 为 6.55，refmask 约在 7,500 步达到 6.51；码本 2 两者只差 0.02，因为 refmask 在这个码本上本来就对齐得较好。
 
 结论：现有证据不支持在训练后期提高 `residual_weight`。靠后码本落后，主要是随机初始化的 embedding 对齐慢、到训练结束仍未学完，属于步数问题。码本初始化（本节实验）和更长的训练都直接针对这一点，而且不改变 loss 的平衡。另外，Adam 按参数归一化梯度尺度，Code Predictor 与 residual 输出头的更新量对该系数基本不敏感；改变系数主要影响共享的 Talker 主干和 residual embedding，会把主干容量从对 WER 影响最大的第 1 个码本移向细节声学（推测）。只有当同一验证集上逐码本对比官方模型、发现差距集中在靠后码本，并且把这些码本替换为真实 code 能显著提高 SIM 时，才值得单独做一组固定的更大权重对照，而不是在训练后期逐步加大。
+
+
+## 34. Emilia v4 + Emilia2：码本初始化 + 语言 ID + 全表均匀 sampler
+
+**2026-10-20** 启动的新一轮训练，相对第 13 节 refmask 同时改了四处：数据加入 emilia、码本初始化、显式语言 ID、全表均匀 sampler。四项一起变，下面的结果只说明这套组合整体的表现，不能拆出单项贡献。
+
+- 训练配置：`configs/supervised-tts-20261020-emilia-v4-emilia2-refmask-cbinit-langid-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd.yaml`
+- ACP job：`pt-jnjlqzyb`，2 节点 16 卡，09:00 UTC 开始
+- 不变的部分：refmask（参考片段在 16 个码本上都不计 loss，保留 EOS）、token 级 loss、`residual_weight` 0.3、acc 1、bf16、seed 42、3 epoch WSD（warmup 1%、衰减 10%、min LR 0.1）、峰值 LR 3e-4 / 主干 1e-4
+
+### 数据：emilia（selection-v4）+ emilia2（selection-v2）
+
+数据 build 为 `supervised-tts-20261019-emilia-v4-emilia2-reference`（`configs/data-emilia-emilia2-reference.yaml`）。两个数据集各自绑定 selection，在同一个 build 里合并：
+
+| 数据集 | selection | 语言 | 条数（训练 + holdout） |
+| --- | --- | --- | ---: |
+| emilia | v4：v2 规则 + MOSS 单说话人 | de / en / fr / ja / ko / zh | 33,992,131 |
+| emilia2 | v2 | de / ja / en / ko / zh / es / pt / fr / nl / pl / it | 76,684,408 |
+
+每个数据集按 0.1% 均匀抽取 holdout（`fixed_snapshot_uniform_rows_per_dataset_v1`，seed 42）：训练 110,565,863 条，验证 110,676 条。这个验证集包含 emilia，与第 13、33 节只含 emilia2 的 76,684 条 holdout 不同，所以**验证 loss 不能和之前的实验直接比较**。
+
+### 初始化：codec embedding 用 codec 码本初始化
+
+组装产物为 `assets/assembled/qwen3-tts-frozen-conditioning-codebook-codec-lang`（`assembly.codec_embedding_init: codebook`、`assembly.extra_codec_languages: true`），做法和第 33 节相同：
+
+- **16 张 codec embedding 表的 code 行（0–2047）**：取 codec 的 RVQ 码本（`embedding_sum / max(cluster_usage, 1e-5)`，256 维），减去均值，乘一个按 seed 生成的随机正交 256 → 1024 映射，再整体缩放到 initializer std 0.02。初始化时与码本的 R² 为 1.000。
+- **第 1 张表后 1024 个控制 token 行**（pad / bos / eos / think / 语言 ID 等）保持随机初始化，因为 codec 里没有对应的向量。
+- 组装的随机 seed 与 `qwen3-tts-frozen-conditioning` 相同。除了这 16 张表的 code 行，唯一的区别是 config 里的 `codec_language_id` 多了 dutch 2072、polish 2073。
+- 初始化之后，这 16 张表就是普通的可训练参数，投影矩阵不保留，导出和推理格式不变。
+- 冻结范围与第 13 节一致：text embedding、text projector、speaker encoder 不训练。
+
+### 语言条件：codec 语言 ID，50% 保留 Auto
+
+`model.language_conditioning: codec_language_id`：每条样本的 prefill 按官方显式语言格式写成 think、think_bos、语言 ID、think_eos，与官方 `generate` 显式指定语言时的输入一致。
+
+- 官方 checkpoint 没有荷兰语和波兰语的语言 ID，因此把 nl 放在 2072、pl 放在 2073。这两行原本未使用，训练前是随机值。
+- `train.language_auto_fraction: 0.5`：按 `target_id` 的固定哈希，一半目标仍用 Auto 的 prefill，让 Auto 推理继续可用。同一条样本在每个 epoch 中用的是同一种 prefill。
+- 开启该选项后 token 预算会多 1，没开的旧实验 signature 和 batch 不受影响。
+
+### Sampler：全表均匀打乱
+
+旧的 window sampler 按连续 65,536 行为窗口打乱，每个窗口内再按长度排序。由于合并后的表按数据集顺序排列，batch 几乎都来自单一数据集（前 930 步里有 907 步），语言也聚集在一起。新的 `feistel_uniform_token_budget_v3`：
+
+- 每个 epoch 用带 key 的 Feistel 置换对全表行号重新排列。它是无状态的双射，不需要存储置换表。
+- 禁止长度分桶（`length_bucket_size: 0`），token 预算打包方式不变。
+- 在这个 build 上，每步的「数据集 × 语言」分布相对全局分布的 total-variation 距离从 0.394 降到 0.015（达到 i.i.d. 水平），每步平均长度的 CV 从 0.683 降到 0.012（commit `3a9deae`）。
+
+### 训练过程（截至 step 8,480，epoch 0.451）
+
+每 2,500 步的训练指标平均：
+
+| 步数 | first CE | residual CE | 梯度范数 | 每步耗时 | 数据等待占比 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0–2,500 | 2.363 | 6.627 | 1.02 | 7.80 s | 1.5% |
+| 2,500–5,000 | 1.468 | 5.977 | 0.33 | 7.77 s | 1.4% |
+| 5,000–7,500 | 1.386 | 5.803 | 0.25 | 7.76 s | 1.4% |
+
+- **曲线平滑**：每 500 步区间内 first CE 的标准差，2,000–2,500 步为 0.015，7,000–7,500 步为 0.007，没有出现随数据集切换来回跳动的情况。
+- **全表随机读没有拖慢训练**：数据等待一直在 1.5% 左右。
+- 没有跳过样本。
+- 一个 epoch 约 18,800 步。按 warmup 反推（step 10 时 `lr_new` 为 5.31e-6，warmup 约 565 步），总计约 **56,500 步**，约从 50,800 步开始衰减。按每步 7.8 s 算，全程约 5 天（推测）。
+
+验证集（110,676 条 holdout）：
+
+| 步数 | loss | first CE | residual CE |
+| ---: | ---: | ---: | ---: |
+| 100 | 8.638 | 6.427 | 7.370 |
+| 2,500 | 3.380 | 1.541 | 6.130 |
+| 5,000 | 3.176 | 1.415 | 5.871 |
+| 7,500 | 3.088 | 1.362 | 5.751 |
+
+R²（与 codec 码本拟合，方法同第 33 节，结果在 `evidence/codec-embedding-codebook-20261019/langid_checkpoint_r2.jsonl`）：
+
+| 步数 | 码本 1 | residual 码本 2–16 最低 / 平均 / 最高 |
+| ---: | ---: | --- |
+| 2,500 | 0.903 | 0.959 / 0.964 / 0.982 |
+| 5,000 | 0.889 | 0.937 / 0.949 / 0.981 |
+| 7,500 | 0.883 | 0.924 / 0.943 / 0.981 |
+
+码本结构保持得很好，只在缓慢下降，越靠后的码本降得越多（码本 16 从 0.96 降到 0.92）。下降在变慢：residual 平均值在 2,500 → 5,000 降了 0.015，5,000 → 7,500 只降了 0.006。
+
+### SeedTTS 评测
+
+由自动评测按 checkpoint 运行，用默认双采样，batch size 1，32 个逻辑分片，最长 30 s。下表是 Auto 语言组，每组都完整生成并评分 3,108 条，审计通过。
+
+| 步数 | 英文 WER/% ↓ | 英文 SIM/% ↑ | 中文 CER/% ↓ | 中文 SIM/% ↑ |
+| ---: | ---: | ---: | ---: | ---: |
+| 2,500 | 9.822 | 36.792 | 15.116* | 53.067 |
+| 5,000 | 6.718 | 46.745 | 8.908 | 61.502 |
+| 7,500 | 5.182 | 52.400 | 5.489 | 65.096 |
+
+\* 2,500 步中文有 2 条生成音频达到 30.16 s，超过上限被排除，评分 2,018 / 2,020 条。
+
+结果：[2,500](../../../UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-step2500-seedtts-default-sampling-auto-gpu/full/results_table.md) / [5,000](../../../UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-step5000-seedtts-default-sampling-auto-gpu/full/results_table.md) / [7,500](../../../UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-step7500-seedtts-default-sampling-auto-gpu/full/results_table.md)。
+
+7,500 步的评测曾卡在打分阶段：别人的任务占用了 GPU 2、4、7 的显存，自动评测的打分无法启动。最后用相同的设置，在 GPU 5、6、7 上手动完成了打分。推理结果是原来生成的，身份校验和审计都通过了。
+
+**显式语言组**（`--language explicit`）：2,500 / 5,000 两步失败了。原因是审计脚本没有收到 `--language` 参数，一直按 Auto 检查，已在 UltraEval-Audio `00e1083` 修复。这两步不再补跑，只评 7,500 步。解码设置与 Auto 组相同，完整生成并评分 3,108 条，没有排除样本，审计通过：
+
+| step 7,500 | 英文 WER/% ↓ | 英文 SIM/% ↑ | 中文 CER/% ↓ | 中文 SIM/% ↑ |
+| --- | ---: | ---: | ---: | ---: |
+| Auto | 5.182 | 52.400 | 5.489 | 65.096 |
+| 显式语言 | 5.498 | 52.559 | 5.025 | 65.297 |
+
+显式语言时，中文 CER 低 0.464 个百分点，英文 WER 反而高 0.316 个百分点，SIM 两种语言都只高约 0.2。两组各只采样一次，没有重复采样来估计波动，所以这些差值不能用来判断显式语言整体更好还是更差。能确认的是：一半样本用 Auto 训练后，Auto 推理的结果和显式语言接近，没有明显变差。[结果](../../../UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-step7500-seedtts-default-sampling-explicit-language-auto-gpu/full/results_table.md)
