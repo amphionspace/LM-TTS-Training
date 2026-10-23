@@ -128,3 +128,46 @@ def test_bad_anneal_settings_fail_before_execution(tmp_path, change, message):
     path.write_text(yaml.safe_dump(config))
     with pytest.raises(ValueError, match=message):
         load_config(path)
+
+
+LANGID = "configs/supervised-tts-20261020-emilia-v4-emilia2-refmask-cbinit-langid-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd.yaml"
+
+
+def streaming_config(tmp_path, change):
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    config = yaml.safe_load((root / LANGID).read_text())
+    config["extends"] = str(root / "configs/base.yaml")
+    config["train"].update(change)
+    path = tmp_path / "streaming.yaml"
+    path.write_text(yaml.safe_dump(config))
+    return load_config(path)
+
+
+def test_streaming_defaults_keep_text_lead_and_train_on_late_text(tmp_path):
+    train = streaming_config(tmp_path, {"streaming_fraction": 0.5})["train"]
+    assert (
+        train["streaming_max_text_ratio"],
+        train["streaming_pause_probability"],
+        train["streaming_max_pause_frames"],
+    ) == (0.67, 0.3, 12)
+    assert "streaming_fraction" not in load_config(Path(__file__).parents[1] / LANGID)["train"]
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        ({"streaming_fraction": 0}, "streaming_fraction"),
+        ({"streaming_fraction": 1.5}, "streaming_fraction"),
+        ({"streaming_max_text_ratio": 0.5}, "require train.streaming_fraction"),
+        ({"streaming_fraction": 0.5, "streaming_max_text_ratio": 1.2}, "max_text_ratio"),
+        (
+            {"streaming_fraction": 0.5, "streaming_max_pause_frames": 0},
+            "max_pause_frames",
+        ),
+    ],
+)
+def test_bad_streaming_settings_fail_before_execution(tmp_path, change, message):
+    with pytest.raises(ValueError, match=message):
+        streaming_config(tmp_path, change)

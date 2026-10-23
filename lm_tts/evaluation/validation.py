@@ -19,7 +19,10 @@ def validate(
     residual_weight=0.3,
     *,
     loader_settings=None,
+    streaming=None,
 ):
+    """streaming=None keeps each sample's layout; False/True force non-streaming or streaming
+    (streaming only where the text leads speech)."""
     model.eval()
     totals = torch.zeros(25, dtype=torch.float64, device=device)
     settings = loader_settings or {}
@@ -42,6 +45,8 @@ def validate(
     )
     for (_, real), batch in zip(plan, loader, strict=True):
         batch = move(batch, device)
+        if streaming is not None and "streaming" in batch:
+            batch["streaming"] = batch["streaming_eligible"] & streaming
         if real:
             totals[23] += batch["skipped_samples"]
         if not batch_health(batch, device)[0]:

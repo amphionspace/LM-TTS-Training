@@ -8,6 +8,7 @@ from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
 
 from lm_tts.data.batch import collate
+from lm_tts.models.protocol import frame_embeddings
 
 
 class QwenProtocolTests(test_protocol.ProtocolTests):
@@ -42,7 +43,64 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
         with self.assertRaisesRegex(ValueError, "language_codec_ids"):
             self.model.input_embeddings(collate([self.row]))
 
-    def check_official_prefix(self, languages, codec_id):
+    @torch.no_grad()
+    def test_streaming_matches_official_generate_and_icl(self):
+        self.model.config.lm_tts_input_layout = "mixed"
+        self.check_official_prefix(["Auto"], None, streaming=True)
+
+    @torch.no_grad()
+    def test_streaming_language_ids_match_official_generate(self):
+        cfg = self.model.config
+        cfg.codec_think_id = 2154
+        cfg.codec_language_id = {"english": 2050}
+        cfg.lm_tts_language_conditioning = "codec_language_id"
+        cfg.lm_tts_input_layout = "mixed"
+        self.check_official_prefix(["English"], 2050, streaming=True)
+
+    @torch.no_grad()
+    def test_mixed_batch_keeps_non_streaming_rows_and_rejects_lagging_text(self):
+        second = {**self.row, "text_ids": [18, 5, 19], "codes": self.row["codes"][:2]}
+        plain = self.model.input_embeddings(collate([self.row, second]))[0]
+        self.model.config.lm_tts_input_layout = "mixed"
+        with self.assertRaisesRegex(ValueError, "streaming flags"):
+            self.model.input_embeddings(collate([self.row]))
+        batch = collate([self.row, second])
+        batch["streaming"] = torch.tensor([False, True])
+        inputs, audio = self.model.input_embeddings(batch)
+        # The non-streaming row must be bit-identical to the plain layout of the same batch.
+        end = plain["cu_seq_lens_q"][1].item()
+        self.assertEqual(inputs["cu_seq_lens_q"][1].item(), end)
+        torch.testing.assert_close(
+            inputs["inputs_embeds"][0, :end], plain["inputs_embeds"][0, :end], atol=0, rtol=0
+        )
+        # Streaming keeps only bos of the 3 text tokens in the prefix.
+        lengths = inputs["cu_seq_lens_q"].diff().tolist()
+        self.assertEqual(lengths[1], plain["cu_seq_lens_q"].diff()[1].item() - (3 - 1))
+        self.assertEqual(len(audio), (3 + 1) + (2 + 1))
+        lagging = collate([{**self.row, "codes": self.row["codes"][:2]}])
+        lagging["streaming"] = torch.tensor([True])
+        with self.assertRaisesRegex(ValueError, "ends by the EOS"):
+            self.model.input_embeddings(lagging)
+
+    @torch.no_grad()
+    def test_streaming_pause_inserts_tts_pad_between_streamed_tokens(self):
+        self.model.config.lm_tts_input_layout = "mixed"
+        talker, cfg = self.model.talker, self.model.config
+        row = {**self.row, "text_ids": [18, 5, 19]}
+        batch = collate([row])
+        batch["streaming"] = torch.tensor([True])
+        batch["streaming_pause"] = torch.tensor([[1, 2]])
+        inputs, audio = self.model.input_embeddings(batch)
+        text = talker.text_projection(talker.model.text_embedding(torch.tensor([5, 20, 20, 19])))
+        cbos = talker.model.codec_embedding.weight[cfg.codec_bos_id : cfg.codec_bos_id + 1]
+        frames = torch.cat([cbos, frame_embeddings(talker, 16, row["codes"])])
+        hidden = inputs["inputs_embeds"].flatten(0, 1)
+        torch.testing.assert_close(hidden[audio], frames + text, atol=2e-7, rtol=2e-6)
+        batch["streaming_pause"] = torch.tensor([[1, 3]])
+        with self.assertRaisesRegex(ValueError, "ends by the EOS"):
+            self.model.input_embeddings(batch)
+
+    def check_official_prefix(self, languages, codec_id, streaming=False):
         full = Qwen3TTSConfig(
             talker_config=self.model.config.to_dict(),
             speaker_encoder_config={
@@ -73,17 +131,20 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
                 row = {
                     **self.row,
                     "text_ids": [18, *text, 19],
-                    "codes": self.row["codes"][:history_length],
+                    # Streaming compares the whole teacher-forced row with prefill + decode steps.
+                    "codes": self.row["codes"] if streaming else self.row["codes"][:history_length],
                 }
                 batch = collate([row])
                 if codec_id is not None:
                     batch["language_codec_ids"] = torch.tensor([codec_id])
+                if streaming:
+                    batch["streaming"] = torch.tensor([True])
                 speaker = self.model.speaker_encoder(batch["speaker_mels"].unsqueeze(0))[0]
                 prompt = {
                     "ref_spk_embedding": [speaker],
                     "x_vector_only_mode": [history_length == 0],
                     "icl_mode": [history_length > 0],
-                    "ref_code": [row["codes"]] if history_length else None,
+                    "ref_code": [row["codes"][:history_length]] if history_length else None,
                 }
                 if history_length:
                     ids = [torch.tensor([[21, 22, 23, *text[1:], 24, 25, 21, 22, 23]])]
@@ -98,14 +159,24 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
                             ref_ids=refs,
                             voice_clone_prompt=prompt,
                             languages=languages,
-                            non_streaming_mode=True,
+                            non_streaming_mode=not streaming,
                         )
                 inputs, _ = self.model.input_embeddings(batch)
+                expected = captured["inputs_embeds"]
+                if streaming:
+                    # Each decode step adds the next trailing text hidden (then tts_pad) to the
+                    # embedding of the frame fed back, as the official talker forward does.
+                    trailing, pad = captured["trailing_text_hidden"], captured["tts_pad_embed"]
+                    steps = [
+                        frame_embeddings(self.model.talker, 16, row["codes"][g : g + 1])
+                        + (trailing[0, step : step + 1] if step < trailing.shape[1] else pad[0])
+                        for step, g in enumerate(range(history_length, len(row["codes"])))
+                    ]
+                    expected = torch.cat([expected[0], *steps]).unsqueeze(0)
+                torch.testing.assert_close(inputs["inputs_embeds"], expected, atol=2e-7, rtol=2e-6)
                 torch.testing.assert_close(
-                    inputs["inputs_embeds"], captured["inputs_embeds"], atol=2e-7, rtol=2e-6
-                )
-                torch.testing.assert_close(
-                    inputs["position_ids"], captured["attention_mask"].cumsum(-1) - 1
+                    inputs["position_ids"][0],
+                    torch.arange(expected.shape[1]),
                 )
 
 

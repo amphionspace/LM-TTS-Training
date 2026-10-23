@@ -1,4 +1,4 @@
-"""Qwen non-streaming condition layout and teacher-forcing positions."""
+"""Qwen condition layouts (non-streaming, and the official input-streaming overlay) and teacher-forcing positions."""
 
 import torch
 from torch import nn
@@ -63,6 +63,18 @@ def build_inputs(talker, speaker_encoder, config, batch):
                 text.dtype
             )
     protocol = getattr(config, "lm_tts_input_protocol", "legacy_prefix")
+    mixed = getattr(config, "lm_tts_input_layout", "non_streaming") == "mixed"
+    if mixed != ("streaming" in batch):
+        raise ValueError(
+            "A mixed-layout model needs per-sample streaming flags, and only it accepts them"
+        )
+    streaming = batch["streaming"].tolist() if mixed else [False] * len(batch["frame_lengths"])
+    if mixed and protocol != "qwen3_non_streaming":
+        raise ValueError(
+            "Streaming follows the Qwen3 prefill; use the qwen3_non_streaming protocol"
+        )
+    # Streaming rows overlay raw text on [cbos, C0, ...]; keep the embeddings before any padding.
+    raw_text, raw_frames, raw_bos = text, frames, bos
     if protocol == "qwen3_non_streaming":
         text_pad = talker.text_projection(
             talker.model.text_embedding(batch["text_ids"].new_tensor([config.lm_tts_pad_token_id]))
@@ -101,15 +113,34 @@ def build_inputs(talker, speaker_encoder, config, batch):
     pieces, positions, audio_positions, offsets = [], [], [], [0]
     text_rows = text.split(batch["text_lengths"].tolist())
     frame_rows = frames.split(batch["frame_lengths"].tolist())
+    raw_text_rows = raw_text.split(batch["text_lengths"].tolist())
+    raw_frame_rows = raw_frames.split(batch["frame_lengths"].tolist())
     for index, (text_row, frame_row) in enumerate(zip(text_rows, frame_rows)):
+        # Official streaming: [bos] stays on the last prefix position (codec pad), then
+        # text_row[1:] (text, eos) is added position by position to [cbos, C0, ...], then tts_pad.
+        prefix_text = text_row[:1] if streaming[index] else text_row
         prefix = (
-            [role, controls[index], text_row] if protocol == "qwen3_non_streaming" else [text_row]
+            [role, controls[index], prefix_text]
+            if protocol == "qwen3_non_streaming"
+            else [prefix_text]
         )
         if speaker is not None:
             prefix.insert(2 if protocol == "qwen3_non_streaming" else 1, speaker[index : index + 1])
         prefix_length = sum(len(part) for part in prefix)
         length = prefix_length + 1 + len(frame_row)
-        pieces.extend([*prefix, bos, frame_row])
+        if streaming[index]:
+            overlay = raw_text_rows[index][1:]
+            if "streaming_pause" in batch:
+                # Late text: a run of tts_pad between streamed tokens, as an upstream stall gives.
+                at, pause = batch["streaming_pause"][index].tolist()
+                if pause:
+                    overlay = torch.cat([overlay[:at], text_pad.expand(pause, -1), overlay[at:]])
+            if len(overlay) > len(frame_row) + 1:
+                raise ValueError("Streaming needs text that ends by the EOS position")
+            overlay = torch.cat([overlay, text_pad.expand(len(frame_row) + 1 - len(overlay), -1)])
+            pieces.extend([*prefix, torch.cat([raw_bos, raw_frame_rows[index]]) + overlay])
+        else:
+            pieces.extend([*prefix, bos, frame_row])
         positions.append(torch.arange(length, device=text.device))
         audio_positions.append(
             torch.arange(offsets[-1] + prefix_length, offsets[-1] + length, device=text.device)

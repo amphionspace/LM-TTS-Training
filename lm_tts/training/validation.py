@@ -37,15 +37,24 @@ def run_validation(model, dataset, config, device, output, step, writer):
             settings = config["train"]
             if rank == 0:
                 print(json.dumps({"validation_started": step, "samples": len(dataset)}), flush=True)
-            metrics = validate(
+            arguments = (
                 model,
                 dataset,
                 config["eval"]["batch_size"],
                 device,
                 settings["loss_reduction"],
                 settings["residual_weight"],
-                loader_settings=settings,
             )
+            mixed = bool(settings.get("streaming_fraction"))
+            # Headline metrics stay non-streaming so they compare with runs trained without it.
+            metrics = validate(
+                *arguments, loader_settings=settings, streaming=False if mixed else None
+            )
+            if mixed:
+                forced = validate(*arguments, loader_settings=settings, streaming=True)
+                metrics.update(
+                    {f"streaming_{k}": forced[k] for k in ("loss", "first_ce", "residual_ce")}
+                )
         if rank == 0:
             print(json.dumps({"step": step, "val": metrics}), flush=True)
             write_validation(writer, metrics, step)

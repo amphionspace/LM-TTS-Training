@@ -31,6 +31,30 @@ def load_config(path):
             or not 0 <= fraction < 1
         ):
             raise ValueError("language_auto_fraction in [0, 1) requires codec_language_id")
+    streaming_keys = (
+        "streaming_max_text_ratio",
+        "streaming_pause_probability",
+        "streaming_max_pause_frames",
+    )
+    if "streaming_fraction" in train:
+        fraction = train["streaming_fraction"]
+        if type(fraction) not in (int, float) or not 0 < fraction <= 1:
+            raise ValueError("train.streaming_fraction must be in (0, 1]")
+        # One text token per 12.5 Hz frame; 0.67 matches CosyVoice 2's 5:15 at 25 Hz (8.3 tok/s).
+        train.setdefault("streaming_max_text_ratio", 0.67)
+        # Late upstream text (an LLM stalling) is the real streaming case; train on it by default.
+        train.setdefault("streaming_pause_probability", 0.3)
+        train.setdefault("streaming_max_pause_frames", 12)  # up to ~1 s at 12.5 Hz
+        ratio, pause = train["streaming_max_text_ratio"], train["streaming_pause_probability"]
+        frames = train["streaming_max_pause_frames"]
+        if type(ratio) not in (int, float) or not 0 < ratio <= 1:
+            raise ValueError("train.streaming_max_text_ratio must be in (0, 1]")
+        if type(pause) not in (int, float) or not 0 <= pause <= 1:
+            raise ValueError("train.streaming_pause_probability must be in [0, 1]")
+        if type(frames) is not int or frames < 0 or (pause and frames < 1):
+            raise ValueError("Streaming pauses need a positive streaming_max_pause_frames")
+    elif any(key in train for key in streaming_keys):
+        raise ValueError("Streaming options require train.streaming_fraction")
     if "run_name" in train or "runs_root" in train:
         name = train.get("run_name")
         if (

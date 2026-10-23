@@ -41,6 +41,22 @@ SAMPLER_ORDERS = {
 }
 
 
+STREAMING_KEYS = (
+    "streaming_fraction",
+    "streaming_max_text_ratio",
+    "streaming_pause_probability",
+    "streaming_max_pause_frames",
+)
+
+
+def talker_lengths(batch, prefix_tokens):
+    """Per-row Talker sequence lengths; streaming rows keep only bos of the text in the prefix."""
+    text = batch["text_lengths"]
+    if "streaming" in batch:
+        text = text.masked_fill(batch["streaming"], 1)
+    return text + batch["frame_lengths"] + prefix_tokens
+
+
 def verify_conditioning(model, dataset):
     tokenizer = tokenizer_identity(dataset.manifest["tokenizer"]["path"])
     if tokenizer["sha256"] != dataset.manifest["tokenizer"]["sha256"]:
@@ -83,14 +99,16 @@ def run(config, resume=None, eval_only=False):
         specials = (full_config["tts_bos_token_id"], full_config["tts_eos_token_id"])
         use_speaker = config["model"].get("use_speaker_embedding", True)
         language = config["model"].get("language_conditioning", "auto")
-        languages = {}
+        reader_options = {}
         if language == "codec_language_id":
-            languages = dict(
+            reader_options = dict(
                 language_codec_ids=language_codec_ids(
                     full_config["talker_config"]["codec_language_id"]
                 ),
                 language_auto_fraction=settings.get("language_auto_fraction", 0.0),
             )
+        if settings.get("streaming_fraction"):
+            reader_options.update({key: settings[key] for key in STREAMING_KEYS})
         train_data = FeatureDataset(
             config["data"]["build"],
             specials,
@@ -98,7 +116,7 @@ def run(config, resume=None, eval_only=False):
             use_speaker_embedding=use_speaker,
             mask_reference=settings.get("mask_reference", False),
             text_vocab_size=full_config["talker_config"]["text_vocab_size"],
-            **languages,
+            **reader_options,
         )
         if rank == 0:
             train_data.validate_budgets(settings["max_batch_frames"], settings["max_batch_tokens"])
@@ -111,7 +129,7 @@ def run(config, resume=None, eval_only=False):
                 use_speaker_embedding=use_speaker,
                 mask_reference=settings.get("mask_reference", False),
                 text_vocab_size=full_config["talker_config"]["text_vocab_size"],
-                **languages,
+                **reader_options,
             )
             if config["data"].get("val_build")
             else None
@@ -135,6 +153,11 @@ def run(config, resume=None, eval_only=False):
             if full_config.get("model_type") != "qwen3_tts":
                 raise ValueError("Language conditioning is implemented for Qwen talkers only")
             model.config.lm_tts_language_conditioning = language
+        if settings.get("streaming_fraction"):
+            protocol = getattr(model.config, "lm_tts_input_protocol", "legacy_prefix")
+            if full_config.get("model_type") != "qwen3_tts" or protocol != "qwen3_non_streaming":
+                raise ValueError("Streaming follows the Qwen3 prefill; it needs a Qwen3 talker")
+            model.config.lm_tts_input_layout = "mixed"
         verify_conditioning(model, train_data)
         if val_data is not None:
             verify_tokenizer_compatibility(assembled, val_data.manifest["tokenizer"])
@@ -382,12 +405,9 @@ def run(config, resume=None, eval_only=False):
                     sum(b["audio_seconds"].sum().item() for b in batches),
                     skipped_since_log,
                     discarded_since_log,
+                    sum(talker_lengths(b, model.prefix_tokens).sum().item() for b in batches),
                     sum(
-                        (b["text_lengths"] + b["frame_lengths"] + model.prefix_tokens).sum().item()
-                        for b in batches
-                    ),
-                    sum(
-                        (b["text_lengths"] + b["frame_lengths"] + model.prefix_tokens).max().item()
+                        talker_lengths(b, model.prefix_tokens).max().item()
                         * len(b["frame_lengths"])
                         for b in batches
                     ),

@@ -1,6 +1,7 @@
 """Batched fixed-snapshot feature reads with mmap sampling metadata."""
 
 import hashlib
+import math
 import warnings
 from collections import defaultdict
 from numbers import Integral
@@ -42,6 +43,10 @@ class FeatureDataset:
         text_vocab_size=None,
         language_codec_ids=None,
         language_auto_fraction=0.0,
+        streaming_fraction=0.0,
+        streaming_max_text_ratio=None,
+        streaming_pause_probability=0.0,
+        streaming_max_pause_frames=0,
     ):
         self.path = Path(build_path).resolve()
         self.manifest = read_complete(self.path)
@@ -61,6 +66,16 @@ class FeatureDataset:
         # ISO language -> codec language ID (-1 = Auto); None keeps the Auto-only prefix.
         self.language_codec_ids = language_codec_ids
         self.language_auto_fraction = language_auto_fraction
+        # A seeded share of text-leading samples uses the official streaming layout.
+        self.streaming_fraction = streaming_fraction
+        self.streaming_max_text_ratio = streaming_max_text_ratio
+        if streaming_fraction and not 0 < (streaming_max_text_ratio or 0) <= 1:
+            raise ValueError("Streaming needs streaming_max_text_ratio in (0, 1]")
+        # Text that arrives late (an upstream LLM stalling) shows up as tts_pad inside the text.
+        self.streaming_pause_probability = streaming_pause_probability
+        self.streaming_max_pause_frames = streaming_max_pause_frames
+        if streaming_pause_probability and streaming_max_pause_frames < 1:
+            raise ValueError("Streaming pauses need streaming_max_pause_frames >= 1")
         self.prefix_tokens = 10 + (language_codec_ids is not None)
         self.bindings = self.manifest["bindings"]
         if language_codec_ids is not None:
@@ -134,6 +149,10 @@ class FeatureDataset:
             "text_vocab_size": self.text_vocab_size,
             "language_codec_ids": self.language_codec_ids,
             "language_auto_fraction": self.language_auto_fraction,
+            "streaming_fraction": self.streaming_fraction,
+            "streaming_max_text_ratio": self.streaming_max_text_ratio,
+            "streaming_pause_probability": self.streaming_pause_probability,
+            "streaming_max_pause_frames": self.streaming_max_pause_frames,
         }
 
     def __setstate__(self, state):
@@ -147,6 +166,10 @@ class FeatureDataset:
             text_vocab_size=state["text_vocab_size"],
             language_codec_ids=state["language_codec_ids"],
             language_auto_fraction=state["language_auto_fraction"],
+            streaming_fraction=state["streaming_fraction"],
+            streaming_max_text_ratio=state["streaming_max_text_ratio"],
+            streaming_pause_probability=state["streaming_pause_probability"],
+            streaming_max_pause_frames=state["streaming_max_pause_frames"],
         )
         if self.fingerprint != state["fingerprint"]:
             raise ValueError("Training build changed while starting workers")
@@ -372,7 +395,46 @@ class FeatureDataset:
             sample["reference_interval"] = validate_reference(c)
         if self.language_codec_ids is not None:
             sample["language_codec_id"] = self._language_codec_id(c["target_id"], c["language"])
+        if self.streaming_fraction:
+            # Text must lead speech: one text token per 12.5 Hz frame, with headroom below 1.
+            eligible = len(sample["text_ids"]) <= self.streaming_max_text_ratio * len(codes)
+            digest = hashlib.sha256(f"streaming-v1:{c['target_id']}".encode()).digest()
+            chosen = int.from_bytes(digest[:8], "little") < self.streaming_fraction * 2**64
+            sample["streaming_eligible"] = eligible
+            sample["streaming"] = eligible and chosen
+            # Drawn for every eligible sample, so validation can force streaming with the same pauses.
+            sample["streaming_pause"] = (
+                self._streaming_pause(digest, len(sample["text_ids"]), len(codes))
+                if eligible
+                else (0, 0)
+            )
         return sample
+
+    def _streaming_pause(self, digest, text_length, frames):
+        """(position, length) of one tts_pad run inside text_ids[1:], or (0, 0).
+
+        Only the text is delayed; the audio keeps talking. At an even speaking rate r tokens per
+        frame, token k is spoken near frame k / r but arrives at frame k + length, so a pause at
+        position j is safe only if j >= length * r / (1 - r). A 1.5x margin covers locally faster
+        speech; pauses that cannot meet it shrink or are dropped, and the padded text still keeps
+        the lead that eligibility requires.
+        """
+        draw = [int.from_bytes(digest[i : i + 8], "little") for i in (8, 16, 24)]
+        streamed = text_length - 1  # text_ids[1:], eos included
+        rate = text_length / frames
+        if rate >= 1 or draw[0] >= self.streaming_pause_probability * 2**64:
+            return 0, 0
+        margin = 1.5 * rate / (1 - rate)
+        longest = min(
+            self.streaming_max_pause_frames,
+            int(self.streaming_max_text_ratio * frames) - text_length,
+            int((streamed - 1) / margin),  # the run must start before eos
+        )
+        if longest < 1:
+            return 0, 0
+        length = 1 + draw[2] % longest
+        earliest = max(1, math.ceil(margin * length))
+        return earliest + draw[1] % (streamed - earliest), length
 
     def _language_codec_id(self, target_id, language):
         if language not in self.language_codec_ids:

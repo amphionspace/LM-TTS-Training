@@ -280,3 +280,48 @@ def test_language_ids_follow_a_fixed_per_target_auto_rule(tmp_path):
     assert collate(rows)["language_codec_ids"].tolist() == explicit
     with pytest.raises(ValueError, match="No codec language mapping"):
         FeatureDataset(output / "manifest.json", (200, 201), language_codec_ids={})
+
+
+def test_streaming_follows_a_fixed_per_target_rule_with_text_lead(tmp_path):
+    recipe, selection, path = merged_fixture(tmp_path / "features", num_rows=64)
+    output = tmp_path / "build"
+    bind_merged(
+        recipe, output, selection, path, file_hash(path), {"sha256": "fixture"}, Tokenizer()
+    )
+
+    def rows(ratio, pause=0.0):
+        dataset = FeatureDataset(
+            output / "manifest.json",
+            (200, 201),
+            streaming_fraction=0.5,
+            streaming_max_text_ratio=ratio,
+            streaming_pause_probability=pause,
+            streaming_max_pause_frames=12 if pause else 0,
+        )
+        return dataset.__getitems__(list(range(len(dataset))))
+
+    loose = rows(1.0)
+    assert [r["streaming"] for r in loose] == [r["streaming"] for r in rows(1.0)]
+    for row in loose:
+        lead = len(row["text_ids"]) <= len(row["codes"])
+        assert row["streaming_eligible"] == lead
+        assert not row["streaming"] or row["streaming_eligible"]
+    assert 0 < sum(r["streaming"] for r in loose) < sum(r["streaming_eligible"] for r in loose)
+    # A tighter lead requirement only removes samples; it never re-draws the 50% choice.
+    tight = rows(0.3)
+    assert all(a["streaming"] or not b["streaming"] for a, b in zip(loose, tight))
+    paused = rows(1.0, pause=1.0)
+    assert [r["streaming"] for r in paused] == [r["streaming"] for r in loose]
+    for row in paused:
+        at, length = row["streaming_pause"]
+        if length:
+            # The delayed tokens must still arrive before an even-rate speaker reaches them.
+            rate = len(row["text_ids"]) / len(row["codes"])
+            assert at >= 1.5 * length * rate / (1 - rate)
+            assert at <= len(row["text_ids"]) - 2 and 1 <= length <= 12
+            assert len(row["text_ids"]) + length <= len(row["codes"])
+    assert any(r["streaming_pause"][1] for r in paused)
+    batch = collate(paused)
+    assert batch["streaming_pause"].shape == (len(paused), 2)
+    with pytest.raises(ValueError, match="streaming_max_text_ratio"):
+        FeatureDataset(output / "manifest.json", (200, 201), streaming_fraction=0.5)

@@ -72,6 +72,12 @@ def main():
         config = json.loads(config_path.read_text())
         config.setdefault("talker_config", {})["lm_tts_language_conditioning"] = language
         config_path.write_text(json.dumps(config, indent=2) + "\n")
+    if metadata["signature"].get("settings", {}).get("streaming_fraction"):
+        # Evaluation refuses input-streaming decoding for exports that never trained on it.
+        config_path = args.output / "config.json"
+        config = json.loads(config_path.read_text())
+        config.setdefault("talker_config", {})["lm_tts_input_layout"] = "mixed"
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
     use_speaker = metadata["signature"].get("model", {}).get("use_speaker_embedding", True)
     if not use_speaker:
         config_path = args.output / "config.json"

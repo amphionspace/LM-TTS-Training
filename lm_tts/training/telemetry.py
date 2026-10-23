@@ -73,6 +73,8 @@ def write_training(writer, metrics, step, groups):
 def write_validation(writer, metrics, step):
     for key in ("loss", "first_ce", "residual_ce"):
         writer.add_scalar("val/" + key, metrics[key], step)
+        if "streaming_" + key in metrics:
+            writer.add_scalar("val/streaming_" + key, metrics["streaming_" + key], step)
 
 
 def start_gpu_logging(output, rank):
