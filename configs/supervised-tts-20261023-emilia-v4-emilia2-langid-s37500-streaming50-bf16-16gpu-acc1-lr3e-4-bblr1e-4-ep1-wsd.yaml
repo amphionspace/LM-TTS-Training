@@ -1,9 +1,11 @@
 extends: base.yaml
 
-# ---- Continue the language-ID run for one epoch from step 50,000 with mixed input streaming ----
-# Everything but streaming matches the source run, so init_from accepts it and the two continuations
-# differ only in the input layout. A new seed gives a fresh epoch permutation (seed is not part of
-# the init_from identity; the streaming and Auto choices hash target_id and do not depend on it).
+# ---- Replace the language-ID run's third epoch with a mixed input-streaming epoch ----
+# From step 37,500 (~2.0 epochs, steady phase) for one epoch with the source's peak LRs and its final
+# 0.3-epoch decay: same total data and LR curve as the source run, so the source's own final model is
+# the non-streaming control. Everything but streaming matches the source run, so init_from accepts it.
+# A new seed gives a fresh epoch permutation (seed is not part of the init_from identity; the
+# streaming and Auto choices hash target_id and do not depend on it).
 seed: 43
 
 paths:
@@ -22,7 +24,7 @@ data:
   build_id: supervised-tts-20261019-emilia-v4-emilia2-reference
 
 train:
-  run_name: supervised-tts-20261024-emilia-v4-emilia2-langid-s50000-streaming50-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep1-wsd
+  run_name: supervised-tts-20261023-emilia-v4-emilia2-langid-s37500-streaming50-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep1-wsd
   precision: bf16
   mask_reference: true  # Exclude reference targets in all 16 codebooks; retain EOS.
   loss_reduction: token
@@ -32,9 +34,9 @@ train:
   # defaults: text/frames <= 0.67 to be eligible, 30% of streaming targets get one 1-12 frame pause.
   streaming_fraction: 0.5
 
-  # Weights and AdamW moments from the last steady-phase checkpoint (decay starts near 50,800).
+  # Weights and AdamW moments from the steady phase at ~2.0 epochs (decay starts near 50,800).
   init_from:
-    checkpoint: /workspace/LM-TTS-Training-Runs/supervised-tts-20261020-emilia-v4-emilia2-refmask-cbinit-langid-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00050000
+    checkpoint: /workspace/LM-TTS-Training-Runs/supervised-tts-20261020-emilia-v4-emilia2-refmask-cbinit-langid-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00037500
     load_optimizer: true
 
   # One epoch at the source peak LRs, then the source's decay length (0.3 epoch) to 0.1x.
