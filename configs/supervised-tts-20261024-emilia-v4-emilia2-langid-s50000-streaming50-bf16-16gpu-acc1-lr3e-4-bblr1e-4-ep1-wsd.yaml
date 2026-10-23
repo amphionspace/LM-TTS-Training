@@ -1,0 +1,72 @@
+extends: base.yaml
+
+# ---- Continue the language-ID run for one epoch from step 50,000 with mixed input streaming ----
+# Everything but streaming matches the source run, so init_from accepts it and the two continuations
+# differ only in the input layout. A new seed gives a fresh epoch permutation (seed is not part of
+# the init_from identity; the streaming and Auto choices hash target_id and do not depend on it).
+seed: 43
+
+paths:
+  assembled_model: ${paths.project}/assets/assembled/qwen3-tts-frozen-conditioning-codebook-codec-lang
+
+assembly:
+  codec_embedding_init: codebook
+  extra_codec_languages: true
+
+model:
+  use_speaker_embedding: true
+  language_conditioning: codec_language_id
+
+data:
+  config: ${paths.project}/configs/data-emilia-emilia2-reference.yaml
+  build_id: supervised-tts-20261019-emilia-v4-emilia2-reference
+
+train:
+  run_name: supervised-tts-20261024-emilia-v4-emilia2-langid-s50000-streaming50-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep1-wsd
+  precision: bf16
+  mask_reference: true  # Exclude reference targets in all 16 codebooks; retain EOS.
+  loss_reduction: token
+  residual_weight: 0.3
+  language_auto_fraction: 0.5
+  # Half of the text-leading targets (fixed hash of target_id) use the official streaming overlay;
+  # defaults: text/frames <= 0.67 to be eligible, 30% of streaming targets get one 1-12 frame pause.
+  streaming_fraction: 0.5
+
+  # Weights and AdamW moments from the last steady-phase checkpoint (decay starts near 50,800).
+  init_from:
+    checkpoint: /workspace/LM-TTS-Training-Runs/supervised-tts-20261020-emilia-v4-emilia2-refmask-cbinit-langid-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00050000
+    load_optimizer: true
+
+  # One epoch at the source peak LRs, then the source's decay length (0.3 epoch) to 0.1x.
+  # No warmup: the AdamW moments are loaded with the weights.
+  epochs: 1
+  max_steps: null
+  schedule_steps: null
+  warmup_steps: 0
+  lr: 3.0e-4
+  backbone_lr: 1.0e-4
+  scheduler:
+    name: wsd
+    decay_ratio: 0.3
+    min_lr_ratio: 0.1
+
+  max_batch_frames: 32000
+  max_batch_tokens: 50000
+  accumulation: 1
+  num_workers: 4
+  prefetch_factor: 2
+  sampler: feistel_uniform_token_budget_v3
+  length_bucket_size: 0
+
+  log_every: 10
+  first_check_step: 100
+  keep_checkpoints: null
+  save_every: 2500
+  eval_every: 2500
+
+eval:
+  batch_size: 32
+
+acp:
+  nodes: 2
+  worker_spec: N3lS.Ii.I60.80c896g  # 8 A800 GPUs, 80 vCPU, 896 GiB per node

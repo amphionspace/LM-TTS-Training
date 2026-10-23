@@ -1,6 +1,6 @@
 # 输入流式（streaming）TTS：现状、数据可行性与训练方案
 
-日期：2026-10-20（PDT）。本文是设计文档，尚未实现，也没有训练。数据统计的脚本和结果在 [evidence/streaming-tts-20261020/](evidence/streaming-tts-20261020/)。论文结论来自原文。凡是标注为"推测"的，都是基于这些资料的推断，尚未经过实验验证。
+日期：2026-10-20（PDT）。第一步已于 2026-10-22 实现（见第 9 节），尚未训练。数据统计的脚本和结果在 [evidence/streaming-tts-20261020/](evidence/streaming-tts-20261020/)。论文结论来自原文。凡是标注为"推测"的，都是基于这些资料的推断，尚未经过实验验证。
 
 ---
 
@@ -114,7 +114,7 @@ role | 控制+pad | speaker+pad | cpad+bos | cbos+t₁  C₀+t₂  C₁+t₃ …
 
 ## 7. 实验计划
 
-1. **继续训练短实验（含对照组）**：从 pt-3p28cjet（emilia v4 + emilia2 + codebook init + language ID）一个**未进入衰减段**的 checkpoint 出发，用 `init_from` 跑两组：`streaming_fraction = 0.5` 和 `= 0`，步数和 lr 相同。对照组用来区分"继续训练本身"和"streaming"各自的影响。不要从已衰减的最终 checkpoint 用峰值 lr 继续训，那样会抵消衰减段的效果。
+1. **继续训练短实验（含对照组）**：从 pt-jnjlqzyb（emilia v4 + emilia2 + codebook init + language ID）一个**未进入衰减段**的 checkpoint 出发，用 `init_from` 跑两组：`streaming_fraction = 0.5` 和 `= 0`，步数和 lr 相同。对照组用来区分"继续训练本身"和"streaming"各自的影响。不要从已衰减的最终 checkpoint 用峰值 lr 继续训，那样会抵消衰减段的效果。
 2. **评测**：SeedTTS 分别跑 streaming 和 non-streaming（显式语言加 Auto 子集）；按"文本 ÷ 帧数"分桶看 WER 和 SIM；non-streaming 与对照组比较，确认没有退化；另外测首包延迟（文本逐 token 输入，codec 分块解码）。
 3. **决策**：streaming 的结果接近 non-streaming 且没有退化，就把混合格式放进下一轮从头训练；高比值分桶或长文本退化，就进入第二步，做对齐。
 
@@ -125,3 +125,26 @@ role | 控制+pad | speaker+pad | cpad+bos | cbos+t₁  C₀+t₂  C₁+t₃ …
 - 高比值语言（ko、fr、pl）的 streaming 风险更大，要单独分桶看。
 - K > 0 和停顿 pad 偏离官方格式，需要自有推理入口。
 - Qwen3-ForcedAligner 的分辨率、最长时长和语言覆盖细节，待读正文和模型卡确认。
+
+## 9. 第一步的实现（2026-10-22）
+
+与第 5、6 节的计划相比，有三处改动：配置放在 `train` 下，而不是 `model` 下；暂不实现起始领先 K 帧；随机停顿 pad 默认开启，插入位置加了约束。
+
+**配置**（只在设置了 `train.streaming_fraction` 时生效；不设置时，签名、数据和 embedding 与之前逐位一致）：
+
+| 键 | 默认 | 含义 |
+| --- | --- | --- |
+| `streaming_fraction` | 不设置 | 满足领先条件的样本中，走 streaming 的比例。参考 CosyVoice 2/3 的训练代码（`random.random() < 0.5`），实验用 0.5 |
+| `streaming_max_text_ratio` | 0.67 | 只有 (文本 token + 2) ÷ 帧数 ≤ 0.67 的样本才可能走 streaming。CosyVoice 用 5:15、25 Hz，即文本 ≤ 8.3 token/s，换算到 12.5 Hz 为 0.67 |
+| `streaming_pause_probability` | 0.3 | streaming 样本中插入一段停顿的比例 |
+| `streaming_max_pause_frames` | 12 | 停顿长度在 1–12 帧（0.08–0.96 s）之间均匀抽取 |
+
+- **为什么放在 `train` 下**：`init_from` 要求 `model` 区块完全一致。放在 `train` 下，才能从当前 run 稳定期的 checkpoint 续训。
+- **逐样本决定**：用 `sha256("streaming-v1:" + target_id)` 的前 8 字节决定是否走 streaming，后面的字节决定停顿。和 language-auto 用的哈希相互独立，也不依赖 seed，续训、resume、worker 数和验证集上的结果都一致。不满足领先条件的样本强制走 non-streaming。按真实 build 各抽 30 万条估计：emilia v4 有 99.97% 满足，emilia2 有 98.5% 满足。
+- **排布**：`protocol.build_inputs` 逐行判断。streaming 行的前缀只保留 `bos+cpad`，`text_ids[1:]` 逐位置叠加到 `[cbos, C0, …]` 上，之后补 `tts_pad`，与官方 `generate(non_streaming_mode=False)` 逐位置一致。refmask 和 loss 不变：两种排布下，音频位置都是 cbos 加 T 帧，预测目标一一对应。
+- **停顿的约束**：停顿只推迟文本，录音不会因此停下来。语速均匀时，第 k 个 token 大约在第 k/r 帧才说到，但在第 k+L 帧才到达（r 为每帧的文本 token 数）。所以插入位置 j 必须满足 j ≥ 1.5·L·r/(1−r)，系数 1.5 用来覆盖局部语速偏快的情况。放不下时，停顿缩短或取消；插入后仍要满足文本 ÷ 帧数 ≤ 0.67。估计结果：emilia v4 的 streaming 样本都能放下 12 帧；emilia2 有 98.7% 能放下停顿，短句的停顿会被缩短（p10 为 4 帧）。这只能教会模型“文本晚到时，靠已到手的文本继续说”。“已到手的文本都说完了就停下来等”需要真实停顿的音频，属于第二步。
+- **验证**：主指标强制走 non-streaming，可与以往 run 直接比较。另外用同一批样本强制走 streaming（只对满足领先条件的样本），记为 `val/streaming_{loss,first_ce,residual_ce}`。
+- **其他**：telemetry 按实际序列长度统计 talker token。导出时在 `talker_config` 中写入 `lm_tts_input_layout: mixed`。
+- **测试**：`tests/test_qwen_protocol.py` 与官方 streaming 的 prefill 加逐步 trailing 文本逐位置比对，覆盖 x-vector 和 ICL（history 为 0、1、3 帧，文本刚好放下的边界），以及显式语言；mixed 批次中的 non-streaming 行逐位不变；文本放不下时报错；停顿 pad 的位置正确。`tests/test_merged_data.py` 检查 reader 的选择可复现、领先条件和停顿约束。`tests/test_config.py` 检查默认值和非法配置。端到端冒烟（tiny 模型）：non-streaming 源 run → `init_from` streaming 续训（refmask + 停顿）→ 两种验证 → 导出，已跑通。
+- **实验配置**：`configs/supervised-tts-20261024-emilia-v4-emilia2-langid-s50000-{streaming50,control}-…-ep1-wsd.yaml`。从 pt-jnjlqzyb 的 step 50,000（稳定期最后一个 checkpoint，衰减约从 50,800 开始）加载权重和 AdamW 状态，续训 1 个 epoch。学习率为峰值，最后 0.3 epoch 衰减到 0.1 倍（与源 run 的衰减长度相同），不 warmup。seed 改为 43，以得到新的 epoch 顺序。两组只差 `streaming_fraction`。
+- **尚未完成**：UltraEval 的 streaming 评测入口（`run_seed_tts.py` 目前写死 `--non-streaming`），以及对没训过 streaming 的导出模型拒绝 streaming 评测。
