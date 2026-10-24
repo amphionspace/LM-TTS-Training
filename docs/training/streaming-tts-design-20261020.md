@@ -148,3 +148,47 @@ role | 控制+pad | speaker+pad | cpad+bos | cbos+t₁  C₀+t₂  C₁+t₃ …
 - **测试**：`tests/test_qwen_protocol.py` 与官方 streaming 的 prefill 加逐步 trailing 文本逐位置比对，覆盖 x-vector 和 ICL（history 为 0、1、3 帧，文本刚好放下的边界），以及显式语言；mixed 批次中的 non-streaming 行逐位不变；文本放不下时报错；停顿 pad 的位置正确。`tests/test_merged_data.py` 检查 reader 的选择可复现、领先条件和停顿约束。`tests/test_config.py` 检查默认值和非法配置。端到端冒烟（tiny 模型）：non-streaming 源 run → `init_from` streaming 续训（refmask + 停顿）→ 两种验证 → 导出，已跑通。
 - **实验配置**：`configs/supervised-tts-20261023-emilia-v4-emilia2-langid-s37500-streaming50-…-ep1-wsd.yaml`。从 pt-jnjlqzyb 的 step 37,500（约 2.0 epoch，稳定期）加载权重和 AdamW 状态，用 streaming 训练代替源 run 的第 3 个 epoch：续训 1 个 epoch，学习率为峰值，最后 0.3 epoch 衰减到 0.1 倍，不 warmup。这样总数据量和 LR 曲线都与源 run 相同，源 run 自己的最终模型就是 non-streaming 对照组，不再单独跑 control。seed 改为 43，以得到新的 epoch 顺序。执行顺序（2026-10-22 决定）：37.5k 写完、验证完成后，先停掉源 run，用它的 2 个节点训练 streaming；streaming 训完后，源 run 从最新的 checkpoint 恢复，训完剩下的部分。
 - **尚未完成**：UltraEval 的 streaming 评测入口（`run_seed_tts.py` 目前写死 `--non-streaming`），以及对没训过 streaming 的导出模型拒绝 streaming 评测。
+
+## 10. 第一次 streaming 续训的结果与诊断（2026-10-24）
+
+**运行经过**：pt-ywdi9jb9 从 10-23 11:50 开始，训到约 5,700 步。10-24 00:09 为了先让源 run 训完，手动停掉了它，最新 checkpoint 是 step 5000。源 run 以 pt-5sv2qeif 从 37,500 恢复。streaming 之后可以用 `--resume latest` 从 5000 继续。
+
+**验证 CE（codebook 1）**：
+
+| step | non-streaming | streaming |
+| --- | --- | --- |
+| 100 | 1.222 | 2.118 |
+| 2500 | 1.220 | 1.933 |
+| 5000 | 1.219 | 1.565 |
+
+non-streaming 没有被拖累（源 run 37.5k 为 1.213）。streaming 在下降，但和 non-streaming 还差 0.35。
+
+**推理冒烟测试**（SeedTTS en/zh 各 30 条，speaker+ICL，默认采样，官方 `generate(non_streaming_mode=False)`）：
+
+| 模型 | en WER | zh CER |
+| --- | --- | --- |
+| 源 run 37.5k（没训过 streaming） | 213 | 113（大多超过 30 s 被排除） |
+| streaming s2500 | 104 | 105 |
+| streaming s5000 | 83 | 95 |
+| streaming s5000，x-vector（不用 ICL） | 82 | 81 |
+| s5000 non-streaming（对照） | 5.0 | 3.6 |
+
+streaming 输出音色正确，但内容基本不对，目前不能用。
+
+**实现已排除**：用真实的 s5000 模型和 6 条真实验证样本，训练代码 `build_inputs` 构造的 streaming 输入，与官方 prefill 加逐步 trailing 文本（直接对照官方 talker 解码循环 `trailing_text_hidden[:, generation_step]`）构造的输入，逐位置最大差异为 1e-7，teacher-forced CE 逐条相同。x-vector 推理同样不行，说明问题也不在 ICL。所以训练、验证和推理的排布是一致的，问题在模型学到的东西。
+
+**原因（强相关，尚未用对照实验证实）：文本信号相对音频帧太弱。** streaming 位置的输入是「16 码本帧 embedding 之和 + 投影后的文本向量」。在 150 条验证样本上测范数中位数：
+
+| 模型 | 文本向量 | 帧 embedding（16 码本之和） | 文本 ÷ 帧 |
+| --- | --- | --- | --- |
+| 官方 Qwen3-TTS-12Hz-0.6B-Base | 1.59 | 2.24 | 0.71 |
+| 初始化（assembled，codebook init） | 1.59 | 2.53 | 0.63 |
+| 源 run 37.5k | 1.59 | 7.41 | 0.22 |
+| streaming s5000 | 1.59 | 7.60 | 0.21 |
+
+文本前端是冻结的（`lm_tts_freeze_text_frontend: true`），文本向量一直不变。codec embedding 在 37.5k 步 non-streaming 训练中涨了约 3 倍（codebook 1 从 0.53 涨到 2.08）。non-streaming 不受影响，因为文本单独放在前缀位置，不和帧相加。streaming 下文本只占帧的约 1/5，被音频盖住了。5000 步 streaming 训练中这个比例没有恢复（0.215 → 0.209）。这和看到的现象吻合：CE 降得慢，推理音色对、内容错。
+
+**下一步（待定，未实施）**：
+1. 从 streaming s5000 续训 1–2k 步，解冻 `text_projection`（官方推理直接用它，导出后不需要改推理代码），看 streaming CE 是否明显下降得更快，以此验证上面的原因。
+2. 以后从头训练时，限制 codec embedding 范数的增长（例如对 embedding 加 weight decay 或加范数上限），让文本 ÷ 帧保持在官方水平附近。
+3. UltraEval 的 streaming 入口：`voice_clone_infer.py` 不传 `--non-streaming` 时已经走官方 streaming。还缺 `run_seed_tts.py` 的开关，以及审计中「必须是 non-streaming」检查的放宽。
