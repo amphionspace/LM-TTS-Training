@@ -42,6 +42,30 @@ class DynamicBatchingTests(unittest.TestCase):
             samplers[2].set_epoch(epoch, start_batch=2, max_batches=3)
             self.assertEqual(list(samplers[2]), plans[2][2:5])
 
+    def test_resume_by_sample_position_matches_replay(self):
+        frames = [1, 17, 4, 13, 2, 11, 7, 39, 3] * 37
+        tokens = [f + 10 + i % 5 for i, f in enumerate(frames)]
+        for options in (
+            dict(shuffle_window=11, length_bucket_size=7, pad_to_longest=True),
+            dict(shuffle_window=64),
+            dict(order="feistel"),
+        ):
+            samplers = [
+                TokenBatchSampler(frames, tokens, 40, 100, world_size=4, rank=r, seed=7, **options)
+                for r in range(4)
+            ]
+            for sampler in samplers:
+                sampler.set_epoch(1)
+            plans = [list(s) for s in samplers]
+            consumed = 0
+            # The tail that cannot fill every rank is dropped, as in a replayed epoch.
+            for batch in range(len(plans[0]) + 1):
+                for rank, sampler in enumerate(samplers):
+                    sampler.set_epoch(1, start_batch=batch, start_sample=consumed, max_batches=3)
+                    self.assertEqual(list(sampler), plans[rank][batch : batch + 3])
+                if batch < len(plans[0]):
+                    consumed += sum(len(plan[batch]) for plan in plans)
+
     def test_invalid_sample_fails_and_empty_rank_is_never_padded(self):
         sampler = TokenBatchSampler([41, 1], [50, 11], 40, 100, world_size=2, rank=0, seed=1)
         with self.assertRaises(ValueError):

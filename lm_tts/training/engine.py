@@ -310,6 +310,7 @@ def run(config, resume=None, eval_only=False):
         sampler.set_epoch(
             progress["epoch"],
             start_batch=progress["next_batch"],
+            start_sample=progress.get("samples_in_epoch"),
         )
         workers = settings["num_workers"]
         loader = DataLoader(

@@ -49,15 +49,19 @@ class TokenBatchSampler:
         self.order_kind = order
         self.pad_to_longest = pad_to_longest
         self.window = shuffle_window
-        self.epoch, self.start_batch, self.max_batches = 0, 0, None
+        self.epoch, self.start_batch, self.start_sample, self.max_batches = 0, 0, None, None
 
-    def set_epoch(self, epoch, *, start_batch=0, max_batches=None):
+    def set_epoch(self, epoch, *, start_batch=0, start_sample=None, max_batches=None):
+        """start_sample, when known, is the epoch-order position where batch start_batch begins
+        (the global count of samples consumed before it); resume then skips by position instead
+        of replaying the packing of every earlier batch."""
         self.epoch, self.start_batch, self.max_batches = epoch, start_batch, max_batches
+        self.start_sample = start_sample
 
-    def order(self):
+    def order(self, skip=0):
         if self.order_kind == "feistel":
             permutation = FeistelPermutation(len(self.frames), [self.seed, self.epoch, 3])
-            for start in range(0, len(self.frames), 1 << 20):
+            for start in range(skip, len(self.frames), 1 << 20):
                 stop = min(len(self.frames), start + (1 << 20))
                 yield from permutation(np.arange(start, stop)).tolist()
             return
@@ -65,23 +69,32 @@ class TokenBatchSampler:
         windows = rng.permutation((len(self.frames) + self.window - 1) // self.window)
         for window in windows:
             start = int(window) * self.window
+            size = min(self.window, len(self.frames) - start)
+            if skip >= size:
+                skip -= size
+                continue
             # Seed by logical window identity, independent of worker count.
             local = np.random.default_rng(
                 np.random.SeedSequence([self.seed, self.epoch, int(window), 1])
             )
-            indices = start + local.permutation(min(self.window, len(self.frames) - start))
+            indices = start + local.permutation(size)
             if self.length_bucket_size:
                 # Randomized local buckets reduce SDPA padding without changing epoch coverage.
+                ordered = []
                 for offset in range(0, len(indices), self.length_bucket_size):
                     bucket = indices[offset : offset + self.length_bucket_size]
-                    yield from sorted(map(int, bucket), key=lambda i: self.tokens[i])
+                    ordered += sorted(map(int, bucket), key=lambda i: self.tokens[i])
+                yield from ordered[skip:]
             else:
-                yield from map(int, indices)
+                yield from map(int, indices[skip:])
+            skip = 0
 
     def __iter__(self):
-        order = iter(self.order())
+        # Packing restarts its loads at every batch, so a batch depends only on where it starts.
+        skip = self.start_sample is not None
+        order = iter(self.order(self.start_sample if skip else 0))
         pending = next(order, None)
-        batch_number, yielded = 0, 0
+        batch_number, yielded = (self.start_batch if skip else 0), 0
         while pending is not None:
             group, loads = [], []
             for _ in range(self.world_size):
