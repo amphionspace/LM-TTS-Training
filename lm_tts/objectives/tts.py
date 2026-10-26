@@ -11,7 +11,9 @@ def loss_normalizers(frame_lengths, reduction, residual_groups=15):
     return lengths.pow(LOSS_REDUCTION_EXPONENTS[reduction]).sum(dim=1)
 
 
-def tts_loss(predictions, batch, eos, reduction="token"):
+def tts_loss(predictions, batch, eos, reduction="token", samples=None):
+    """samples (bool per utterance) adds "selected": the same statistics, detached, over only those
+    utterances, taken from the same per-position losses."""
     lengths, codes = batch["frame_lengths"], batch["codes"]
     groups = len(predictions["residual_logits"])
     last = (lengths + 1).cumsum(0) - 1
@@ -36,13 +38,25 @@ def tts_loss(predictions, batch, eos, reduction="token"):
     exponent = LOSS_REDUCTION_EXPONENTS[reduction] - 1
     first_weights = (supervised + 1).float().pow(exponent).repeat_interleave(lengths + 1)
     residual_weights = (supervised * groups).float().pow(exponent).repeat_interleave(lengths)
-    group_sums = group_losses.sum(dim=1)
-    return {
-        "first_sum": first_losses.sum(),
-        "residual_sum": group_sums.sum(),
-        "first_reduced_sum": (first_losses * first_weights).sum(),
-        "residual_reduced_sum": (group_losses.sum(dim=0) * residual_weights).sum(),
-        "group_sums": group_sums.detach(),
-        "first_count": (supervised + 1).sum(),
-        "frame_count": supervised.sum(),
-    }
+
+    def statistics(first, group, frames):
+        group_sums = group.sum(dim=1)
+        return {
+            "first_sum": first.sum(),
+            "residual_sum": group_sums.sum(),
+            "first_reduced_sum": (first * first_weights).sum(),
+            "residual_reduced_sum": (group.sum(dim=0) * residual_weights).sum(),
+            "group_sums": group_sums.detach(),
+            "first_count": (frames + 1).sum(),
+            "frame_count": frames.sum(),
+        }
+
+    out = statistics(first_losses, group_losses, supervised)
+    if samples is not None:
+        with torch.no_grad():
+            out["selected"] = statistics(
+                first_losses.masked_fill(~samples.repeat_interleave(lengths + 1), 0),
+                group_losses.masked_fill(~samples.repeat_interleave(lengths).unsqueeze(0), 0),
+                supervised[samples],
+            )
+    return out

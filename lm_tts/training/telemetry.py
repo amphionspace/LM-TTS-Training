@@ -11,6 +11,12 @@ GROUPS = {
         "train/epoch": "epoch",
         "train/first_ce": "first_ce",
         "train/residual_ce": "residual_ce",
+        "train/streaming_loss": "streaming_objective",
+        "train/streaming_first_ce": "streaming_first_ce",
+        "train/streaming_residual_ce": "streaming_residual_ce",
+        "train/non_streaming_loss": "non_streaming_objective",
+        "train/non_streaming_first_ce": "non_streaming_first_ce",
+        "train/non_streaming_residual_ce": "non_streaming_residual_ce",
         "train/lr_backbone": "lr_backbone",
         "train/lr_new": "lr_new",
         "train/grad_norm": "grad_norm",
@@ -73,8 +79,9 @@ def write_training(writer, metrics, step, groups):
 def write_validation(writer, metrics, step):
     for key in ("loss", "first_ce", "residual_ce"):
         writer.add_scalar("val/" + key, metrics[key], step)
-        if "streaming_" + key in metrics:
-            writer.add_scalar("val/streaming_" + key, metrics["streaming_" + key], step)
+        for layout in ("streaming_", "non_streaming_"):
+            if layout + key in metrics:
+                writer.add_scalar("val/" + layout + key, metrics[layout + key], step)
 
 
 def start_gpu_logging(output, rank):

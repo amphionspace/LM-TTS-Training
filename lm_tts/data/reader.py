@@ -402,7 +402,6 @@ class FeatureDataset:
             chosen = int.from_bytes(digest[:8], "little") < self.streaming_fraction * 2**64
             sample["streaming_eligible"] = eligible
             sample["streaming"] = eligible and chosen
-            # Drawn for every eligible sample, so validation can force streaming with the same pauses.
             sample["streaming_pause"] = (
                 self._streaming_pause(digest, len(sample["text_ids"]), len(codes))
                 if eligible

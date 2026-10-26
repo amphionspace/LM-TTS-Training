@@ -418,12 +418,23 @@ def run(config, resume=None, eval_only=False):
             )
             dist.all_reduce(counts)
             optimizer.zero_grad(set_to_none=True)
-            sums = torch.zeros(4, dtype=torch.float64, device=device)
+            keys = ("first_sum", "residual_sum", "first_reduced_sum", "residual_reduced_sum")
+            # [0:4] every sample; [4:8] streaming samples; [8:12] their counts and normalizers.
+            sums = torch.zeros(12, dtype=torch.float64, device=device)
+            split = (progress["step"] + 1) % settings["log_every"] == 0
             for i, batch in enumerate(batches):
                 model.set_requires_gradient_sync(i == len(batches) - 1)
                 batch = move(batch, device)
                 predictions = model(batch)
-                out = tts_loss(predictions, batch, model.eos, settings["loss_reduction"])
+                samples = batch.get("streaming") if split else None
+                out = tts_loss(predictions, batch, model.eos, settings["loss_reduction"], samples)
+                if samples is not None:
+                    part = out["selected"]
+                    lengths = batch.get("supervised_frame_lengths", batch["frame_lengths"])
+                    sums[4:8] += torch.stack([part[k] for k in keys])
+                    sums[8] += part["first_count"]
+                    sums[9] += part["frame_count"] * 15
+                    sums[10:12] += loss_normalizers(lengths[samples], settings["loss_reduction"])
                 del predictions
                 loss = world * (
                     out["first_reduced_sum"] / denominators[0]
@@ -432,17 +443,7 @@ def run(config, resume=None, eval_only=False):
                 if not torch.isfinite(loss):
                     raise FloatingPointError("Non-finite loss")
                 loss.backward()
-                sums += torch.stack(
-                    [
-                        out[k].detach()
-                        for k in (
-                            "first_sum",
-                            "residual_sum",
-                            "first_reduced_sum",
-                            "residual_reduced_sum",
-                        )
-                    ]
-                )
+                sums[:4] += torch.stack([out[k].detach() for k in keys])
             norm = torch.nn.utils.clip_grad_norm_(model.parameters(), settings["grad_clip"])
             if not torch.isfinite(norm):
                 raise FloatingPointError("Non-finite gradient norm")
@@ -497,6 +498,24 @@ def run(config, resume=None, eval_only=False):
                     "lr_backbone": optimizer.param_groups[0]["lr"],
                     "lr_new": optimizer.param_groups[1]["lr"],
                 }
+                if settings.get("streaming_fraction"):
+                    # The same pooled statistics, split by each sample's input layout.
+                    parts = (
+                        ("streaming_", sums[4:8], sums[8:10], sums[10:12]),
+                        (
+                            "non_streaming_",
+                            sums[:4] - sums[4:8],
+                            counts[:2] - sums[8:10],
+                            denominators - sums[10:12],
+                        ),
+                    )
+                    for prefix, part, count, norm in parts:
+                        if count[0] > 0:
+                            metrics[prefix + "first_ce"] = (part[0] / count[0]).item()
+                            metrics[prefix + "residual_ce"] = (part[1] / count[1]).item()
+                            metrics[prefix + "objective"] = (
+                                part[2] / norm[0] + settings["residual_weight"] * part[3] / norm[1]
+                            ).item()
                 print(json.dumps({"step": step, **metrics}), flush=True)
                 write_training(writer, metrics, step, groups)
                 with (output / "metrics.jsonl").open("a") as journal:

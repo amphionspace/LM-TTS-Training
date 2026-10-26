@@ -19,12 +19,14 @@ def validate(
     residual_weight=0.3,
     *,
     loader_settings=None,
-    streaming=None,
 ):
-    """streaming=None keeps each sample's layout; False/True force non-streaming or streaming
-    (streaming only where the text leads speech)."""
+    """Every sample keeps its training layout. With streaming samples, the streaming_* and
+    non_streaming_* metrics split the same pass by layout; the headline metrics pool both, as
+    training does."""
     model.eval()
-    totals = torch.zeros(25, dtype=torch.float64, device=device)
+    # Row 0 accumulates every sample; row 1 only the streaming ones.
+    totals = torch.zeros(2, 25, dtype=torch.float64, device=device)
+    mixed = False
     settings = loader_settings or {}
     workers = settings.get("num_workers", 0)
     plan = list(val_batches(dataset, batch_size, dist.get_world_size(), dist.get_rank()))
@@ -45,31 +47,55 @@ def validate(
     )
     for (_, real), batch in zip(plan, loader, strict=True):
         batch = move(batch, device)
-        if streaming is not None and "streaming" in batch:
-            batch["streaming"] = batch["streaming_eligible"] & streaming
         if real:
-            totals[23] += batch["skipped_samples"]
+            totals[0, 23] += batch["skipped_samples"]
         if not batch_health(batch, device)[0]:
             if real:
-                totals[24] += len(batch.get("frame_lengths", ()))
+                totals[0, 24] += len(batch.get("frame_lengths", ()))
             continue
-        out = tts_loss(model(batch), batch, model.eos, loss_reduction)
-        if real:
-            totals[0] += out["first_sum"]
-            totals[1] += out["first_count"]
-            totals[2] += out["residual_sum"]
-            totals[3] += out["frame_count"]
-            totals[4:19] += out["group_sums"]
-            totals[19:21] += torch.stack([out["first_reduced_sum"], out["residual_reduced_sum"]])
-            totals[21:23] += loss_normalizers(
-                batch.get("supervised_frame_lengths", batch["frame_lengths"]), loss_reduction
+        mixed = mixed or "streaming" in batch
+        predictions = model(batch)
+        if not real:
+            continue
+        lengths = batch.get("supervised_frame_lengths", batch["frame_lengths"])
+        samples = batch.get("streaming")
+        out = tts_loss(predictions, batch, model.eos, loss_reduction, samples)
+        rows = [(0, out, lengths)]
+        if samples is not None:
+            rows.append((1, out["selected"], lengths[samples]))
+        for row, out, lengths in rows:
+            totals[row, 0] += out["first_sum"]
+            totals[row, 1] += out["first_count"]
+            totals[row, 2] += out["residual_sum"]
+            totals[row, 3] += out["frame_count"]
+            totals[row, 4:19] += out["group_sums"]
+            totals[row, 19:21] += torch.stack(
+                [out["first_reduced_sum"], out["residual_reduced_sum"]]
             )
+            totals[row, 21:23] += loss_normalizers(lengths, loss_reduction)
     dist.all_reduce(totals)
-    if totals[1] == 0:
+    if totals[0, 1] == 0:
         raise ValueError("No usable validation samples remain")
     metrics = {
-        "skipped_samples": totals[23].item(),
-        "discarded_samples": totals[24].item(),
+        "skipped_samples": totals[0, 23].item(),
+        "discarded_samples": totals[0, 24].item(),
+        **summarize(totals[0], residual_weight, loss_reduction),
+    }
+    if mixed:
+        for prefix, part in (("streaming_", totals[1]), ("non_streaming_", totals[0] - totals[1])):
+            if part[1] > 0:
+                metrics.update(
+                    {
+                        prefix + k: v
+                        for k, v in summarize(part, residual_weight, loss_reduction).items()
+                    }
+                )
+    model.train()
+    return metrics
+
+
+def summarize(totals, residual_weight, loss_reduction):
+    metrics = {
         "first_ce": (totals[0] / totals[1]).item(),
         "residual_ce": (totals[2] / (totals[3] * 15)).item(),
         "loss": (totals[19] / totals[21] + residual_weight * totals[20] / totals[22]).item(),
@@ -82,5 +108,4 @@ def validate(
                 f"residual_{loss_reduction}_ce": (totals[20] / totals[22]).item(),
             }
         )
-    model.train()
     return metrics
