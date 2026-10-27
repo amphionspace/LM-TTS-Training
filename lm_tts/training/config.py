@@ -35,11 +35,33 @@ def load_config(path):
         "streaming_max_text_ratio",
         "streaming_pause_probability",
         "streaming_max_pause_frames",
+        "streaming_layout",
+        "streaming_chunk",
     )
     if "streaming_fraction" in train:
         fraction = train["streaming_fraction"]
         if type(fraction) not in (int, float) or not 0 < fraction <= 1:
             raise ValueError("train.streaming_fraction must be in (0, 1]")
+        layout = train.get("streaming_layout", "overlay")
+        if layout not in ("overlay", "interleaved"):
+            raise ValueError("train.streaming_layout must be overlay or interleaved")
+        if layout == "interleaved":
+            # Text keeps its own positions, so a stalled upstream only delays wall-clock time.
+            chunk = train.get("streaming_chunk")
+            if (
+                type(chunk) is not list
+                or len(chunk) != 2
+                or any(type(n) is not int or n < 1 for n in chunk)
+            ):
+                raise ValueError("Interleaved streaming needs streaming_chunk: [text, frames]")
+            if train.setdefault("streaming_pause_probability", 0) or train.setdefault(
+                "streaming_max_pause_frames", 0
+            ):
+                raise ValueError("Interleaved streaming has no text pauses")
+            if "streaming_max_text_ratio" not in train:
+                raise ValueError("Interleaved streaming needs an explicit streaming_max_text_ratio")
+        elif "streaming_chunk" in train:
+            raise ValueError("streaming_chunk requires streaming_layout: interleaved")
         # One text token per 12.5 Hz frame; 0.67 matches CosyVoice 2's 5:15 at 25 Hz (8.3 tok/s).
         train.setdefault("streaming_max_text_ratio", 0.67)
         # Late upstream text (an LLM stalling) is the real streaming case; train on it by default.

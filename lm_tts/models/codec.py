@@ -75,7 +75,9 @@ class CodecTTSModel(nn.Module):
             settings = generation or {}
             first = sample_token(
                 allowed,
-                history=batch["codes"][:, 0].unsqueeze(0) if len(h) == 1 else None,
+                history=batch.get("history", batch["codes"][:, 0]).unsqueeze(0)
+                if len(h) == 1
+                else None,
                 **{
                     key: settings[key]
                     for key in ("do_sample", "temperature", "top_k", "top_p", "repetition_penalty")

@@ -12,6 +12,7 @@ import pyarrow as pa
 import torch
 
 from ..artifacts import file_hash
+from ..models.protocol import interleaved_layout
 from .build import open_snapshot, read_complete
 from .reference import REFERENCE_COLUMNS, is_reference, validate_reference
 
@@ -47,6 +48,8 @@ class FeatureDataset:
         streaming_max_text_ratio=None,
         streaming_pause_probability=0.0,
         streaming_max_pause_frames=0,
+        streaming_layout="overlay",
+        streaming_chunk=None,
     ):
         self.path = Path(build_path).resolve()
         self.manifest = read_complete(self.path)
@@ -76,6 +79,8 @@ class FeatureDataset:
         self.streaming_max_pause_frames = streaming_max_pause_frames
         if streaming_pause_probability and streaming_max_pause_frames < 1:
             raise ValueError("Streaming pauses need streaming_max_pause_frames >= 1")
+        self.streaming_layout = streaming_layout
+        self.streaming_chunk = streaming_chunk
         self.prefix_tokens = 10 + (language_codec_ids is not None)
         self.bindings = self.manifest["bindings"]
         if language_codec_ids is not None:
@@ -153,6 +158,8 @@ class FeatureDataset:
             "streaming_max_text_ratio": self.streaming_max_text_ratio,
             "streaming_pause_probability": self.streaming_pause_probability,
             "streaming_max_pause_frames": self.streaming_max_pause_frames,
+            "streaming_layout": self.streaming_layout,
+            "streaming_chunk": self.streaming_chunk,
         }
 
     def __setstate__(self, state):
@@ -170,6 +177,8 @@ class FeatureDataset:
             streaming_max_text_ratio=state["streaming_max_text_ratio"],
             streaming_pause_probability=state["streaming_pause_probability"],
             streaming_max_pause_frames=state["streaming_max_pause_frames"],
+            streaming_layout=state["streaming_layout"],
+            streaming_chunk=state["streaming_chunk"],
         )
         if self.fingerprint != state["fingerprint"]:
             raise ValueError("Training build changed while starting workers")
@@ -398,13 +407,21 @@ class FeatureDataset:
         if self.streaming_fraction:
             # Text must lead speech: one text token per 12.5 Hz frame, with headroom below 1.
             eligible = len(sample["text_ids"]) <= self.streaming_max_text_ratio * len(codes)
+            if self.streaming_layout == "interleaved":
+                # tts_eos must be placed before the frames run out, or EOS would follow text.
+                eligible = (
+                    eligible
+                    and interleaved_layout(
+                        len(sample["text_ids"]) - 1, len(codes), *self.streaming_chunk
+                    )[2]
+                )
             digest = hashlib.sha256(f"streaming-v1:{c['target_id']}".encode()).digest()
             chosen = int.from_bytes(digest[:8], "little") < self.streaming_fraction * 2**64
             sample["streaming_eligible"] = eligible
             sample["streaming"] = eligible and chosen
             sample["streaming_pause"] = (
                 self._streaming_pause(digest, len(sample["text_ids"]), len(codes))
-                if eligible
+                if eligible and self.streaming_layout == "overlay"
                 else (0, 0)
             )
         return sample

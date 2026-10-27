@@ -1,4 +1,5 @@
-"""Qwen condition layouts (non-streaming, and the official input-streaming overlay) and teacher-forcing positions."""
+"""Qwen condition layouts (non-streaming; input streaming as the official overlay or as interleaved
+text/frame chunks) and teacher-forcing positions."""
 
 import torch
 from torch import nn
@@ -37,6 +38,30 @@ def frame_embeddings(talker, groups, codes):
     return value
 
 
+def interleaved_layout(streamed, frames, chunk_text, chunk_frames):
+    """Body order of an interleaved row: chunks of `chunk_text` streamed text tokens (text then
+    tts_eos), each followed by `chunk_frames` frames; the chunk holding tts_eos takes every
+    remaining frame. A prefix of the frames gives a prefix of the full order, so generation and
+    training share one layout. Returns (segments, predictors, text_done): `segments` are
+    ("text" | "frames", start, end) slices, `predictors` the body index whose output predicts each
+    frame and finally the next frame or EOS, `text_done` whether tts_eos is placed."""
+    segments, predictors, position, text, frame = [], [], 0, 0, 0
+    while True:
+        end = min(text + chunk_text, streamed)
+        segments.append(("text", text, end))
+        position, text = position + end - text, end
+        done = text == streamed
+        take = frames - frame if done else min(chunk_frames, frames - frame)
+        if take:
+            segments.append(("frames", frame, frame + take))
+        # The last token placed so far predicts the next frame.
+        predictors.extend(range(position - 1, position - 1 + take))
+        position, frame = position + take, frame + take
+        if done or take < chunk_frames:
+            predictors.append(position - 1)
+            return segments, predictors, done
+
+
 def build_inputs(talker, speaker_encoder, config, batch):
     text = talker.text_projection(talker.model.text_embedding(batch["text_ids"]))
     frames = frame_embeddings(talker, config.num_code_groups, batch["codes"])
@@ -73,6 +98,9 @@ def build_inputs(talker, speaker_encoder, config, batch):
         raise ValueError(
             "Streaming follows the Qwen3 prefill; use the qwen3_non_streaming protocol"
         )
+    interleaved = getattr(config, "lm_tts_streaming_layout", "overlay") == "interleaved"
+    if interleaved:
+        chunk_text, chunk_frames = config.lm_tts_streaming_chunk
     # Streaming rows overlay raw text on [cbos, C0, ...]; keep the embeddings before any padding.
     raw_text, raw_frames, raw_bos = text, frames, bos
     if protocol == "qwen3_non_streaming":
@@ -128,7 +156,22 @@ def build_inputs(talker, speaker_encoder, config, batch):
             prefix.insert(2 if protocol == "qwen3_non_streaming" else 1, speaker[index : index + 1])
         prefix_length = sum(len(part) for part in prefix)
         length = prefix_length + 1 + len(frame_row)
-        if streaming[index]:
+        predictors = torch.arange(1 + len(frame_row))
+        if streaming[index] and interleaved:
+            # Text keeps its own positions (text + codec_pad, frames + tts_pad, as non-streaming);
+            # no codec_bos: the last token before each frame predicts it.
+            segments, order, _ = interleaved_layout(
+                len(text_row) - 1, len(frame_row), chunk_text, chunk_frames
+            )
+            body = text_row[1:]
+            pieces.extend(prefix)
+            pieces.extend(
+                body[a:b] if kind == "text" else frame_row[a:b] for kind, a, b in segments
+            )
+            # A generation prefix may not have placed all of the text yet.
+            length = prefix_length + sum(b - a for _, a, b in segments)
+            predictors = torch.tensor(order)
+        elif streaming[index]:
             overlay = raw_text_rows[index][1:]
             if "streaming_pause" in batch:
                 # Late text: a run of tts_pad between streamed tokens, as an upstream stall gives.
@@ -142,9 +185,7 @@ def build_inputs(talker, speaker_encoder, config, batch):
         else:
             pieces.extend([*prefix, bos, frame_row])
         positions.append(torch.arange(length, device=text.device))
-        audio_positions.append(
-            torch.arange(offsets[-1] + prefix_length, offsets[-1] + length, device=text.device)
-        )
+        audio_positions.append(predictors.to(text.device) + offsets[-1] + prefix_length)
         offsets.append(offsets[-1] + length)
     cu_seqlens = torch.tensor(offsets, dtype=torch.int32, device=text.device)
     max_length = max(len(p) for p in positions)

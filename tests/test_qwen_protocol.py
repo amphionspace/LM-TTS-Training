@@ -8,7 +8,8 @@ from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
 
 from lm_tts.data.batch import collate
-from lm_tts.models.protocol import frame_embeddings
+from lm_tts.models.protocol import frame_embeddings, interleaved_layout
+from lm_tts.training.engine import talker_lengths
 
 
 class QwenProtocolTests(test_protocol.ProtocolTests):
@@ -99,6 +100,145 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
         batch["streaming_pause"] = torch.tensor([[1, 3]])
         with self.assertRaisesRegex(ValueError, "ends by the EOS"):
             self.model.input_embeddings(batch)
+
+    def interleaved(self, frames=5):
+        self.model.config.lm_tts_input_layout = "mixed"
+        self.model.config.lm_tts_streaming_layout = "interleaved"
+        self.model.config.lm_tts_streaming_chunk = [2, 3]
+        torch.manual_seed(5)
+        return {**self.row, "codes": torch.randint(0, 2048, (frames, 16))}
+
+    def streamed(self, row):
+        batch = collate([row])
+        batch["streaming"] = torch.tensor([True])
+        return batch
+
+    @torch.no_grad()
+    def test_interleaved_rows_alternate_text_and_frame_chunks(self):
+        row = self.interleaved()
+        talker, cfg = self.model.talker, self.model.config
+        inputs, audio = self.model.input_embeddings(self.streamed(row))
+        hidden = inputs["inputs_embeds"].flatten(0, 1)
+        # Streamed text [3, 7, 11, tts_eos] in chunks of 2, three frames after the first chunk;
+        # the chunk with tts_eos takes the remaining two frames.
+
+        def project(ids):
+            return talker.text_projection(talker.model.text_embedding(torch.tensor(ids)))
+
+        text = project([3, 7, 11, 19]) + talker.model.codec_embedding.weight[cfg.codec_pad_id]
+        frames = frame_embeddings(talker, 16, row["codes"]) + project([20])
+        body = torch.cat([text[:2], frames[:3], text[2:], frames[3:]])
+        start = len(hidden) - len(body)
+        torch.testing.assert_close(hidden[start:], body, atol=2e-7, rtol=2e-6)
+        # Each frame is predicted by the token before it; the last frame predicts EOS.
+        self.assertEqual((audio - start).tolist(), [1, 2, 3, 6, 7, 8])
+        # The prefix is the overlay's: role, controls, speaker, tts_bos.
+        cfg.lm_tts_streaming_layout = "overlay"
+        reference = self.model.input_embeddings(self.streamed(row))[0]["inputs_embeds"]
+        cfg.lm_tts_streaming_layout = "interleaved"
+        torch.testing.assert_close(hidden[:start], reference.flatten(0, 1)[:start], atol=0, rtol=0)
+        plain = {**row, "text_ids": [18, 5, 19], "codes": row["codes"][:2]}
+        batch = collate([plain, row])
+        batch["streaming"] = torch.tensor([False, True])
+        mixed, _ = self.model.input_embeddings(batch)
+        lengths = mixed["cu_seq_lens_q"].diff()
+        self.assertEqual(lengths[1].item(), len(hidden))
+        self.assertEqual(
+            talker_lengths(batch, self.model.prefix_tokens, "interleaved").tolist(),
+            lengths.tolist(),
+        )
+
+    @torch.no_grad()
+    def test_interleaved_generation_prefixes_are_prefixes_of_the_training_row(self):
+        row = self.interleaved()
+        full, audio = self.model.input_embeddings(self.streamed(row))
+        full = full["inputs_embeds"].flatten(0, 1)
+        for frames in range(len(row["codes"]) + 1):
+            partial, positions = self.model.input_embeddings(
+                self.streamed({**row, "codes": row["codes"][:frames]})
+            )
+            torch.testing.assert_close(
+                partial["position_ids"][0], torch.arange(partial["inputs_embeds"].shape[1])
+            )
+            partial = partial["inputs_embeds"].flatten(0, 1)
+            # Generation sees exactly the training row up to the token predicting the next frame.
+            self.assertEqual(positions[-1].item(), len(partial) - 1)
+            self.assertEqual(positions.tolist(), audio[: frames + 1].tolist())
+            torch.testing.assert_close(partial, full[: len(partial)], atol=0, rtol=0)
+        self.assertFalse(interleaved_layout(4, 2, 2, 3)[2])
+        self.assertTrue(interleaved_layout(4, 3, 2, 3)[2])
+
+    @torch.no_grad()
+    def test_interleaved_teacher_forcing_matches_generation(self):
+        row = self.interleaved()
+        heads = [self.model.talker.codec_head, *self.model.talker.code_predictor.lm_head]
+        captures = [[] for _ in heads]
+        handles = [
+            head.register_forward_hook(
+                lambda module, args, output, i=i: captures[i].append(output.detach().clone())
+            )
+            for i, head in enumerate(heads)
+        ]
+        try:
+            target = row["codes"].clone()
+            for t in range(len(target)):
+                frame, _ = self.model(
+                    self.streamed({**row, "codes": target[:t]}), mode="next_frame"
+                )
+                generated = [values.pop() for values in captures]
+                target[t] = frame[0]
+                self.model(self.streamed({**row, "codes": target}))
+                training = [values.pop() for values in captures]
+                for g, logits in enumerate(generated):
+                    torch.testing.assert_close(training[g][t : t + 1], logits, atol=2e-6, rtol=2e-5)
+        finally:
+            for handle in handles:
+                handle.remove()
+
+    def test_interleaved_generation_blocks_eos_until_tts_eos_is_placed(self):
+        from lm_tts.inference.codec import generate_codes
+
+        self.interleaved()
+        self.model.config.lm_tts_language_conditioning = "codec_language_id"
+        calls = []
+
+        def step(batch, mode, suppress_eos, generation):
+            calls.append((len(batch["codes"]), suppress_eos, batch["history"].tolist()))
+            self.assertEqual(
+                (batch["streaming"].tolist(), batch["language_codec_ids"].tolist()), ([True], [-1])
+            )
+            return torch.full((1, 16), len(calls)), torch.tensor([False])
+
+        reference = torch.zeros((1, 16), dtype=torch.long)
+        with patch.object(self.model, "forward", side_effect=step):
+            generate_codes(
+                self.model,
+                [18, 3, 7, 11, 19],
+                reference,
+                speaker_embedding=torch.ones(self.model.config.hidden_size),
+                streaming=True,
+                language_codec_id=-1,
+                penalize_reference=False,
+                max_new_tokens=4,
+            )
+        # Chunks of 2 text / 3 frames: tts_eos is placed once 3 frames (1 reference) exist.
+        self.assertEqual(
+            calls, [(1, True, []), (2, True, [1]), (3, False, [1, 2]), (4, False, [1, 2, 3])]
+        )
+        with self.assertRaisesRegex(ValueError, "language_codec_id"):
+            generate_codes(
+                self.model, [18, 19], reference, speaker_embedding=torch.ones(64), streaming=True
+            )
+        self.model.config.lm_tts_streaming_layout = "overlay"
+        with self.assertRaisesRegex(ValueError, "interleaved mixed-layout"):
+            generate_codes(
+                self.model,
+                [18, 19],
+                reference,
+                speaker_embedding=torch.ones(64),
+                streaming=True,
+                language_codec_id=-1,
+            )
 
     def check_official_prefix(self, languages, codec_id, streaming=False):
         full = Qwen3TTSConfig(

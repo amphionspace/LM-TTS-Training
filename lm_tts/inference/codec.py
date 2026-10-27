@@ -7,6 +7,7 @@ import torch
 from transformers import AutoTokenizer
 
 from ..models.loading import load_model
+from ..models.protocol import interleaved_layout
 
 
 def validate_generation(settings):
@@ -50,8 +51,30 @@ def validate_generation(settings):
 
 
 @torch.inference_mode()
-def generate_codes(model, text_ids, reference_codes=None, *, speaker_embedding=None, **settings):
+def generate_codes(
+    model,
+    text_ids,
+    reference_codes=None,
+    *,
+    speaker_embedding=None,
+    streaming=False,
+    language_codec_id=None,
+    penalize_reference=True,
+    **settings,
+):
+    """streaming decodes the interleaved layout; EOS stays blocked until tts_eos is placed, since
+    training never ends before the text does. penalize_reference=False applies the repetition
+    penalty to generated frames only, as the official Qwen generate does."""
     validate_generation(settings)
+    mixed = getattr(model.config, "lm_tts_input_layout", "non_streaming") == "mixed"
+    interleaved = getattr(model.config, "lm_tts_streaming_layout", "overlay") == "interleaved"
+    if streaming and not (mixed and interleaved):
+        raise ValueError("Streaming generation requires an interleaved mixed-layout model")
+    language = getattr(model.config, "lm_tts_language_conditioning", "auto") == "codec_language_id"
+    if language != (language_codec_id is not None):
+        raise ValueError(
+            "language_codec_id (-1 for Auto) must match the model's language conditioning"
+        )
     use_speaker = getattr(model.config, "lm_tts_use_speaker_embedding", True)
     if use_speaker != (speaker_embedding is not None):
         raise ValueError("Speaker embedding must match the model conditioning configuration")
@@ -77,6 +100,10 @@ def generate_codes(model, text_ids, reference_codes=None, *, speaker_embedding=N
         raise ValueError("Reference codec shape or vocabulary range is invalid")
     reference_frames = len(codes)
     batch = {"text_ids": text, "text_lengths": text.new_tensor([len(text)])}
+    if mixed:
+        batch["streaming"] = torch.tensor([streaming], device=device)
+    if language:
+        batch["language_codec_ids"] = text.new_tensor([language_codec_id])
     if use_speaker:
         speaker = torch.as_tensor(speaker_embedding, device=device)
         if (
@@ -89,10 +116,18 @@ def generate_codes(model, text_ids, reference_codes=None, *, speaker_embedding=N
     model.eval()
     for frame in range(settings.get("max_new_tokens", 2048)):
         batch.update(codes=codes, frame_lengths=text.new_tensor([len(codes)]))
+        if not penalize_reference:
+            batch["history"] = codes[reference_frames:, 0]
+        text_pending = (
+            streaming
+            and not interleaved_layout(
+                len(text) - 1, len(codes), *model.config.lm_tts_streaming_chunk
+            )[2]
+        )
         next_codes, stop = model(
             batch,
             mode="next_frame",
-            suppress_eos=frame < settings.get("min_new_tokens", 1),
+            suppress_eos=frame < settings.get("min_new_tokens", 1) or text_pending,
             generation=settings,
         )
         if stop.item():
@@ -138,7 +173,16 @@ class CodecSynthesizer:
 
     @torch.inference_mode()
     def synthesize(
-        self, text, reference_audio=None, reference_text=None, *, speaker_audio=None, **settings
+        self,
+        text,
+        reference_audio=None,
+        reference_text=None,
+        *,
+        speaker_audio=None,
+        streaming=False,
+        language_codec_id=None,
+        penalize_reference=True,
+        **settings,
     ):
         if reference_audio is not None and not (reference_text and reference_text.strip()):
             raise ValueError("Codec-prefix ICL requires reference_text matching reference_audio")
@@ -161,7 +205,16 @@ class CodecSynthesizer:
             speaker = extract_speaker_embedding(self.model.speaker_encoder, source)
         elif speaker_audio is not None:
             raise ValueError("A no-speaker model cannot consume speaker_audio")
-        codes = generate_codes(self.model, ids, prefix, speaker_embedding=speaker, **settings)
+        codes = generate_codes(
+            self.model,
+            ids,
+            prefix,
+            speaker_embedding=speaker,
+            streaming=streaming,
+            language_codec_id=language_codec_id,
+            penalize_reference=penalize_reference,
+            **settings,
+        )
         if not len(codes):
             raise ValueError("Model generated EOS before any audio frame")
         combined = codes if prefix is None else torch.cat([prefix.to(codes.device), codes])

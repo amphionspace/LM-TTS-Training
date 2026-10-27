@@ -72,11 +72,17 @@ def main():
         config = json.loads(config_path.read_text())
         config.setdefault("talker_config", {})["lm_tts_language_conditioning"] = language
         config_path.write_text(json.dumps(config, indent=2) + "\n")
-    if metadata["signature"].get("settings", {}).get("streaming_fraction"):
+    settings = metadata["signature"].get("settings", {})
+    if settings.get("streaming_fraction"):
         # Evaluation refuses input-streaming decoding for exports that never trained on it.
         config_path = args.output / "config.json"
         config = json.loads(config_path.read_text())
-        config.setdefault("talker_config", {})["lm_tts_input_layout"] = "mixed"
+        talker = config.setdefault("talker_config", {})
+        talker["lm_tts_input_layout"] = "mixed"
+        if settings.get("streaming_layout") == "interleaved":
+            # Official qwen_tts only knows the overlay; interleaved decoding uses lm_tts.
+            talker["lm_tts_streaming_layout"] = "interleaved"
+            talker["lm_tts_streaming_chunk"] = settings["streaming_chunk"]
         config_path.write_text(json.dumps(config, indent=2) + "\n")
     use_speaker = metadata["signature"].get("model", {}).get("use_speaker_embedding", True)
     if not use_speaker:

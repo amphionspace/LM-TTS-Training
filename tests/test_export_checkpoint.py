@@ -169,3 +169,42 @@ def test_real_dcp_export_reload_and_codec_generation(tmp_path, monkeypatch, fami
     (output / "config.json").write_text((output / "config.json").read_text() + "\n")
     with pytest.raises(ValueError, match="artifact changed"):
         load_model(output, attn_implementation="sdpa")
+
+
+def test_interleaved_streaming_export_tells_evaluation_its_layout(tmp_path, monkeypatch):
+    # Without these fields evaluation would decode the official overlay instead.
+    assembled = tmp_path / "assembled"
+    assembled.mkdir()
+    (assembled / "assembly_report.json").write_text("{}")
+    (assembled / "config.json").write_text("{}")
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "COMPLETE").touch()
+    settings = {
+        "streaming_fraction": 0.5,
+        "streaming_layout": "interleaved",
+        "streaming_chunk": [5, 10],
+    }
+    (checkpoint / "metadata.json").write_text(
+        json.dumps(
+            {
+                "signature": {
+                    "assembly_sha256": file_hash(assembled / "assembly_report.json"),
+                    "settings": settings,
+                },
+                "progress": {"step": 1},
+            }
+        )
+    )
+    monkeypatch.setattr(export_checkpoint, "load_model", lambda *a, **kw: torch.nn.Linear(1, 1))
+    monkeypatch.setattr(export_checkpoint.dcp, "load", lambda state, **kwargs: None)
+    output = tmp_path / "output"
+    argv = ["export", "--checkpoint", str(checkpoint), "--assembled-model", str(assembled)]
+    monkeypatch.setattr(sys, "argv", [*argv, "--output", str(output)])
+    export_checkpoint.main()
+    talker = json.loads((output / "config.json").read_text())["talker_config"]
+    assert (talker["lm_tts_input_layout"], talker["lm_tts_streaming_layout"]) == (
+        "mixed",
+        "interleaved",
+    )
+    assert talker["lm_tts_streaming_chunk"] == [5, 10]

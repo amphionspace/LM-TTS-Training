@@ -46,13 +46,18 @@ STREAMING_KEYS = (
     "streaming_max_text_ratio",
     "streaming_pause_probability",
     "streaming_max_pause_frames",
+    "streaming_layout",
+    "streaming_chunk",
 )
 
 
-def talker_lengths(batch, prefix_tokens):
-    """Per-row Talker sequence lengths; streaming rows keep only bos of the text in the prefix."""
+def talker_lengths(batch, prefix_tokens, layout="overlay"):
+    """Per-row Talker sequence lengths. Overlay streaming rows keep only bos of the text in the
+    prefix; interleaved rows keep all text but drop codec_bos."""
     text = batch["text_lengths"]
     if "streaming" in batch:
+        if layout == "interleaved":
+            return text + batch["frame_lengths"] + prefix_tokens - batch["streaming"].long()
         text = text.masked_fill(batch["streaming"], 1)
     return text + batch["frame_lengths"] + prefix_tokens
 
@@ -85,6 +90,7 @@ def verify_conditioning(model, dataset):
 
 def run(config, resume=None, eval_only=False):
     seed, settings = config["seed"], config["train"]
+    layout = settings.get("streaming_layout", "overlay")
     policy, backend = training_precision(settings, config["model"])
     random.seed(seed)
     np.random.seed(seed)
@@ -108,7 +114,7 @@ def run(config, resume=None, eval_only=False):
                 language_auto_fraction=settings.get("language_auto_fraction", 0.0),
             )
         if settings.get("streaming_fraction"):
-            reader_options.update({key: settings[key] for key in STREAMING_KEYS})
+            reader_options.update({key: settings[key] for key in STREAMING_KEYS if key in settings})
         train_data = FeatureDataset(
             config["data"]["build"],
             specials,
@@ -158,6 +164,9 @@ def run(config, resume=None, eval_only=False):
             if full_config.get("model_type") != "qwen3_tts" or protocol != "qwen3_non_streaming":
                 raise ValueError("Streaming follows the Qwen3 prefill; it needs a Qwen3 talker")
             model.config.lm_tts_input_layout = "mixed"
+            if settings.get("streaming_layout") == "interleaved":
+                model.config.lm_tts_streaming_layout = "interleaved"
+                model.config.lm_tts_streaming_chunk = settings["streaming_chunk"]
         verify_conditioning(model, train_data)
         if val_data is not None:
             verify_tokenizer_compatibility(assembled, val_data.manifest["tokenizer"])
@@ -406,9 +415,11 @@ def run(config, resume=None, eval_only=False):
                     sum(b["audio_seconds"].sum().item() for b in batches),
                     skipped_since_log,
                     discarded_since_log,
-                    sum(talker_lengths(b, model.prefix_tokens).sum().item() for b in batches),
                     sum(
-                        talker_lengths(b, model.prefix_tokens).max().item()
+                        talker_lengths(b, model.prefix_tokens, layout).sum().item() for b in batches
+                    ),
+                    sum(
+                        talker_lengths(b, model.prefix_tokens, layout).max().item()
                         * len(b["frame_lengths"])
                         for b in batches
                     ),

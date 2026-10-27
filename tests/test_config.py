@@ -155,6 +155,19 @@ def test_streaming_defaults_keep_text_lead_and_train_on_late_text(tmp_path):
     assert "streaming_fraction" not in load_config(Path(__file__).parents[1] / LANGID)["train"]
 
 
+def test_interleaved_streaming_defaults_to_no_pauses(tmp_path):
+    train = streaming_config(
+        tmp_path,
+        {
+            "streaming_fraction": 0.5,
+            "streaming_layout": "interleaved",
+            "streaming_chunk": [5, 10],
+            "streaming_max_text_ratio": 0.4,
+        },
+    )["train"]
+    assert (train["streaming_pause_probability"], train["streaming_max_pause_frames"]) == (0, 0)
+
+
 @pytest.mark.parametrize(
     "change, message",
     [
@@ -166,6 +179,34 @@ def test_streaming_defaults_keep_text_lead_and_train_on_late_text(tmp_path):
             {"streaming_fraction": 0.5, "streaming_max_pause_frames": 0},
             "max_pause_frames",
         ),
+        ({"streaming_fraction": 0.5, "streaming_layout": "chunked"}, "overlay or interleaved"),
+        (
+            {
+                "streaming_fraction": 0.5,
+                "streaming_layout": "interleaved",
+                "streaming_max_text_ratio": 0.4,
+            },
+            "streaming_chunk",
+        ),
+        (
+            {
+                "streaming_fraction": 0.5,
+                "streaming_layout": "interleaved",
+                "streaming_chunk": [5, 10],
+            },
+            "explicit streaming_max_text_ratio",
+        ),
+        (
+            {
+                "streaming_fraction": 0.5,
+                "streaming_layout": "interleaved",
+                "streaming_chunk": [5, 10],
+                "streaming_max_text_ratio": 0.4,
+                "streaming_pause_probability": 0.3,
+            },
+            "no text pauses",
+        ),
+        ({"streaming_fraction": 0.5, "streaming_chunk": [5, 10]}, "requires streaming_layout"),
     ],
 )
 def test_bad_streaming_settings_fail_before_execution(tmp_path, change, message):
