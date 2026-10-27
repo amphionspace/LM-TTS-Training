@@ -72,7 +72,7 @@ def payload(platform, training, runtime, experiment, *, resume=None, validate=Fa
             },
         ],
         "resource_pool": {"name": platform["cluster"], "zone": platform["zone"]},
-        "scheduling": {"priority": "NORMAL", "quota_type": "RESERVED"},
+        "scheduling": {"priority": platform.get("priority", "NORMAL"), "quota_type": "RESERVED"},
         "ssh": {"auto_key_setup": platform["ssh_auto_key_setup"]},
         "fault_tolerance": {"backoff_limit": 0},
         "root_mapping": True,
