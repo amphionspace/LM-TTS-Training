@@ -1,13 +1,14 @@
-"""Codec generation using the training input protocol and complete prefixes, without KV caching."""
+"""Codec generation from complete prefixes built by the training input protocol (optionally KV-cached)."""
 
 import json
 from pathlib import Path
 
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, DynamicCache
 
 from ..models.loading import load_model
 from ..models.protocol import interleaved_layout
+from ..models.qwen import TTSModel
 
 
 def validate_generation(settings):
@@ -60,12 +61,17 @@ def generate_codes(
     streaming=False,
     language_codec_id=None,
     penalize_reference=True,
+    use_cache=False,
     **settings,
 ):
-    """streaming decodes the interleaved layout; EOS stays blocked until tts_eos is placed, since
+    """use_cache (Qwen talkers) runs only the positions added since the previous frame through the
+    backbone; the row is still rebuilt each frame by the training protocol, so both are equal.
+    streaming decodes the interleaved layout; EOS stays blocked until tts_eos is placed, since
     training never ends before the text does. penalize_reference=False applies the repetition
     penalty to generated frames only, as the official Qwen generate does."""
     validate_generation(settings)
+    if use_cache and not isinstance(model, TTSModel):
+        raise ValueError("Cached generation is implemented for Qwen talkers only")
     mixed = getattr(model.config, "lm_tts_input_layout", "non_streaming") == "mixed"
     interleaved = getattr(model.config, "lm_tts_streaming_layout", "overlay") == "interleaved"
     if streaming and not (mixed and interleaved):
@@ -114,6 +120,7 @@ def generate_codes(
             raise ValueError("Speaker embedding must be a finite nonzero vector of hidden_size")
         batch["speaker_embeddings"] = speaker.unsqueeze(0)
     model.eval()
+    cache = DynamicCache() if use_cache else None
     for frame in range(settings.get("max_new_tokens", 2048)):
         batch.update(codes=codes, frame_lengths=text.new_tensor([len(codes)]))
         if not penalize_reference:
@@ -129,6 +136,7 @@ def generate_codes(
             mode="next_frame",
             suppress_eos=frame < settings.get("min_new_tokens", 1) or text_pending,
             generation=settings,
+            cache=cache,
         )
         if stop.item():
             break
@@ -182,6 +190,7 @@ class CodecSynthesizer:
         streaming=False,
         language_codec_id=None,
         penalize_reference=True,
+        use_cache=False,
         **settings,
     ):
         if reference_audio is not None and not (reference_text and reference_text.strip()):
@@ -213,6 +222,7 @@ class CodecSynthesizer:
             streaming=streaming,
             language_codec_id=language_codec_id,
             penalize_reference=penalize_reference,
+            use_cache=use_cache,
             **settings,
         )
         if not len(codes):

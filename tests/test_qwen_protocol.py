@@ -195,6 +195,32 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
             for handle in handles:
                 handle.remove()
 
+    def test_cached_generation_matches_full_prefix_recompute(self):
+        from lm_tts.inference.codec import generate_codes
+
+        row = self.interleaved()
+        self.model.speaker_encoder.requires_grad_(False)
+        settings = dict(
+            max_new_tokens=8, min_new_tokens=8, subtalker_dosample=True, subtalker_top_k=10
+        )
+        for streaming in (False, True):
+            outputs = []
+            for use_cache in (False, True):
+                torch.manual_seed(3)
+                outputs.append(
+                    generate_codes(
+                        self.model,
+                        row["text_ids"],
+                        row["codes"][:1],
+                        speaker_embedding=torch.ones(self.model.config.hidden_size),
+                        streaming=streaming,
+                        use_cache=use_cache,
+                        **settings,
+                    )
+                )
+            torch.testing.assert_close(outputs[1], outputs[0], atol=0, rtol=0)
+            self.assertEqual(len(outputs[0]), 8)
+
     def test_interleaved_generation_blocks_eos_until_tts_eos_is_placed(self):
         from lm_tts.inference.codec import generate_codes
 
@@ -202,7 +228,7 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
         self.model.config.lm_tts_language_conditioning = "codec_language_id"
         calls = []
 
-        def step(batch, mode, suppress_eos, generation):
+        def step(batch, mode, suppress_eos, generation, cache):
             calls.append((len(batch["codes"]), suppress_eos, batch["history"].tolist()))
             self.assertEqual(
                 (batch["streaming"].tolist(), batch["language_codec_ids"].tolist()), ([True], [-1])

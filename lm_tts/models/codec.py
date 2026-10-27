@@ -60,12 +60,33 @@ class CodecTTSModel(nn.Module):
         outputs = self.talker.model(**inputs, use_cache=False)
         return outputs.last_hidden_state.flatten(0, 1)[audio_positions]
 
-    def forward(self, batch, mode="predict", suppress_eos=False, generation=None):
-        hidden = self.hidden(batch)
-        last_positions = (batch["frame_lengths"] + 1).cumsum(0) - 1
+    def cached_hidden(self, batch, cache):
+        """Hidden state predicting the next frame of one generation row, running only the positions
+        past `cache`. Valid because every row of a growing frame prefix extends the previous one."""
+        inputs, audio_positions = self.input_embeddings(batch)
+        embeds, positions = inputs["inputs_embeds"], inputs["position_ids"]
+        start, length = cache.get_seq_length(), embeds.shape[1]
+        if embeds.shape[0] != 1 or audio_positions[-1].item() != length - 1 or start >= length:
+            raise ValueError("Cached generation needs one row that ends at its next predictor")
+        outputs = self.talker.model(
+            inputs_embeds=embeds[:, start:],
+            position_ids=positions[:, start:],
+            past_key_values=cache,
+            use_cache=True,
+            cache_position=torch.arange(start, length, device=embeds.device),
+        )
+        return outputs.last_hidden_state[:, -1]
+
+    def forward(self, batch, mode="predict", suppress_eos=False, generation=None, cache=None):
+        if mode == "next_frame" and cache is not None:
+            h = self.cached_hidden(batch, cache)
+        else:
+            hidden = self.hidden(batch)
+            last_positions = (batch["frame_lengths"] + 1).cumsum(0) - 1
         if mode == "next_frame":
             # Generation uses one unpadded sample on every rank.
-            h = hidden[last_positions]
+            if cache is None:
+                h = hidden[last_positions]
             logits = self.talker.codec_head(h).float()
             allowed = torch.cat(
                 [logits[:, : self.code_size], logits[:, self.eos : self.eos + 1]], dim=-1
