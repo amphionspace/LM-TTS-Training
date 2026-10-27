@@ -1,6 +1,6 @@
 # 输入流式（streaming）TTS：现状、数据可行性与训练方案
 
-日期：2026-10-20（PDT）。第一步已于 2026-10-22 实现（见第 9 节），尚未训练。数据统计的脚本和结果在 [evidence/streaming-tts-20261020/](evidence/streaming-tts-20261020/)。论文结论来自原文。凡是标注为"推测"的，都是基于这些资料的推断，尚未经过实验验证。
+日期：2026-10-20（PDT）。第一步已于 2026-10-22 实现（见第 9 节）。2026-10-26 改为交错排布，见第 11 节。数据统计的脚本和结果在 [evidence/streaming-tts-20261020/](evidence/streaming-tts-20261020/)。论文结论来自原文。凡是标注为"推测"的，都是基于这些资料的推断，尚未经过实验验证。
 
 ---
 
@@ -99,7 +99,7 @@ role | 控制+pad | speaker+pad | cpad+bos | cbos+t₁  C₀+t₂  C₁+t₃ …
 - **排布**：参考 DSM-TTS，每个词放在 floor(起始时间 × 12.5) 帧，其余为 pad。文本提前 1–2 个词作为 lookahead（DSM-TTS 用 2 个，SpeakStream 3–4 个最好，S5-TTS 1–2 个）。可以再让模型预测"下一步是否取下一个词"（action stream），这样文本快慢都能处理。
 - **代价**：要给 1.1 亿条做对齐，需要先在子集上验证对齐质量和收益；排布与官方格式不兼容，需要自有的推理入口。
 
-**不建议**改成固定 N:M 块交错：相对 A 类叠加，没有看到明确的优势，有长文本漂移的报告，而且与官方格式不兼容。
+**不建议**改成固定 N:M 块交错：相对 A 类叠加，没有看到明确的优势，有长文本漂移的报告，而且与官方格式不兼容。（2026-10-26 已推翻，改为 5:10 交错，见第 11 节。）
 
 ## 6. 实现清单（第一步，按 Opus 评审补全）
 
@@ -193,3 +193,136 @@ streaming 输出音色正确，但内容基本不对，目前不能用。
 1. 从 streaming s5000 续训 1–2k 步，解冻 `text_projection`（官方推理直接用它，导出后不需要改推理代码），看 streaming CE 是否明显下降得更快，以此验证上面的原因。
 2. 以后从头训练时，限制 codec embedding 范数的增长（例如对 embedding 加 weight decay 或加范数上限），让文本 ÷ 帧保持在官方水平附近。
 3. UltraEval 的 streaming 入口：`voice_clone_infer.py` 不传 `--non-streaming` 时已经走官方 streaming。还缺 `run_seed_tts.py` 的开关，以及审计中「必须是 non-streaming」检查的放宽。
+
+## 11. 从头训练的 overlay streaming、范数诊断，以及改为交错排布（2026-10-26）
+
+脚本和结果在 [evidence/streaming-interleave-20261026/](evidence/streaming-interleave-20261026/)。脚本使用本机绝对路径，只读 checkpoint 和导出模型。
+
+### 11.1 streaming50：从头训练 overlay streaming
+
+pt-isfahe7o（`configs/supervised-tts-20261025-…-streaming50-…`）沿用语言 ID run 的配方，只多了 `streaming_fraction: 0.5`，并把 `decay_ratio` 改为 0.2。它从 10-25 22:41 训到约 10k 步，10-26 20:4x 停止，换成 11.4 节的交错 run。
+
+Seed-TTS（speaker + ICL，Auto，默认采样，WER/CER 与 SIM，单位 %）：
+
+| step | 新 run non-streaming | 新 run streaming（官方 overlay 推理） | 主 run（只训 non-streaming） |
+| --- | --- | --- | --- |
+| 2.5k | 27.1 / 34.5 · 33.9 / 53.2 | 92.6 / 32.4 · 89.5 / 52.0 | 9.8 / 36.8 · 15.1 / 53.1 |
+| 5k | 10.7 / 45.2 · 14.3 / 60.7 | 33.6 / 43.4 · 41.2 / 60.5 | 6.7 / 46.7 · 8.9 / 61.5 |
+| 7.5k | 6.3 / 51.6 · 7.6 / 64.7 | 19.1 / 50.1 · 22.4 / 64.2 | 5.2 / 52.4 · 5.5 / 65.1 |
+
+（每格依次为 en WER / en SIM · zh CER / zh SIM。）
+
+val first_ce（streaming / non-streaming / 主 run）：2.5k 1.86 / 1.59 / 1.54；5k 1.55 / 1.44 / 1.42；7.5k 1.45 / 1.38 / 1.36。训练集上两种格式的 first_ce 差距在 1,250 步左右最大（0.68），之后一直在缩小（3,750 步时 0.15）。streaming 一直在变好，但到 7.5k 时 WER 仍是 non-streaming 的约 3 倍。non-streaming 起步明显慢于主 run，2.5k 时差距约 3 倍，到 7.5k 已基本追上。
+
+### 11.2 排除了实现问题
+
+- **UltraEval 新增 streaming 评测**：`run_seed_tts.py --streaming`，watcher 增加 `default_streaming` 一组，审计检查每条结果的格式。
+- **推理代码没问题**：官方 0.6B 用同一套 streaming 推理，4 条冒烟样本的 WER/CER 为 0–4.5%。
+- **训练和推理的输入一致**：x-vector streaming 下，训练 `build_inputs` 与官方 prefill 加逐步 trailing 构造的输入，49 个位置的差值全为 0（`layout_diff.py`）。
+- **生成过程一致**：s37,500 续训的 5k 模型贪心生成后，再用训练格式 teacher forcing，每帧的 argmax 与生成结果 100% 一致（`greedy_consistency.py`）。所以 11.1 节的问题来自模型本身。
+
+### 11.3 teacher-forced CE（Seed zh 60 句，`tf_ce.py`）
+
+| 模型 | streaming | non-streaming | 换成另一句的文本后（streaming / non-streaming） |
+| --- | --- | --- | --- |
+| 官方 0.6B | 1.198 | 1.154 | 2.342 / 2.146 |
+| s37,500 续训 5k | 1.446 | 1.238 | 1.813 / 1.660 |
+| 主 run 最终 ckpt（没训过 streaming） | 2.226 | 1.202 | — |
+
+官方模型两种格式只差 0.04，我们差 0.21。续训模型的 teacher-forced CE 看起来不差，但生成时 WER 达到 55–95%。CE 好看不代表生成可用。
+
+### 11.4 codec 输入表的范数增长
+
+**是什么**：每行的 L2 长度。第 0 层前有 RMSNorm，绝对大小本身意义不大，影响的是相对大小：一是 streaming 帧里文本和音频相加时的比例，二是输入向量和各层输出在残差流里的配比。
+
+**主 run，第 1 层 codec 表**（`norm_growth.py`）：
+
+| step | 100 | 2.5k | 10k | 20k | 30k | 40k | 50k | 56,384 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 行范数中位数 | 0.59 | 1.00 | 1.39 | 1.71 | 1.96 | 2.16 | 2.35 | 2.40 |
+| 与最终 ckpt 的方向 cos | 0.54 | 0.82 | 0.91 | 0.96 | 0.98 | 0.99 | 1.00 | 1.00 |
+
+- 10k 之后方向基本固定，长度仍在增长。
+- 10k–40k 之间，范数² 每步约增长 9.2e-5，恰好等于 lr²·d = (3e-4)²·1024。
+- 行范数与 codec 使用频率几乎无关（Spearman 0.12）。
+- 后 15 张表：0.64 → 1.46。
+
+**解释**：模型对输入表的整体尺度几乎不敏感。Adam 每步走固定大小的一步，方向基本与行向量垂直，按勾股定理每步都让长度变大。SGD 的步长会随梯度变小而变小，Adam 不会。weight decay 0.01 的平衡点约为 √(lr·d/2λ) ≈ 3.9，时间常数约 17 万步，所以在整个训练里一直在涨。Fable 补充了几点：
+- 严格的尺度不变性并不成立。范数变大，会相对压低每层输出对残差流的修改。
+- 漂移是在 16 张表的总和上与梯度垂直，单张表不一定，所以长度会在表之间转移，第 1 层表涨得比其他表快。
+
+**文本 ÷ 音频帧比例**（`norm_balance.py`，150 条验证样本，冻结文本 1.59）：
+
+| | 2.5k | 5k | 7.5k | 最终 |
+| --- | --- | --- | --- | --- |
+| 主 run | 0.51 | 0.43 | 0.39 | 0.19 |
+| streaming50 | 0.53 | 0.49 | 0.46 | — |
+
+官方是 0.71。streaming50 下降得比主 run 慢。两个 run 输出头的 R² 和范数几乎一样（`head_r2_streaming50_vs_main.jsonl`）。
+
+**缩放探针**（`scale_probe.py`，streaming50 7.5k，验证集前 640 条，只缩放 16 张表的音频 code 行）：
+
+| 缩放 | streaming first_ce | non-streaming first_ce | residual_ce |
+| --- | --- | --- | --- |
+| ×1 | 1.436 | 1.416 | 5.87 |
+| ×0.5 | 1.810 | 1.666 | 6.14 |
+| ×2 | 1.881 | 1.569 | 6.16 |
+
+两个方向都变差，说明 backbone 已经适应了当前的尺度，导出时不能直接把表缩放到官方的量级。streaming 对缩放更敏感。把文本比例直接提到约 0.9（×0.5）也会变差。
+
+**相关检查**：
+- **near-identity 文本前端 run**（emilia2，可训练的 backbone 文本表，`nearid_norms.py`）：
+  - 投影后的文本向量 0.92 → 1.31（6k），主要来自 projector（偏离初始化 15–31%）。文本表本身只涨了 4%。
+  - tts_pad 0.63 → 1.07，涨得最快。
+  - 文本和音频一起变长，比例稳定在 0.34–0.37，但起点很低。
+- **语言 ID 行**（codec 表中，可训练）：
+  - 大多从 0.63 涨到 1.6–2.4，方向变化很大。
+  - **俄语行（2069）完全没被训练过**：cos 1.000，只因 weight decay 略微变短。训练数据里大概率没有带语言 ID 的俄语样本。
+
+### 11.5 考虑过的方案
+
+| 方案 | 结论 |
+| --- | --- |
+| 只给 codec 表加大 weight decay / 降低 lr | 钝刀：要 λ≥0.3 才压得住，降 lr 只是让增长变慢 |
+| 每步把行投影回固定长度 | 目标长度是人为定的。官方的长度属于另一个模型；分叉点的长度也只是漂移到那里而已 |
+| 行归一化 × 可学标量（weight norm / nGPT 式，A1） | 能止住漂移、让模型自己选尺度，导出时可以折叠回表里。保留为后续单变量实验 |
+| DyT | 漂移会把输入推进 tanh 饱和区，梯度消失 |
+| 只给文本加系数 / 解冻文本投影 | 只治比例，不治漂移；near-id run 显示漂移会搬到 projector 和 tts_pad 上 |
+| 帧和后加 RMSNorm、concat、门控、fusion MLP | 要么管不住表之间的相对尺度，要么根本不解决漂移 |
+| Muon | 输入表通常仍然用 AdamW；Muon 同样是定步长更新 |
+| **交错排布（CosyVoice 2/3 bistream）** | **采用**：文本和音频永远不相加，比例问题从结构上消失 |
+
+第 5 节曾写"不建议改成固定 N:M 块交错"，理由是看不到明确的优势，而且与官方格式不兼容。本节的结果推翻了这一判断：overlay 的比例问题是结构性的，而交错只需要自有的推理入口。
+
+### 11.6 交错排布的实现（未 commit，提交训练时打包为快照）
+
+参照 CosyVoice `cosyvoice/llm/llm.py`（`prepare_lm_input_target`、`inference_bistream`，CosyVoice3 的 `mix_ratio: [5, 15]`，25 Hz）。我们的帧率是 12.5 Hz，文本密度约为它的 2 倍，所以改为 5:10。
+
+```
+role | 控制+pad | speaker+pad | bos+cpad | t₁ … t₅ (+cpad) | F₁ … F₁₀ (+pad) | t₆ … t₁₀ | F₁₁ … F₂₀ | … | 余文本 eos | 余帧
+```
+
+- **排布**：文本保留自己的位置，跨流 pad 与 non-streaming 相同（文本 + cpad，帧 + pad）。没有 cbos，也没有 fill token；推理时每 10 帧固定切回文本。包含 tts_eos 的那一块文本之后，放入全部剩余帧。
+- **预测位置**：每一帧都由它前一个 token 预测，最后一个位置预测 EOS。所以每行仍有"帧数 + 1"个预测位置，`tts_loss`、code predictor 和 refmask 都不用改。
+- **门槛**：(文本 + 2) ÷ 帧数 ≤ 0.4，比 5:10 的速率留出 1.25 倍余量，并要求帧用完前 tts_eos 已经放下。在真实数据上，合格的约 67%，按原哈希抽一半后，约 33% 的样本走 streaming。不再插入停顿：上游卡顿时，推理只需要等待。
+- **配置**：`streaming_layout: interleaved`、`streaming_chunk: [5, 10]`，`streaming_max_text_ratio` 必须显式给出。不写这两个键的 run 仍是 overlay，签名不变。导出时在 `talker_config` 中写入 `lm_tts_streaming_layout` 和 `lm_tts_streaming_chunk`。
+- **推理**：`lm_tts/inference/codec.py` 每帧用 `build_inputs` 重算整行，没有 KV cache，所以生成的输入天然与训练一致。tts_eos 放下之前屏蔽 EOS；`penalize_reference=False` 时，重复惩罚只统计生成的帧，与官方一致。ICL 时，文本流是"参考文本 + 目标文本"，参考帧作为已经生成的前缀，从头到尾用同一个计数器排。
+- **UltraEval**：`scripts/local_interleaved.py`。交错排布的导出模型在 `--streaming` 下走 lm_tts 解码，settings 记录 `decoder`、LM-TTS-Training 的 git 版本和 dirty 标记。推理前，用训练 checkpoint 的签名核对导出配置中的排布，避免旧导出悄悄退回官方 overlay。审计检查 decoder 与导出的排布一致。用临时导出（streaming50 7.5k 权重，标为交错）完整跑过一遍冒烟（生成、打分、审计 PASS）；这份权重没训过交错，WER 没有意义。
+- **测试**：
+  - 交错排布逐位置的向量和预测位置；
+  - 任意帧数的生成前缀都是训练行的前缀（向量、position_ids、预测位置），这一项抓出过一个部分行 position_ids 的 bug；
+  - teacher forcing 与逐帧生成的 logits 一致；
+  - tts_eos 放下前屏蔽 EOS，语言 ID 和 streaming 标记都正确传入；
+  - 配置校验；导出写入排布。
+  
+  全部 185 个测试通过。用真实数据和权重在 flash attention 下跑通了训练 forward 和按格式拆分的验证（`interleaved_stage0.py`）。Opus 审查没有发现训练侧的问题（另外对排布函数做了暴力枚举的性质检查），评测侧的建议已经按上面的方式处理。
+
+### 11.7 新 run 与判断标准
+
+pt-ycy9pp26（`configs/supervised-tts-20261027-…-interleaved5x10-…`，ACP 优先级 HIGHEST）于 10-26 20:47 启动。除排布外，与 streaming50 完全相同：同 init、数据、文本侧冻结、refmask、语言 ID、学习率和 decay。
+
+- 跨 run 只比较 Seed WER/CER/SIM。streaming 的损失位置集合变了，val CE 只能在新 run 内部比较两种格式。新 run 的 streaming 样本约是 streaming50 的 0.67 倍，可以同时对照按 streaming 样本数对齐的点（新 run 7.5k ≈ streaming50 5k）。
+- **成功**：7.5k 时 non-streaming ≤ 6.3 / 7.6（±0.5），streaming WER 不超过 non-streaming 的 1.3 倍。
+- **失败**：non-streaming 退步超过 1 个点，或 streaming 差距仍然超过 1.5 倍。届时检查 ICL 的排布和局部语速违约率，再考虑门槛收紧到 0.33，或改为 4:8。
+- **后续单变量实验**：A1（行归一化 × 可学标量）、refmask 以一半概率从句首截取、去掉跨流 pad、文本前端改用 backbone 词表。
+- **未决**：交错评测每帧重算整行，复杂度 O(N²)，会比较慢；俄语语言 ID 没有被训练过；本节的代码尚未 commit。
