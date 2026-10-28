@@ -70,9 +70,9 @@ def generate_codes(
     backbone; the row is still rebuilt each frame by the training protocol, so both are equal.
     streaming decodes the interleaved layout; EOS stays blocked until tts_eos is placed, since
     training never ends before the text does. penalize_reference=False applies the repetition
-    penalty to generated frames only, as the official Qwen generate does. reference_lead (the
-    number of streamed reference text tokens) places the whole reference text, then the whole
-    reference, as one first chunk instead of interleaving it (inference only, never trained)."""
+    penalty to generated frames only, as the official Qwen generate does. reference_lead (a
+    number of streamed text tokens) places that text, then the whole reference, as one first
+    chunk instead of interleaving the reference (inference only, never trained)."""
     validate_generation(settings)
     if use_cache and not isinstance(model, TTSModel):
         raise ValueError("Cached generation is implemented for Qwen talkers only")
@@ -114,7 +114,7 @@ def generate_codes(
         batch["streaming"] = torch.tensor([streaming], device=device)
     lead = (0, 0)
     if reference_lead is not None:
-        if not streaming or not reference_frames or not 0 < reference_lead < len(text) - 1:
+        if not streaming or not reference_frames or not 0 < reference_lead <= len(text) - 1:
             raise ValueError("reference_lead needs streaming ICL with target text after it")
         lead = (reference_lead, reference_frames)
         batch["streaming_lead"] = text.new_tensor([lead])
@@ -201,7 +201,7 @@ class CodecSynthesizer:
         language_codec_id=None,
         penalize_reference=True,
         use_cache=False,
-        reference_lead=False,
+        reference_lead=None,
         **settings,
     ):
         if reference_audio is not None and not (reference_text and reference_text.strip()):
@@ -235,7 +235,11 @@ class CodecSynthesizer:
             language_codec_id=language_codec_id,
             penalize_reference=penalize_reference,
             use_cache=use_cache,
-            reference_lead=len(reference_ids) if reference_lead else None,
+            # reference_lead: how many target tokens join the reference text in the lead chunk,
+            # so the text still leads the audio where the target starts.
+            reference_lead=None
+            if reference_lead is None
+            else min(len(reference_ids) + reference_lead, len(ids) - 1),
             **settings,
         )
         if not len(codes):
