@@ -8,6 +8,7 @@ from qwen_tts.core.models.configuration_qwen3_tts import Qwen3TTSConfig
 from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGeneration
 
 from lm_tts.data.batch import collate
+from lm_tts.inference.frame import next_frame
 from lm_tts.models.protocol import frame_embeddings, interleaved_layout
 from lm_tts.training.engine import talker_lengths
 
@@ -182,9 +183,7 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
         try:
             target = row["codes"].clone()
             for t in range(len(target)):
-                frame, _ = self.model(
-                    self.streamed({**row, "codes": target[:t]}), mode="next_frame"
-                )
+                frame, _ = next_frame(self.model, self.streamed({**row, "codes": target[:t]}))
                 generated = [values.pop() for values in captures]
                 target[t] = frame[0]
                 self.model(self.streamed({**row, "codes": target}))
@@ -228,7 +227,7 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
         self.model.config.lm_tts_language_conditioning = "codec_language_id"
         calls = []
 
-        def step(batch, mode, suppress_eos, generation, cache):
+        def step(model, batch, *, suppress_eos, generation, cache):
             calls.append((len(batch["codes"]), suppress_eos, batch["history"].tolist()))
             self.assertEqual(
                 (batch["streaming"].tolist(), batch["language_codec_ids"].tolist()), ([True], [-1])
@@ -236,7 +235,7 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
             return torch.full((1, 16), len(calls)), torch.tensor([False])
 
         reference = torch.zeros((1, 16), dtype=torch.long)
-        with patch.object(self.model, "forward", side_effect=step):
+        with patch("lm_tts.inference.codec.next_frame", side_effect=step):
             generate_codes(
                 self.model,
                 [18, 3, 7, 11, 19],

@@ -6,6 +6,7 @@ from reference_model import ReferenceTTSModel
 from torch.nn import functional as F
 
 from lm_tts.data.batch import collate
+from lm_tts.inference.frame import next_frame
 from lm_tts.models.qwen import make_config
 
 
@@ -38,7 +39,7 @@ class ProtocolTests(unittest.TestCase):
         try:
             for t in range(3):
                 prefix = {**self.row, "codes": self.row["codes"][:t]}
-                frame, _ = self.model(collate([prefix]), mode="next_frame")
+                frame, _ = next_frame(self.model, collate([prefix]))
                 generated_logits = [values.pop() for values in captures]
                 target = {**self.row, "codes": self.row["codes"].clone()}
                 target["codes"][t] = frame[0]

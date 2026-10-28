@@ -12,9 +12,7 @@ class ReferenceTTSModel(TTSModel):
         self.config._attn_implementation = "sdpa"
         self.config.code_predictor_config._attn_implementation = "sdpa"
 
-    def forward(self, batch, mode="loss", suppress_eos=False, loss_reduction="token", **generation):
-        if mode == "next_frame":
-            return super().forward(batch, mode=mode, suppress_eos=suppress_eos, **generation)
+    def forward(self, batch, loss_reduction="token"):
         return tts_loss(super().forward(batch), batch, self.eos, loss_reduction)
 
     def input_embeddings(self, batch):

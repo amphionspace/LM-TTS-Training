@@ -8,6 +8,7 @@ import torch
 from transformers import Lfm2Config, Lfm2Model
 
 from lm_tts.data.batch import collate
+from lm_tts.inference.frame import next_frame
 from lm_tts.models.lfm import LfmTTSModel
 from lm_tts.models.qwen import make_config
 from lm_tts.objectives.tts import tts_loss
@@ -258,7 +259,7 @@ def test_teacher_forcing_matches_generated_frame(model):
         lambda module, args, out: captures.append(out.clone())
     )
     try:
-        frame, _ = model(collate([{**row, "codes": row["codes"][:0]}]), mode="next_frame")
+        frame, _ = next_frame(model, collate([{**row, "codes": row["codes"][:0]}]))
         generated = captures.pop()
         codes = row["codes"].clone()
         codes[0] = frame[0]

@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from lm_tts.inference.codec import validate_generation
-from lm_tts.models.sampling import sample_token
+from lm_tts.inference.sampling import sample_token
 
 
 def test_sampling_filters_and_repetition_penalty():
@@ -65,13 +65,13 @@ def test_icl_preserves_text_token_boundary_and_trims_reference():
 
     synth.codec = Codec()
     seen = []
-    hook = synth.model.register_forward_pre_hook(
-        lambda model, inputs: seen.append(inputs[0]["text_ids"].tolist())
+    build = synth.model.input_embeddings
+    synth.model.input_embeddings = lambda batch: seen.append(batch["text_ids"].tolist()) or build(
+        batch
     )
     wav, rate = synth.synthesize(
         "world", "reference.wav", "hello", max_new_tokens=1, min_new_tokens=1
     )
-    hook.remove()
     assert seen == [[18, 2, 3, 19]]
     assert len(wav) == 1920 and rate == 24000
     with pytest.raises(ValueError, match="requires reference_text"):
@@ -83,6 +83,7 @@ def test_speaker_generation_matches_training_prefix_next_frame():
 
     from lm_tts.data.batch import collate
     from lm_tts.inference.codec import generate_codes
+    from lm_tts.inference.frame import next_frame
 
     torch.set_num_threads(2)
     model = speaker_model().eval()
@@ -103,7 +104,7 @@ def test_speaker_generation_matches_training_prefix_next_frame():
     with torch.inference_mode():
         for _ in range(2):
             batch = collate([{"text_ids": text, "codes": expected, "speaker_embedding": speaker}])
-            frame, stop = model(batch, mode="next_frame", suppress_eos=True, generation=settings)
+            frame, stop = next_frame(model, batch, suppress_eos=True, generation=settings)
             assert not stop.item()
             expected = torch.cat([expected, frame])
     torch.manual_seed(42)

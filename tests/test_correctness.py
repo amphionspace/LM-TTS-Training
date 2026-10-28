@@ -6,6 +6,7 @@ from reference_model import ReferenceTTSModel
 
 from lm_tts.data.batch import collate
 from lm_tts.evaluation.metrics import aggregate_content, content_metrics
+from lm_tts.inference.frame import next_frame
 from lm_tts.models.qwen import make_config
 from lm_tts.objectives.tts import loss_normalizers
 
@@ -77,7 +78,7 @@ class Correctness(unittest.TestCase):
         batch["codes"] = batch["codes"][:0]
         batch["frame_lengths"].zero_()
         with torch.no_grad():
-            codes, stop = self.model(batch, mode="next_frame")
+            codes, stop = next_frame(self.model, batch)
         self.assertEqual(codes.shape, (1, 16))
         self.assertTrue(((codes >= 0) & (codes < 2048)).all())
         self.assertEqual(stop.shape, (1,))

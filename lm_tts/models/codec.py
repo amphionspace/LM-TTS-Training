@@ -3,8 +3,6 @@
 import torch
 from torch import nn
 
-from .sampling import sample_token
-
 
 class CodecTTSModel(nn.Module):
     def sharding_modules(self):
@@ -60,73 +58,9 @@ class CodecTTSModel(nn.Module):
         outputs = self.talker.model(**inputs, use_cache=False)
         return outputs.last_hidden_state.flatten(0, 1)[audio_positions]
 
-    def cached_hidden(self, batch, cache):
-        """Hidden state predicting the next frame of one generation row, running only the positions
-        past `cache`. Valid because every row of a growing frame prefix extends the previous one."""
-        inputs, audio_positions = self.input_embeddings(batch)
-        embeds, positions = inputs["inputs_embeds"], inputs["position_ids"]
-        start, length = cache.get_seq_length(), embeds.shape[1]
-        if embeds.shape[0] != 1 or audio_positions[-1].item() != length - 1 or start >= length:
-            raise ValueError("Cached generation needs one row that ends at its next predictor")
-        outputs = self.talker.model(
-            inputs_embeds=embeds[:, start:],
-            position_ids=positions[:, start:],
-            past_key_values=cache,
-            use_cache=True,
-            cache_position=torch.arange(start, length, device=embeds.device),
-        )
-        return outputs.last_hidden_state[:, -1]
-
-    def forward(self, batch, mode="predict", suppress_eos=False, generation=None, cache=None):
-        if mode == "next_frame" and cache is not None:
-            h = self.cached_hidden(batch, cache)
-        else:
-            hidden = self.hidden(batch)
-            last_positions = (batch["frame_lengths"] + 1).cumsum(0) - 1
-        if mode == "next_frame":
-            # Generation uses one unpadded sample on every rank.
-            if cache is None:
-                h = hidden[last_positions]
-            logits = self.talker.codec_head(h).float()
-            allowed = torch.cat(
-                [logits[:, : self.code_size], logits[:, self.eos : self.eos + 1]], dim=-1
-            )
-            if suppress_eos:
-                allowed[:, -1] = -torch.inf
-            settings = generation or {}
-            first = sample_token(
-                allowed,
-                history=batch.get("history", batch["codes"][:, 0]).unsqueeze(0)
-                if len(h) == 1
-                else None,
-                **{
-                    key: settings[key]
-                    for key in ("do_sample", "temperature", "top_k", "top_p", "repetition_penalty")
-                    if key in settings
-                },
-            )
-            stop = first == self.code_size
-            codes = [first.clamp_max(self.code_size - 1)]
-            inputs = [h.unsqueeze(1), self.talker.model.codec_embedding(codes[0]).unsqueeze(1)]
-            predictor = self.talker.code_predictor
-            for g in range(1, self.groups):
-                out = predictor.model(
-                    inputs_embeds=predictor.small_to_mtp_projection(torch.cat(inputs, dim=1)),
-                    use_cache=False,
-                )
-                code = sample_token(
-                    predictor.lm_head[g - 1](out.last_hidden_state[:, -1]),
-                    do_sample=settings.get("subtalker_dosample", False),
-                    temperature=settings.get("subtalker_temperature", 1.0),
-                    top_k=settings.get("subtalker_top_k", 0),
-                    top_p=settings.get("subtalker_top_p", 1.0),
-                )
-                codes.append(code)
-                if g < self.groups - 1:
-                    inputs.append(predictor.get_input_embeddings()[g - 1](code).unsqueeze(1))
-            return torch.stack(codes, dim=-1), stop
-        if mode != "predict":
-            raise ValueError(mode)
+    def forward(self, batch):
+        hidden = self.hidden(batch)
+        last_positions = (batch["frame_lengths"] + 1).cumsum(0) - 1
         valid = torch.ones(hidden.shape[0], dtype=torch.bool, device=hidden.device)
         valid[last_positions] = False
         h, target = hidden[valid], batch["codes"]

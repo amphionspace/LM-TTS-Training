@@ -9,6 +9,7 @@ from transformers import AutoTokenizer, DynamicCache
 from ..models.loading import load_model
 from ..models.protocol import interleaved_layout
 from ..models.qwen import TTSModel
+from .frame import next_frame
 
 
 def validate_generation(settings):
@@ -131,9 +132,9 @@ def generate_codes(
                 len(text) - 1, len(codes), *model.config.lm_tts_streaming_chunk
             )[2]
         )
-        next_codes, stop = model(
+        next_codes, stop = next_frame(
+            model,
             batch,
-            mode="next_frame",
             suppress_eos=frame < settings.get("min_new_tokens", 1) or text_pending,
             generation=settings,
             cache=cache,
