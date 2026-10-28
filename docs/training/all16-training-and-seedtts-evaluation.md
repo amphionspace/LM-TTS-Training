@@ -1671,3 +1671,103 @@ R²（与 codec 码本拟合，方法同第 33 节，结果在 `evidence/codec-e
 - **输出头用码本初始化**：成本几乎为零，但预计只能省下前 5,000–10,000 步对齐码本结构的时间，最终结构不会有区别。下次从头训时可以顺带加上；想确认效果的话，做约 5,000 步的短对照，比较验证 CE。
 - **不建议把输入表和输出头绑定**，理由见上。
 - **更值得优先处理的是范数**：限制 codec embedding（以及输出头）范数的增长，例如对这些表单独加大 weight decay 或限制范数。它直接影响 streaming，对 non-streaming 是否有影响还没有确认。
+
+## 35. 交错 streaming：第 34 节配方 + 5:10 文本/音频交错（2026-10-27）
+
+在第 34 节的配方上加入 streaming 训练。文本和音频按 CosyVoice 2/3 bistream 的方式交错，而不是把文本加到音频帧上（overlay）。为什么放弃 overlay、交错怎么实现，见 `streaming-tts-design-20261020.md` 第 11、12 节。
+
+- 训练配置：`configs/supervised-tts-20261027-emilia-v4-emilia2-refmask-cbinit-langid-interleaved5x10-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd.yaml`
+- ACP job：`pt-ycy9pp26`，2 节点 16 卡，2026-10-26 20:47 PDT 启动
+- 与第 34 节配置只差两处：
+  - streaming 四个键：`streaming_fraction: 0.5`、`streaming_layout: interleaved`、`streaming_chunk: [5, 10]`、`streaming_max_text_ratio: 0.4`；
+  - `decay_ratio` 从 0.1 改为 0.2，只影响最后的衰减段。
+- 对照组 streaming50（`configs/supervised-tts-20261025-…-streaming50-…`，`pt-isfahe7o`）：与本 run 只差排布，用的是 overlay。已在 10k 后停止。
+
+### 排布
+
+```
+prefill | t₁ … t₅ | F₁ … F₁₀ | t₆ … t₁₀ | F₁₁ … F₂₀ | … | 余文本 + tts_eos | 余帧
+```
+
+- 每 5 个文本 token 后接 10 帧（12.5 Hz，即 0.8 s）。放下 tts_eos 的那一块之后，接上全部剩余帧。
+- 没有 fill token，推理时每 10 帧固定切回文本。
+- 文本密度（(文本 + 2) ÷ 帧数）≤ 0.4，并且帧用完之前 tts_eos 已经放下的样本才算合格，合格的约 67%。按 `target_id` 的固定哈希从中抽一半走交错，所以约 33% 的样本是 streaming。其余样本仍按第 34 节的 non-streaming 格式训练。
+
+### 评测口径
+
+- 每个 checkpoint 由自动评测跑两组：streaming 和 non-streaming。设置与第 34 节相同：默认双采样，batch size 1，32 个逻辑分片，最长 30 s，Auto 语言，每组完整生成并评分 3,108 条，审计通过。
+- **解码器**：交错导出由 UltraEval `scripts/local_qwen.py` 调用 lm_tts 自己的生成（带 KV cache）解码，两种模式都是。官方 qwen_tts 不认识交错排布。第 34 节和 streaming50 用的是官方 qwen_tts。
+- **两个解码器的一致性**：在 streaming50 step 7,500 上，用两个解码器各跑一遍 non-streaming，结果 lm_tts 为 6.474 / 7.850，官方为 6.345 / 7.604，SIM 都是 51.6 / 64.7，差异在采样波动内，所以下表可以跨 run 直接比。结果见 `UltraEval-Audio/res/archive-parity-lm-tts-decoder-streaming50-step7500-nonstreaming-20261027`。
+
+### SeedTTS 结果
+
+英文 WER/% ↓：
+
+| 步数 | 交错 streaming | 交错 non-streaming | 第 34 节 langid | streaming50 non-streaming | streaming50 streaming |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2,500 | 14.192 | 16.115 | 9.822 | 27.103 | 92.596 |
+| 5,000 | 6.793 | 7.211 | 6.718 | 10.731 | 33.609 |
+| 7,500 | 5.333 | 4.932 | 5.182 | 6.345 | 19.137 |
+| 10,000 | 4.786 | **4.423** | 4.554 | 5.241 | — |
+
+中文 CER/% ↓：
+
+| 步数 | 交错 streaming | 交错 non-streaming | 第 34 节 langid | streaming50 non-streaming | streaming50 streaming |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2,500 | 17.312 | 16.269 | 15.116 | 33.904 | 89.467 |
+| 5,000 | 8.902 | 8.521 | 8.908 | 14.325 | 41.234 |
+| 7,500 | 4.964 | 4.836 | 5.489 | 7.604 | 22.444 |
+| 10,000 | 4.217 | **4.022** | 4.290 | 6.293 | — |
+
+SIM/% ↑（英文 / 中文）：
+
+| 步数 | 交错 streaming | 交错 non-streaming | 第 34 节 langid | streaming50 non-streaming |
+| ---: | --- | --- | --- | --- |
+| 2,500 | 35.8 / 53.6 | 36.2 / 53.4 | 36.8 / 53.1 | 34.5 / 53.2 |
+| 5,000 | 47.8 / 62.0 | 47.7 / 62.1 | 46.7 / 61.5 | 45.2 / 60.7 |
+| 7,500 | 53.9 / 66.0 | 53.8 / 66.0 | 52.4 / 65.1 | 51.6 / 64.7 |
+| 10,000 | 56.9 / 67.7 | 56.8 / 67.7 | 56.4 / 67.5 | 55.2 / 66.8 |
+
+streaming50 在 10,000 步没有评 streaming。交错 run 的排除样本：2,500 步 streaming 英文、中文各 1 条，non-streaming 中文 3 条；10,000 步 streaming 英文 1 条。都是生成到 30 s 上限的样本。
+
+同一 checkpoint 的 streaming / non-streaming（英文 / 中文）：
+
+| 步数 | 交错 | streaming50（overlay） |
+| ---: | --- | --- |
+| 2,500 | 0.88 / 1.06 | 3.42 / 2.64 |
+| 5,000 | 0.94 / 1.04 | 3.13 / 2.88 |
+| 7,500 | 1.08 / 1.03 | 3.02 / 2.95 |
+| 10,000 | 1.08 / 1.05 | — |
+
+结果：`UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-interleaved5x10-step{2500,5000,7500,10000}-default-sampling{-streaming,}-auto-gpu/seed_tts/full/results_table.md`。
+
+### 结论
+
+- **stage-1 判断标准通过**（标准在 streaming 设计文档 11.7 节）：7,500 步 non-streaming 为 4.932 / 4.836，标准是不差于 6.3 / 7.6（±0.5）；streaming / non-streaming 为 1.08 / 1.03，标准是不超过 1.3。
+- **交错解决了 overlay 下 streaming 听不懂的问题**：overlay 的 streaming 一直是 non-streaming 的约 3 倍；交错从 2,500 步起就在 1 倍左右，到 10,000 步稳定在 1.05–1.08。
+- **加了 streaming 训练，non-streaming 也没有变差**：
+  - 2,500 步落后第 34 节。英文的 16.1 里，有 2 条重复失控的样本（WER 3315% 和 1685%）拉高了约 4.6 个点；
+  - 5,000 步追平；
+  - 7,500、10,000 步略好于第 34 节，SIM 高 0.2–1.4。
+- overlay 连 non-streaming 都被拖累了：streaming50 的 non-streaming 在每一步都明显差于第 34 节。
+
+### ICL 参考的排法，以及 Seed-TTS 能测到多少 streaming
+
+- **参考也按交错排**：参考文本 + 目标文本是一条文本流，参考帧当作已经生成的前缀，整行用同一个 5:10 计数器交错。这和训练一致：训练是整句交错，refmask 的参考区间在句内。CosyVoice 的 `inference_bistream` 也是这样做的，先把参考文本放进文本缓冲，凑不满一块就等目标文本进来。
+- **参考段里文本始终领先音频**：Seed 参考段的文本密度（(参考 token + 1) ÷ 参考帧数），英文中位数 0.27、最大 0.45，中文中位数 0.24、最大 0.39，全部低于 5:10 对应的 0.5。
+- **首包前需要的目标文本较多**：参考文本比 5:10 稀，参考帧排完之前，排在前面的文本块要用目标文本来填。生成第一帧之前，已经放进的目标 token 数：英文中位数 13（10%–90% 分位 9–17），中文 16（12–19）。真实流式场景下，首包要先等这么多目标 token 进来。CosyVoice3 是 25 Hz、5:15，按同样的方法估算，每秒参考音频要多吃掉约 5 个目标 token，我们约 3 个，所以 CV3 的情况更严重（推测，未实测）。
+- **Seed-TTS 句子短，大部分样本测不到真正的 streaming**：英文 73%、中文 70% 的样本，在第一帧之前整句目标文本连同 tts_eos 都已经放下，实际接近 non-streaming。只看生成时目标还在流式进来的子集（英文 295 条、中文 615 条）：
+
+| 子集 | 7,500 streaming | 7,500 non-streaming | 10,000 streaming | 第 34 节 10,000 |
+| --- | ---: | ---: | ---: | ---: |
+| 英文，目标仍在流式进来 | 5.74 | 5.04 | 4.63 | 4.43 |
+| 英文，第一帧前已放完 | 5.18 | 4.89 | 4.84 | 4.59 |
+| 中文，目标仍在流式进来 | 5.63 | 5.82 | 4.98 | 5.06 |
+| 中文，第一帧前已放完 | 4.67 | 4.41 | 3.83 | 3.95 |
+
+  这个子集上 streaming 仍然接近 non-streaming，但英文只有 295 条，噪声大。要可靠地评 streaming，还需要长目标文本的测试集。
+
+**后续**：
+- 训练继续，自动评测每 2,500 步跑一次 streaming 和 non-streaming；
+- 加一个长文本的 streaming 测试集；
+- 首包延迟能否接受，决定要不要改参考段的排法。改的话需要训练也跟着改，要单独做实验。
