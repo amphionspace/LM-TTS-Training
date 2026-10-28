@@ -326,3 +326,23 @@ pt-ycy9pp26（`configs/supervised-tts-20261027-…-interleaved5x10-…`，ACP �
 - **失败**：non-streaming 退步超过 1 个点，或 streaming 差距仍然超过 1.5 倍。届时检查 ICL 的排布和局部语速违约率，再考虑门槛收紧到 0.33，或改为 4:8。
 - **后续单变量实验**：A1（行归一化 × 可学标量）、refmask 以一半概率从句首截取、去掉跨流 pad、文本前端改用 backbone 词表。
 - **未决**：交错评测每帧重算整行，复杂度 O(N²)，会比较慢；俄语语言 ID 没有被训练过；本节的代码尚未 commit。
+
+## 12. 交错 run 的评测结果：stage-1 通过（2026-10-27）
+
+pt-ycy9pp26 的 2.5k、5k、7.5k 都由自动评测跑完了 Seed-TTS speaker_icl 全量（3108 条，审计 PASS）。英文是 WER，中文是 CER，SIM 是 % 。
+
+| run | 2.5k en / zh | 5k en / zh | 7.5k en / zh | 7.5k SIM en / zh |
+|---|---|---|---|---|
+| **interleaved5x10 streaming** | 14.19 / 17.31 | 6.79 / 8.90 | **5.33 / 4.96** | 53.9 / 66.0 |
+| **interleaved5x10 non-streaming** | 16.12 / 16.27 | 7.21 / 8.52 | **4.93 / 4.84** | 53.8 / 66.0 |
+| 主 run langid（只训 non-streaming） | 9.82 / 15.12 | 6.72 / 8.91 | 5.18 / 5.49 | 52.4 / 65.1 |
+| streaming50 overlay non-streaming | 27.10 / 33.90 | 10.73 / 14.33 | 6.35 / 7.60 | 51.6 / 64.7 |
+| streaming50 overlay streaming | 92.60 / 89.47 | 33.61 / 41.23 | 19.14 / 22.44 | 50.1 / 64.2 |
+
+- **stage-1 两条标准都通过**：7.5k non-streaming 4.93 / 4.84（标准 ≤ 6.3 / 7.6 ± 0.5）；streaming / non-streaming 为 1.08 / 1.03（标准 ≤ 1.3）。
+- streaming / non-streaming 的比值在 2.5k、5k、7.5k 分别是 0.88 / 1.06、0.94 / 1.04、1.08 / 1.03，从一开始就在 1 附近；overlay 一直在 3 倍左右。
+- 加入 streaming 没有拖累 non-streaming：2.5k 落后主 run（2 条重复失控的样本把英文从约 11.5 拉到 16.1），5k 追平，7.5k 略好，SIM 高约 1。
+- **解码器口径**：交错导出由 UltraEval `scripts/local_qwen.py` 用 lm_tts 解码（两种排布都是，带 KV cache）。在 streaming50 7.5k 上和官方 qwen_tts 对比 non-streaming：lm_tts 6.47 / 7.85，官方 6.35 / 7.60，SIM 相同，差异在采样波动内，所以表中跨 run 可以直接比。
+- **ICL 的排布**：参考文本 + 目标文本是一条文本流，参考帧是已生成的前缀，整行按同一个 5:10 计数器交错，与训练（整句交错，refmask 区间在句内）一致。Seed-TTS 参考段的文本密度（(参考 token + 1) ÷ 参考帧数）：en 中位 0.27、最大 0.45，zh 中位 0.24、最大 0.39，全部低于 5:10 的 0.5，所以参考段里文本始终领先音频，没有训练中不存在的"音频跑在文本前面"的情况。
+
+§11.6 之后的实现变化：生成加了 KV cache（`901acce`，与整行重算逐帧一致）；逐帧生成、KV cache 和采样从训练模型类移到 `lm_tts/inference/{frame,sampling}.py`（`2939898`），7.5k 导出在两种排布下 bf16 采样输出与移动前逐位相同；`local_interleaved.py` 改名为 `local_qwen.py`。
