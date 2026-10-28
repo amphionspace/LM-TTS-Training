@@ -63,13 +63,16 @@ def generate_codes(
     language_codec_id=None,
     penalize_reference=True,
     use_cache=False,
+    reference_lead=None,
     **settings,
 ):
     """use_cache (Qwen talkers) runs only the positions added since the previous frame through the
     backbone; the row is still rebuilt each frame by the training protocol, so both are equal.
     streaming decodes the interleaved layout; EOS stays blocked until tts_eos is placed, since
     training never ends before the text does. penalize_reference=False applies the repetition
-    penalty to generated frames only, as the official Qwen generate does."""
+    penalty to generated frames only, as the official Qwen generate does. reference_lead (the
+    number of streamed reference text tokens) places the whole reference text, then the whole
+    reference, as one first chunk instead of interleaving it (inference only, never trained)."""
     validate_generation(settings)
     if use_cache and not isinstance(model, TTSModel):
         raise ValueError("Cached generation is implemented for Qwen talkers only")
@@ -109,6 +112,12 @@ def generate_codes(
     batch = {"text_ids": text, "text_lengths": text.new_tensor([len(text)])}
     if mixed:
         batch["streaming"] = torch.tensor([streaming], device=device)
+    lead = (0, 0)
+    if reference_lead is not None:
+        if not streaming or not reference_frames or not 0 < reference_lead < len(text) - 1:
+            raise ValueError("reference_lead needs streaming ICL with target text after it")
+        lead = (reference_lead, reference_frames)
+        batch["streaming_lead"] = text.new_tensor([lead])
     if language:
         batch["language_codec_ids"] = text.new_tensor([language_codec_id])
     if use_speaker:
@@ -129,7 +138,7 @@ def generate_codes(
         text_pending = (
             streaming
             and not interleaved_layout(
-                len(text) - 1, len(codes), *model.config.lm_tts_streaming_chunk
+                len(text) - 1, len(codes), *model.config.lm_tts_streaming_chunk, lead
             )[2]
         )
         next_codes, stop = next_frame(
@@ -192,16 +201,18 @@ class CodecSynthesizer:
         language_codec_id=None,
         penalize_reference=True,
         use_cache=False,
+        reference_lead=False,
         **settings,
     ):
         if reference_audio is not None and not (reference_text and reference_text.strip()):
             raise ValueError("Codec-prefix ICL requires reference_text matching reference_audio")
         if reference_audio is None and reference_text:
             raise ValueError("reference_text requires reference_audio")
+        reference_ids = self.tokenizer.encode(reference_text or "", add_special_tokens=False)
         ids = [
             self.raw["tts_bos_token_id"],
             # Preserve the reference/target token boundary, as in official ICL.
-            *self.tokenizer.encode(reference_text or "", add_special_tokens=False),
+            *reference_ids,
             *self.tokenizer.encode(text, add_special_tokens=False),
             self.raw["tts_eos_token_id"],
         ]
@@ -224,6 +235,7 @@ class CodecSynthesizer:
             language_codec_id=language_codec_id,
             penalize_reference=penalize_reference,
             use_cache=use_cache,
+            reference_lead=len(reference_ids) if reference_lead else None,
             **settings,
         )
         if not len(codes):

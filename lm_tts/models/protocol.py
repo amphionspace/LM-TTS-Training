@@ -1,6 +1,8 @@
 """Qwen condition layouts (non-streaming; input streaming as the official overlay or as interleaved
 text/frame chunks) and teacher-forcing positions."""
 
+import itertools
+
 import torch
 from torch import nn
 
@@ -38,15 +40,18 @@ def frame_embeddings(talker, groups, codes):
     return value
 
 
-def interleaved_layout(streamed, frames, chunk_text, chunk_frames):
+def interleaved_layout(streamed, frames, chunk_text, chunk_frames, lead=(0, 0)):
     """Body order of an interleaved row: chunks of `chunk_text` streamed text tokens (text then
     tts_eos), each followed by `chunk_frames` frames; the chunk holding tts_eos takes every
     remaining frame. A prefix of the frames gives a prefix of the full order, so generation and
     training share one layout. Returns (segments, predictors, text_done): `segments` are
     ("text" | "frames", start, end) slices, `predictors` the body index whose output predicts each
-    frame and finally the next frame or EOS, `text_done` whether tts_eos is placed."""
+    frame and finally the next frame or EOS, `text_done` whether tts_eos is placed. A nonzero
+    `lead` (text, frames) is one first chunk of that size, e.g. a whole ICL reference (an
+    inference-only layout; training never uses it)."""
     segments, predictors, position, text, frame = [], [], 0, 0, 0
-    while True:
+    sizes = itertools.chain([lead] if lead[1] else [], itertools.repeat((chunk_text, chunk_frames)))
+    for chunk_text, chunk_frames in sizes:
         end = min(text + chunk_text, streamed)
         segments.append(("text", text, end))
         position, text = position + end - text, end
@@ -160,8 +165,9 @@ def build_inputs(talker, speaker_encoder, config, batch):
         if streaming[index] and interleaved:
             # Text keeps its own positions (text + codec_pad, frames + tts_pad, as non-streaming);
             # no codec_bos: the last token before each frame predicts it.
+            lead = batch["streaming_lead"][index].tolist() if "streaming_lead" in batch else (0, 0)
             segments, order, _ = interleaved_layout(
-                len(text_row) - 1, len(frame_row), chunk_text, chunk_frames
+                len(text_row) - 1, len(frame_row), chunk_text, chunk_frames, lead
             )
             body = text_row[1:]
             pieces.extend(prefix)

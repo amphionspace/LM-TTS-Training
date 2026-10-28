@@ -168,6 +168,16 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
             torch.testing.assert_close(partial, full[: len(partial)], atol=0, rtol=0)
         self.assertFalse(interleaved_layout(4, 2, 2, 3)[2])
         self.assertTrue(interleaved_layout(4, 3, 2, 3)[2])
+        # A lead chunk (3 text, 2 frames) first, then chunks of 2 / 3 as usual.
+        self.assertEqual(
+            interleaved_layout(4, 6, 2, 3, (3, 2))[0],
+            [("text", 0, 3), ("frames", 0, 2), ("text", 3, 4), ("frames", 2, 6)],
+        )
+        self.assertEqual(
+            interleaved_layout(6, 8, 2, 3, (1, 2))[0],
+            [("text", 0, 1), ("frames", 0, 2), ("text", 1, 3), ("frames", 2, 5)]
+            + [("text", 3, 5), ("frames", 5, 8), ("text", 5, 6)],
+        )
 
     @torch.no_grad()
     def test_interleaved_teacher_forcing_matches_generation(self):
@@ -202,7 +212,7 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
         settings = dict(
             max_new_tokens=8, min_new_tokens=8, subtalker_dosample=True, subtalker_top_k=10
         )
-        for streaming in (False, True):
+        for streaming, lead in ((False, None), (True, None), (True, 2)):
             outputs = []
             for use_cache in (False, True):
                 torch.manual_seed(3)
@@ -210,10 +220,11 @@ class QwenProtocolTests(test_protocol.ProtocolTests):
                     generate_codes(
                         self.model,
                         row["text_ids"],
-                        row["codes"][:1],
+                        row["codes"][:2],
                         speaker_embedding=torch.ones(self.model.config.hidden_size),
                         streaming=streaming,
                         use_cache=use_cache,
+                        reference_lead=lead,
                         **settings,
                     )
                 )
