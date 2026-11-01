@@ -1917,3 +1917,38 @@ SIM/% ↑（英文 / 中文）：
 - 加一个长文本的 streaming 测试集；
 - 首包延迟能否接受，决定要不要改参考段的排法。改的话需要训练也跟着改，要单独做实验。
 - 参考段整段前置（reference lead）只在推理侧做已经试过，L = 0、5、10 都会出错（开头重复参考结尾，或句中跳字、念错），中文更严重。分析和不用 CTC 对齐的训练方案见 `streaming-tts-design-20261020.md` §13。
+
+## 36. 交错 streaming + backbone 文本前端：第 35 节配方，文本表从 Qwen3-0.6B-Base 初始化（2026-11-01）
+
+与第 35 节只差文本前端：文本表从 Qwen3-0.6B-Base 的 embedding 初始化，projector 用 near-identity（2·SiLU(x) ≈ x），两者都可训练（文本表用 backbone_lr 1e-4，projector 用 lr 3e-4），与 2026-10-14 的 textbase-nearid run 相同；第 35 节用的是冻结的官方 Qwen3-TTS 文本前端。
+
+- 训练配置：`configs/supervised-tts-20261101-emilia-v4-emilia2-refmask-cbinit-langid-textbase-nearid-interleaved5x10-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd.yaml`
+- 组装模型：`assets/assembled/qwen3-tts-text-base-trainable-near-identity-codebook-codec-lang`。codec 表的码本行与第 35 节逐位相同；其余随机初始化的行和输出头分布相同，但随机数不同（text-base 组装的 RNG 顺序不同）。
+- ACP job：`pt-r9cr6e75`，2 节点 16 卡，2026-11-01 01:13 PDT 启动。
+- 评测口径与第 35 节相同（Seed-TTS 与 CV3 hard，streaming / non-streaming 各一组）；CV3 hard 从 2,500 步开始评。
+
+### 结果
+
+Seed-TTS 英文 WER / 中文 CER（%）↓：
+
+| 步数 | 本节 streaming | 本节 non-streaming | 第 35 节 streaming | 第 35 节 non-streaming | 第 34 节 |
+| ---: | --- | --- | --- | --- | --- |
+| 2,500 | **8.892** / 15.157 | **8.537** / **14.796** | 14.192 / 17.312 | 16.115 / 16.269 | 9.822 / 15.116 |
+
+SIM/% ↑（英文 / 中文）：
+
+| 步数 | 本节 streaming | 本节 non-streaming | 第 35 节 streaming | 第 35 节 non-streaming | 第 34 节 |
+| ---: | --- | --- | --- | --- | --- |
+| 2,500 | 37.9 / 54.2 | 38.0 / 54.0 | 35.8 / 53.6 | 36.2 / 53.4 | 36.8 / 53.1 |
+
+CV3 hard 英文 WER / 中文 CER（%）↓ 与 SIM：
+
+| 步数 | 本节 streaming | 本节 non-streaming |
+| ---: | --- | --- |
+| 2,500 | 35.557 / 30.232（SIM 42.7 / 49.1） | 41.911 / 33.217（SIM 42.6 / 49.0） |
+
+- 2,500 步本节两种模式都明显好于第 35 节同一步（英文低 5–7.6 个点），与第 34 节相当或略好。第 35 节后来也追上了第 34 节，所以这只能说明起步更快，最终效果要看后面的 checkpoint。
+- 生成到 30 s 上限的样本：Seed-TTS non-streaming 中文 2 条；CV3 hard streaming 21 条、non-streaming 15 条（这一步还很早，长句容易失控）。第 35 节 2,500 步没有评 CV3 hard。
+- 2,500 步 val：first CE 1.528 / residual CE 6.129，第 35 节 1.547 / 6.144。
+
+结果：`UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-textbase-interleaved5x10-step{2500}-default-sampling{-streaming,}-auto-gpu/{seed_tts,cv3_hard}/full/results_table.md`。
