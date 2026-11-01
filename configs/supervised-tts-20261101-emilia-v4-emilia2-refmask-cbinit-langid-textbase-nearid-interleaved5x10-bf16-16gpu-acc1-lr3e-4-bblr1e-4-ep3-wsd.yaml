@@ -1,0 +1,96 @@
+extends: base.yaml
+
+# ---- The interleaved5x10 run with a trainable Qwen3-0.6B-Base text frontend ----
+# Single variable against supervised-tts-20261027-...-interleaved5x10: the text embedding starts from
+# the backbone's (Qwen3-0.6B-Base) table with the near-identity projector (2·SiLU(x) ≈ x), both
+# trainable, as in the 20261014 textbase-nearid run, instead of the frozen official Qwen3-TTS frontend.
+# The codec code rows are bit-identical to that run; freshly initialized rows and heads follow the
+# text-base assembly's RNG stream (same distributions, different draws).
+#
+# Original notes of the interleaved5x10 run:
+# ---- The streaming50 recipe with interleaved instead of overlaid streaming text ----
+# Identical to supervised-tts-20261025-...-streaming50 (same build, holdout, sampler, decay_ratio 0.2)
+# except the streaming layout: text keeps its own positions in chunks of 5 tokens, each followed by
+# 10 frames (CosyVoice 2/3 bistream, without a fill token), instead of being added onto the frames.
+# Nothing is summed across streams, so the frozen text cannot be drowned by growing codec embeddings.
+
+# ---- Model: backbone text frontend, codec embeddings from the codec codebooks, Dutch/Polish IDs ----
+paths:
+  assembled_model: ${paths.project}/assets/assembled/qwen3-tts-text-base-trainable-near-identity-codebook-codec-lang
+
+assembly:
+  text_initialization: text-base
+  text_projection_init: near-identity
+  train_text_frontend: true
+  train_speaker_encoder: false
+  input_protocol: qwen3_non_streaming
+  codec_embedding_init: codebook
+  extra_codec_languages: true
+  seed: 42
+  dtype: float32
+
+# ---- Conditioning: trainable text frontend, a cropped speaker reference and codec language IDs ----
+# Half of the targets (fixed hash of target_id) keep the Auto prefix so Auto inference still works.
+model:
+  use_speaker_embedding: true
+  language_conditioning: codec_language_id
+
+# ---- Data: emilia (selection-v4, MOSS single-speaker) + emilia2 (selection-v2); fresh holdout ----
+data:
+  config: ${paths.project}/configs/data-emilia-emilia2-reference.yaml
+  build_id: supervised-tts-20261019-emilia-v4-emilia2-reference
+
+train:
+  run_name: supervised-tts-20261101-emilia-v4-emilia2-refmask-cbinit-langid-textbase-nearid-interleaved5x10-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd
+  precision: bf16
+  mask_reference: true  # Exclude reference targets in all 16 codebooks; retain EOS.
+  loss_reduction: token
+  residual_weight: 0.3
+  text_embedding_lr_group: backbone  # Embedding uses backbone_lr; the projector uses lr.
+  language_auto_fraction: 0.5
+  # Half of the eligible targets (same fixed hash of target_id as streaming50) are interleaved.
+  # Eligible: text/frames <= 0.4 (~74% of targets, so ~37% stream), a 1.25x margin under the
+  # 5:10 chunk rate for locally fast speech. No pauses: a stalled upstream only waits.
+  streaming_fraction: 0.5
+  streaming_layout: interleaved
+  streaming_chunk: [5, 10]
+  streaming_max_text_ratio: 0.4
+
+  # Same sample-progress WSD schedule and peak LRs as the 32-GPU baseline.
+  epochs: 3
+  max_steps: null
+  schedule_steps: null
+  warmup_steps: null
+  lr: 3.0e-4
+  backbone_lr: 1.0e-4
+  scheduler:
+    name: wsd
+    warmup_ratio: 0.01
+    decay_ratio: 0.2
+    min_lr_ratio: 0.1
+
+  # Same per-GPU budgets; one microbatch per optimizer step on 16 GPUs.
+  max_batch_frames: 32000
+  max_batch_tokens: 50000
+  accumulation: 1
+  num_workers: 4
+  prefetch_factor: 2
+  # Every global batch is a uniform sample of the whole build (datasets, languages, lengths):
+  # a keyed per-epoch permutation, no length sorting (FlashAttention-2 packs without padding).
+  sampler: feistel_uniform_token_budget_v3
+  length_bucket_size: 0
+
+  # Keep every checkpoint; validation and saves share the same cadence.
+  log_every: 10
+  first_check_step: 100
+  keep_checkpoints: null
+  save_every: 2500
+  eval_every: 2500
+
+eval:
+  batch_size: 32
+
+acp:
+  nodes: 2
+  worker_spec: N3lS.Ii.I60.80c896g  # 8 A800 GPUs, 80 vCPU, 896 GiB per node
+  priority: HIGHEST
