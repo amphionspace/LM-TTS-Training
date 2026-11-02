@@ -1937,6 +1937,7 @@ Seed-TTS 英文 WER / 中文 CER（%）↓：
 | 5,000 | **5.969** / **7.826** | 6.307 / 8.030 | 6.793 / 8.902 | 7.211 / 8.521 | 6.718 / 8.908 |
 | 7,500 | **4.344** / **4.649** | 4.585 / 4.670 | 5.333 / 4.964 | 4.932 / 4.836 | 5.182 / 5.489 |
 | 10,000 | 10.238（去掉 1 条 4.465） / **4.013** | 4.589 / 4.169 | 4.786 / 4.217 | **4.423** / 4.022 | 4.554 / 4.290 |
+| 12,500 | **3.641** / 3.337 | 3.817 / **3.158** | 4.263 / 3.674 | 4.054 / 3.590 | 4.644 / 3.520 |
 
 SIM/% ↑（英文 / 中文）：
 
@@ -1946,6 +1947,7 @@ SIM/% ↑（英文 / 中文）：
 | 5,000 | 48.5 / 62.4 | 48.5 / 62.3 | 47.8 / 62.0 | 47.7 / 62.1 | 46.7 / 61.5 |
 | 7,500 | 54.4 / 66.0 | 54.2 / 65.9 | 53.9 / 66.0 | 53.8 / 66.0 | 52.4 / 65.1 |
 | 10,000 | 56.3 / 67.4 | 56.2 / 67.5 | 56.9 / 67.7 | 56.8 / 67.7 | 56.4 / 67.5 |
+| 12,500 | 57.4 / 68.4 | 57.3 / 68.2 | 57.8 / 69.1 | 57.5 / 69.0 | 57.6 / 69.0 |
 
 CV3 hard 英文 WER / 中文 CER（%）↓ 与 SIM：
 
@@ -1955,13 +1957,15 @@ CV3 hard 英文 WER / 中文 CER（%）↓ 与 SIM：
 | 5,000 | 23.875 / 25.209（SIM 53.3 / 57.7） | 27.629 / 28.197（SIM 52.6 / 58.8） |
 | 7,500 | 16.264 / 18.476（SIM 55.3 / 61.9） | 18.354 / 21.527（SIM 55.1 / 61.0） |
 | 10,000 | 16.870 / 21.510（SIM 57.4 / 62.4） | 22.371 / 19.510（SIM 57.3 / 62.8） |
+| 12,500 | 15.303 / 18.466（SIM 58.3 / 64.0） | 15.285 / 19.118（SIM 58.8 / 64.4） |
 
 - 2,500 步本节两种模式都明显好于第 35 节同一步（英文低 5–7.6 个点），与第 34 节相当或略好。第 35 节后来也追上了第 34 节，所以这只能说明起步更快，最终效果要看后面的 checkpoint。
 - 5,000 步差距缩小但仍领先：本节 streaming 5.969 / 7.826、non-streaming 6.307 / 8.030，第 35 节 6.793 / 8.902、7.211 / 8.521，第 34 节 6.718 / 8.908；SIM 也略高。val first CE 1.414 对 1.423，residual CE 持平（5.865 对 5.866）。
 - 7,500 步仍三组最好：本节 streaming 4.344 / 4.649、non-streaming 4.585 / 4.670，第 35 节 5.333 / 4.964、4.932 / 4.836，第 34 节 5.182 / 5.489。英文领先约 0.35–1 个点，中文差距缩小到 0.2–0.8；SIM 持平。val first CE 1.363 对 1.369，residual 5.737 对 5.736。
 - 10,000 步领先消失，三组持平：streaming 英文 10.238 全由 1 条样本（index 1073，"A couple walks through an Asian restaurant."，后半段一直重复 "a"，22.7 s，单条 WER 6286%）拉高，去掉后 4.465；中文 4.013 / 4.169，第 35 节 4.217 / 4.022，第 34 节 4.290。val first CE 1.331 对 1.336，residual 5.662 对 5.659，两 run 的 val 一直持平。
+- 12,500 步本节又两种模式都最好：streaming 3.641 / 3.337、non-streaming 3.817 / 3.158，第 35 节 4.263 / 3.674、4.054 / 3.590，第 34 节 4.644 / 3.520；没有失控样本。SIM 本节略低约 0.5（57.4 / 68.4 对 57.8 / 69.1）。val 仍持平（1.310 / 5.614 对 1.315 / 5.607）。
 - **Norm**（150 条 val 样本中位数，`norm_balance.py`）：16 层帧和两 run 涨得一样（初始 2.53 → 10k 4.38 / 4.48；第 35 节最终 8.29）。第 35 节文本冻结在 1.59，文本/帧从 0.63 降到 10k 0.36、最终 0.19；本节文本从 0.93 涨到 1.39，比值从 2.5k 起稳定在 0.32。tts_pad 前 2,500 步从 0.61 涨到 1.62，之后缓慢回落到 1.51；tts_bos / tts_eos 从约 0.65 涨到 1.37 / 1.15。交错排布中文本与帧不相加，这个比值只作观察。
-- 生成到 30 s 上限的样本：Seed-TTS non-streaming 中文 2 条；CV3 hard streaming 21 条、non-streaming 15 条（这一步还很早，长句容易失控）。5,000 步：Seed-TTS non-streaming 中文 1 条；CV3 hard streaming 9 条、non-streaming 11 条。7,500 步：Seed-TTS non-streaming 1 条；CV3 hard streaming 15 条、non-streaming 11 条。10,000 步：Seed-TTS non-streaming 1 条；CV3 hard streaming 22 条、non-streaming 12 条。第 35 节 2,500 步没有评 CV3 hard。
+- 生成到 30 s 上限的样本：Seed-TTS non-streaming 中文 2 条；CV3 hard streaming 21 条、non-streaming 15 条（这一步还很早，长句容易失控）。5,000 步：Seed-TTS non-streaming 中文 1 条；CV3 hard streaming 9 条、non-streaming 11 条。7,500 步：Seed-TTS non-streaming 1 条；CV3 hard streaming 15 条、non-streaming 11 条。10,000 步：Seed-TTS non-streaming 1 条；CV3 hard streaming 22 条、non-streaming 12 条。12,500 步：Seed-TTS 没有；CV3 hard streaming 7 条、non-streaming 4 条。第 35 节 2,500 步没有评 CV3 hard。
 - 2,500 步 val：first CE 1.528 / residual CE 6.129，第 35 节 1.547 / 6.144。
 
-结果：`UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-textbase-interleaved5x10-step{2500,5000,7500,10000}-default-sampling{-streaming,}-auto-gpu/{seed_tts,cv3_hard}/full/results_table.md`。
+结果：`UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-textbase-interleaved5x10-step{2500,5000,7500,10000,12500}-default-sampling{-streaming,}-auto-gpu/{seed_tts,cv3_hard}/full/results_table.md`。
