@@ -1934,21 +1934,25 @@ Seed-TTS 英文 WER / 中文 CER（%）↓：
 | 步数 | 本节 streaming | 本节 non-streaming | 第 35 节 streaming | 第 35 节 non-streaming | 第 34 节 |
 | ---: | --- | --- | --- | --- | --- |
 | 2,500 | **8.892** / 15.157 | **8.537** / **14.796** | 14.192 / 17.312 | 16.115 / 16.269 | 9.822 / 15.116 |
+| 5,000 | **5.969** / **7.826** | 6.307 / 8.030 | 6.793 / 8.902 | 7.211 / 8.521 | 6.718 / 8.908 |
 
 SIM/% ↑（英文 / 中文）：
 
 | 步数 | 本节 streaming | 本节 non-streaming | 第 35 节 streaming | 第 35 节 non-streaming | 第 34 节 |
 | ---: | --- | --- | --- | --- | --- |
 | 2,500 | 37.9 / 54.2 | 38.0 / 54.0 | 35.8 / 53.6 | 36.2 / 53.4 | 36.8 / 53.1 |
+| 5,000 | 48.5 / 62.4 | 48.5 / 62.3 | 47.8 / 62.0 | 47.7 / 62.1 | 46.7 / 61.5 |
 
 CV3 hard 英文 WER / 中文 CER（%）↓ 与 SIM：
 
 | 步数 | 本节 streaming | 本节 non-streaming |
 | ---: | --- | --- |
 | 2,500 | 35.557 / 30.232（SIM 42.7 / 49.1） | 41.911 / 33.217（SIM 42.6 / 49.0） |
+| 5,000 | 23.875 / 25.209（SIM 53.3 / 57.7） | 27.629 / 28.197（SIM 52.6 / 58.8） |
 
 - 2,500 步本节两种模式都明显好于第 35 节同一步（英文低 5–7.6 个点），与第 34 节相当或略好。第 35 节后来也追上了第 34 节，所以这只能说明起步更快，最终效果要看后面的 checkpoint。
-- 生成到 30 s 上限的样本：Seed-TTS non-streaming 中文 2 条；CV3 hard streaming 21 条、non-streaming 15 条（这一步还很早，长句容易失控）。第 35 节 2,500 步没有评 CV3 hard。
+- 5,000 步差距缩小但仍领先：本节 streaming 5.969 / 7.826、non-streaming 6.307 / 8.030，第 35 节 6.793 / 8.902、7.211 / 8.521，第 34 节 6.718 / 8.908；SIM 也略高。val first CE 1.414 对 1.423，residual CE 持平（5.865 对 5.866）。
+- 生成到 30 s 上限的样本：Seed-TTS non-streaming 中文 2 条；CV3 hard streaming 21 条、non-streaming 15 条（这一步还很早，长句容易失控）。5,000 步：Seed-TTS non-streaming 中文 1 条；CV3 hard streaming 9 条、non-streaming 11 条。第 35 节 2,500 步没有评 CV3 hard。
 - 2,500 步 val：first CE 1.528 / residual CE 6.129，第 35 节 1.547 / 6.144。
 
-结果：`UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-textbase-interleaved5x10-step{2500}-default-sampling{-streaming,}-auto-gpu/{seed_tts,cv3_hard}/full/results_table.md`。
+结果：`UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-textbase-interleaved5x10-step{2500,5000}-default-sampling{-streaming,}-auto-gpu/{seed_tts,cv3_hard}/full/results_table.md`。
