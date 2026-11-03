@@ -32,6 +32,15 @@ def load_model(
         from .lfm import LfmTTSModel
 
         implementation = LfmTTSModel
+    elif family == "dots_tts":
+        from .dots import DotsTTSModel
+
+        return DotsTTSModel.from_assembled(
+            directory,
+            load_weights=load_weights,
+            attn_implementation=attn_implementation,
+            use_speaker_embedding=use_speaker_embedding,
+        )
     elif family == "qwen3_tts":
         from .qwen import TTSModel
 

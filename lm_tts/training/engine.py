@@ -13,14 +13,8 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from ..artifacts import digest
-from ..data.batch import collate
-from ..data.build import tokenizer_identity, verify_tokenizer_compatibility
-from ..data.reader import FeatureDataset
 from ..data.sampler import TokenBatchSampler
-from ..evaluation.validation import validate
 from ..models.loading import load_model
-from ..models.protocol import language_codec_ids
-from ..objectives.tts import loss_normalizers, tts_loss
 from .checkpoint import initialize_from, load_checkpoint, save_checkpoint
 from .distributed import batch_health, initialize, move, shard
 from .optimizer import parameter_groups
@@ -35,62 +29,25 @@ from .telemetry import (
 )
 from .validation import run_validation, validation_complete
 
+
+def task_for(model_type):
+    if model_type == "dots_tts":
+        from .flow_task import FlowTask
+
+        return FlowTask
+    from .codec_task import CodecTask
+
+    return CodecTask
+
+
 SAMPLER_ORDERS = {
     "window_shuffle_token_budget_v2": "window",
     "feistel_uniform_token_budget_v3": "feistel",
 }
 
 
-STREAMING_KEYS = (
-    "streaming_fraction",
-    "streaming_max_text_ratio",
-    "streaming_pause_probability",
-    "streaming_max_pause_frames",
-    "streaming_layout",
-    "streaming_chunk",
-)
-
-
-def talker_lengths(batch, prefix_tokens, layout="overlay"):
-    """Per-row Talker sequence lengths. Overlay streaming rows keep only bos of the text in the
-    prefix; interleaved rows keep all text but drop codec_bos."""
-    text = batch["text_lengths"]
-    if "streaming" in batch:
-        if layout == "interleaved":
-            return text + batch["frame_lengths"] + prefix_tokens - batch["streaming"].long()
-        text = text.masked_fill(batch["streaming"], 1)
-    return text + batch["frame_lengths"] + prefix_tokens
-
-
-def verify_conditioning(model, dataset):
-    tokenizer = tokenizer_identity(dataset.manifest["tokenizer"]["path"])
-    if tokenizer["sha256"] != dataset.manifest["tokenizer"]["sha256"]:
-        raise ValueError("Build tokenizer artifact changed")
-    if not getattr(model.config, "lm_tts_use_speaker_embedding", True):
-        return
-    if not getattr(model.config, "lm_tts_freeze_speaker_encoder", False):
-        raise ValueError("Cached embeddings require a frozen speaker encoder")
-    state = model.speaker_encoder.state_dict()
-    profiles = [b["speaker_profile"] for b in dataset.bindings]
-    profiles += [b["alternate"]["speaker_profile"] for b in dataset.bindings if "alternate" in b]
-    for profile in profiles:
-        tensors = profile["model"]["tensors"]
-        if set(tensors) != {"speaker_encoder." + k for k in state}:
-            raise ValueError("Cached speaker profile has a different architecture")
-        for name, tensor in state.items():
-            expected = tensors["speaker_encoder." + name]
-            dtype = getattr(torch, expected["dtype"].removeprefix("torch."))
-            value = tensor.detach().cpu().to(dtype).contiguous()
-            actual = hashlib.sha256(
-                value.reshape(-1).view(torch.uint8).numpy().tobytes()
-            ).hexdigest()
-            if list(value.shape) != expected["shape"] or actual != expected["sha256"]:
-                raise ValueError(f"Cached speaker profile weights differ: {name}")
-
-
 def run(config, resume=None, eval_only=False):
     seed, settings = config["seed"], config["train"]
-    layout = settings.get("streaming_layout", "overlay")
     policy, backend = training_precision(settings, config["model"])
     random.seed(seed)
     np.random.seed(seed)
@@ -102,44 +59,10 @@ def run(config, resume=None, eval_only=False):
         full_config = json.loads((assembled / "config.json").read_text())
         if not (assembled / "ASSEMBLY_COMPLETE").is_file():
             raise ValueError("Training requires a completed assembly, not an inference export")
-        specials = (full_config["tts_bos_token_id"], full_config["tts_eos_token_id"])
-        use_speaker = config["model"].get("use_speaker_embedding", True)
-        language = config["model"].get("language_conditioning", "auto")
-        reader_options = {}
-        if language == "codec_language_id":
-            reader_options = dict(
-                language_codec_ids=language_codec_ids(
-                    full_config["talker_config"]["codec_language_id"]
-                ),
-                language_auto_fraction=settings.get("language_auto_fraction", 0.0),
-            )
-        if settings.get("streaming_fraction"):
-            reader_options.update({key: settings[key] for key in STREAMING_KEYS if key in settings})
-        train_data = FeatureDataset(
-            config["data"]["build"],
-            specials,
-            verify_integrity=rank == 0,
-            use_speaker_embedding=use_speaker,
-            mask_reference=settings.get("mask_reference", False),
-            text_vocab_size=full_config["talker_config"]["text_vocab_size"],
-            **reader_options,
+        task = task_for(full_config.get("model_type"))(
+            config, full_config, assembled, rank, backend
         )
-        if rank == 0:
-            train_data.validate_budgets(settings["max_batch_frames"], settings["max_batch_tokens"])
-        verify_tokenizer_compatibility(assembled, train_data.manifest["tokenizer"])
-        val_data = (
-            FeatureDataset(
-                config["data"]["val_build"],
-                specials,
-                verify_integrity=rank == 0,
-                use_speaker_embedding=use_speaker,
-                mask_reference=settings.get("mask_reference", False),
-                text_vocab_size=full_config["talker_config"]["text_vocab_size"],
-                **reader_options,
-            )
-            if config["data"].get("val_build")
-            else None
-        )
+        train_data, val_data = task.train_data, task.val_data
         if val_data is not None:
             # Isolation is a separately published data decision, never inferred from storage split=train.
             if (
@@ -153,24 +76,9 @@ def run(config, resume=None, eval_only=False):
             assembled,
             load_weights=True,
             attn_implementation=backend,
-            use_speaker_embedding=use_speaker,
+            use_speaker_embedding=config["model"].get("use_speaker_embedding", True),
         )
-        if language == "codec_language_id":
-            if full_config.get("model_type") != "qwen3_tts":
-                raise ValueError("Language conditioning is implemented for Qwen talkers only")
-            model.config.lm_tts_language_conditioning = language
-        if settings.get("streaming_fraction"):
-            protocol = getattr(model.config, "lm_tts_input_protocol", "legacy_prefix")
-            if full_config.get("model_type") != "qwen3_tts" or protocol != "qwen3_non_streaming":
-                raise ValueError("Streaming follows the Qwen3 prefill; it needs a Qwen3 talker")
-            model.config.lm_tts_input_layout = "mixed"
-            if settings.get("streaming_layout") == "interleaved":
-                model.config.lm_tts_streaming_layout = "interleaved"
-                model.config.lm_tts_streaming_chunk = settings["streaming_chunk"]
-        verify_conditioning(model, train_data)
-        if val_data is not None:
-            verify_tokenizer_compatibility(assembled, val_data.manifest["tokenizer"])
-            verify_conditioning(model, val_data)
+        task.configure(model)
         if config["model"].get("activation_checkpointing", True):
             model.enable_activation_checkpointing()
         output = Path(settings["output"]).resolve()
@@ -279,9 +187,7 @@ def run(config, resume=None, eval_only=False):
                         "world_size": world,
                         "precision": settings["precision"],
                         "attention": backend,
-                        "predictor_attention": model.predictor_attention,
-                        "use_speaker_embedding": use_speaker,
-                        "mask_reference": settings.get("mask_reference", False),
+                        **task.describe(model),
                         "train_samples": len(train_data),
                         "progress": progress,
                     }
@@ -291,15 +197,7 @@ def run(config, resume=None, eval_only=False):
         if eval_only:
             if val_data is None:
                 raise ValueError("--eval-only requires an isolated validation build")
-            metrics = validate(
-                model,
-                val_data,
-                config["eval"]["batch_size"],
-                device,
-                settings["loss_reduction"],
-                settings["residual_weight"],
-                loader_settings=settings,
-            )
+            metrics = task.validate(model, val_data, device)
             if rank == 0:
                 print(json.dumps({"step": progress["step"], "val": metrics}), flush=True)
             return
@@ -325,7 +223,7 @@ def run(config, resume=None, eval_only=False):
         loader = DataLoader(
             train_data,
             batch_sampler=sampler,
-            collate_fn=collate,
+            collate_fn=task.collate,
             num_workers=workers,
             pin_memory=True,
             persistent_workers=bool(workers),
@@ -353,7 +251,7 @@ def run(config, resume=None, eval_only=False):
             if completed:
                 last_validated_step = step
             elif retry:
-                run_validation(model, val_data, config, device, output, step, writer)
+                run_validation(task, model, val_data, device, output, step, writer)
                 last_validated_step = step
         while not finished(settings, progress, epoch_fraction()):
             started = time.perf_counter()
@@ -392,69 +290,26 @@ def run(config, resume=None, eval_only=False):
             if not batches:
                 break
             prepare_seconds = time.perf_counter() - started
-            denominators = sum(
-                loss_normalizers(
-                    b.get("supervised_frame_lengths", b["frame_lengths"]),
-                    settings["loss_reduction"],
-                )
-                for b in batches
-            ).to(device)
-            dist.all_reduce(denominators)
             counts = torch.tensor(
                 [
-                    sum(
-                        b.get("supervised_frame_lengths", b["frame_lengths"]).sum().item()
-                        + len(b["frame_lengths"])
-                        for b in batches
-                    ),
-                    sum(
-                        b.get("supervised_frame_lengths", b["frame_lengths"]).sum().item() * 15
-                        for b in batches
-                    ),
                     sum(len(b["frame_lengths"]) for b in batches),
                     sum(b["audio_seconds"].sum().item() for b in batches),
                     skipped_since_log,
                     discarded_since_log,
-                    sum(
-                        talker_lengths(b, model.prefix_tokens, layout).sum().item() for b in batches
-                    ),
-                    sum(
-                        talker_lengths(b, model.prefix_tokens, layout).max().item()
-                        * len(b["frame_lengths"])
-                        for b in batches
-                    ),
                 ],
                 dtype=torch.float64,
                 device=device,
             )
             dist.all_reduce(counts)
-            optimizer.zero_grad(set_to_none=True)
-            keys = ("first_sum", "residual_sum", "first_reduced_sum", "residual_reduced_sum")
-            # [0:4] every sample; [4:8] streaming samples; [8:12] their counts and normalizers.
-            sums = torch.zeros(12, dtype=torch.float64, device=device)
             split = (progress["step"] + 1) % settings["log_every"] == 0
+            task.begin_step(model, batches, device, split)
+            optimizer.zero_grad(set_to_none=True)
             for i, batch in enumerate(batches):
                 model.set_requires_gradient_sync(i == len(batches) - 1)
-                batch = move(batch, device)
-                predictions = model(batch)
-                samples = batch.get("streaming") if split else None
-                out = tts_loss(predictions, batch, model.eos, settings["loss_reduction"], samples)
-                if samples is not None:
-                    part = out["selected"]
-                    lengths = batch.get("supervised_frame_lengths", batch["frame_lengths"])
-                    sums[4:8] += torch.stack([part[k] for k in keys])
-                    sums[8] += part["first_count"]
-                    sums[9] += part["frame_count"] * 15
-                    sums[10:12] += loss_normalizers(lengths[samples], settings["loss_reduction"])
-                del predictions
-                loss = world * (
-                    out["first_reduced_sum"] / denominators[0]
-                    + settings["residual_weight"] * out["residual_reduced_sum"] / denominators[1]
-                )
+                loss = task.loss(model, move(batch, device), world)
                 if not torch.isfinite(loss):
                     raise FloatingPointError("Non-finite loss")
                 loss.backward()
-                sums[:4] += torch.stack([out[k].detach() for k in keys])
             norm = torch.nn.utils.clip_grad_norm_(model.parameters(), settings["grad_clip"])
             if not torch.isfinite(norm):
                 raise FloatingPointError("Non-finite gradient norm")
@@ -462,7 +317,7 @@ def run(config, resume=None, eval_only=False):
             scheduler.step()
             progress["step"] += 1
             step = progress["step"]
-            dist.all_reduce(sums)
+            task.end_step()
             if step % settings["log_every"] == 0:
                 torch.cuda.synchronize(device)
                 # Every rank participates: rank 0 alone can hide an input bottleneck elsewhere.
@@ -481,52 +336,28 @@ def run(config, resume=None, eval_only=False):
                 dist.all_reduce(timing, op=dist.ReduceOp.MAX)
                 elapsed, wait_seconds, prepare_seconds, peak_memory = timing.tolist()
             if rank == 0 and step % settings["log_every"] == 0:
+                lrs = [group["lr"] for group in optimizer.param_groups]
                 metrics = {
-                    "first_ce": (sums[0] / counts[0]).item(),
-                    "residual_ce": (sums[1] / counts[1]).item(),
-                    "objective": (
-                        sums[2] / denominators[0]
-                        + settings["residual_weight"] * sums[3] / denominators[1]
-                    ).item(),
-                    "global_samples": counts[2].item(),
+                    **task.metrics(),
+                    "global_samples": counts[0].item(),
                     "epoch": epoch_fraction(),
-                    "skipped_samples": counts[4].item(),
-                    "discarded_samples": counts[5].item(),
-                    "audio_seconds": counts[3].item(),
-                    "codec_tokens": counts[0].item() + counts[1].item(),
-                    "talker_tokens": counts[6].item(),
-                    "padding_efficiency": (counts[6] / counts[7]).item()
-                    if backend == "sdpa"
-                    else 1.0,
+                    "skipped_samples": counts[2].item(),
+                    "discarded_samples": counts[3].item(),
+                    "audio_seconds": counts[1].item(),
                     "grad_norm": norm.item(),
                     "step_seconds": elapsed,
                     "data_wait_seconds": wait_seconds,
                     "data_wait_mean_seconds": wait_mean.item() / world,
                     "data_wait_fraction": wait_seconds / elapsed,
                     "batch_prepare_seconds": prepare_seconds,
-                    "audio_seconds_per_second": counts[3].item() / elapsed,
+                    "audio_seconds_per_second": counts[1].item() / elapsed,
                     "peak_memory_gib": peak_memory,
-                    "lr_backbone": optimizer.param_groups[0]["lr"],
-                    "lr_new": optimizer.param_groups[1]["lr"],
+                    **(
+                        {"lr_backbone": lrs[0], "lr_new": lrs[1]}
+                        if len(lrs) == 2
+                        else {"lr": lrs[0]}
+                    ),
                 }
-                if settings.get("streaming_fraction"):
-                    # The same pooled statistics, split by each sample's input layout.
-                    parts = (
-                        ("streaming_", sums[4:8], sums[8:10], sums[10:12]),
-                        (
-                            "non_streaming_",
-                            sums[:4] - sums[4:8],
-                            counts[:2] - sums[8:10],
-                            denominators - sums[10:12],
-                        ),
-                    )
-                    for prefix, part, count, norm in parts:
-                        if count[0] > 0:
-                            metrics[prefix + "first_ce"] = (part[0] / count[0]).item()
-                            metrics[prefix + "residual_ce"] = (part[1] / count[1]).item()
-                            metrics[prefix + "objective"] = (
-                                part[2] / norm[0] + settings["residual_weight"] * part[3] / norm[1]
-                            ).item()
                 print(json.dumps({"step": step, **metrics}), flush=True)
                 write_training(writer, metrics, step, groups)
                 with (output / "metrics.jsonl").open("a") as journal:
@@ -553,7 +384,7 @@ def run(config, resume=None, eval_only=False):
                 if rank == 0:
                     writer.flush()
             if validation_due:
-                run_validation(model, val_data, config, device, output, step, writer)
+                run_validation(task, model, val_data, device, output, step, writer)
                 last_validated_step = step
         # Epoch exhaustion may only be discovered by reading the next batch.
         validation_due = val_data is not None and progress["step"] != last_validated_step
@@ -569,7 +400,7 @@ def run(config, resume=None, eval_only=False):
                 validation_pending=validation_due,
             )
         if validation_due:
-            run_validation(model, val_data, config, device, output, progress["step"], writer)
+            run_validation(task, model, val_data, device, output, progress["step"], writer)
         if rank == 0:
             (output / "completion.json").write_text(json.dumps(progress, indent=2))
     finally:

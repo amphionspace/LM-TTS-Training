@@ -1,0 +1,15 @@
+extends: base.yaml
+
+# ---- Emilia-NV with inline paralinguistic tags, dots.tts VAE posteriors and reference-crop CAM++ x-vectors ----
+paths:
+  assembled_model: ${paths.project}/assets/assembled/dots-tts-soar-nv18
+
+root: ${paths.features}
+tokenizer: ${paths.assembled_model}
+evaluation: no_holdout  # The source build is partitioned into train / validation below.
+validation_fraction: 0.01
+split_seed: 42
+
+bindings:
+  - dataset_id: emilia_nv
+    dots_manifest: datasets/emilia_nv/v0.1/features/dots_vae/emilia_nv-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261103T095118bjt-01/manifest.json

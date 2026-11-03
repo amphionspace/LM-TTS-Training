@@ -11,6 +11,8 @@ GROUPS = {
         "train/epoch": "epoch",
         "train/first_ce": "first_ce",
         "train/residual_ce": "residual_ce",
+        "train/fm_loss": "fm_loss",
+        "train/eos_loss": "eos_loss",
         "train/streaming_loss": "streaming_objective",
         "train/streaming_first_ce": "streaming_first_ce",
         "train/streaming_residual_ce": "streaming_residual_ce",
@@ -19,6 +21,7 @@ GROUPS = {
         "train/non_streaming_residual_ce": "non_streaming_residual_ce",
         "train/lr_backbone": "lr_backbone",
         "train/lr_new": "lr_new",
+        "train/lr": "lr",
         "train/grad_norm": "grad_norm",
     },
     "performance": {
@@ -35,6 +38,7 @@ GROUPS = {
         "batch/audio_seconds": "audio_seconds",
         "batch/codec_tokens": "codec_tokens",
         "batch/talker_tokens": "talker_tokens",
+        "batch/patches": "patches",
         "batch/padding_efficiency": "padding_efficiency",
         "batch/skipped_samples": "skipped_samples",
         "batch/discarded_samples": "discarded_samples",
@@ -55,8 +59,17 @@ def setup_dashboard(writer, groups):
     charts = {}
     if "optimization" in groups:
         charts["Optimization"] = {
-            "Loss": ["Multiline", ["train/loss", "train/first_ce", "train/residual_ce"]],
-            "Learning rates": ["Multiline", ["train/lr_backbone", "train/lr_new"]],
+            "Loss": [
+                "Multiline",
+                [
+                    "train/loss",
+                    "train/first_ce",
+                    "train/residual_ce",
+                    "train/fm_loss",
+                    "train/eos_loss",
+                ],
+            ],
+            "Learning rates": ["Multiline", ["train/lr_backbone", "train/lr_new", "train/lr"]],
         }
     if "performance" in groups:
         charts["Performance"] = {
@@ -77,8 +90,10 @@ def write_training(writer, metrics, step, groups):
 
 
 def write_validation(writer, metrics, step):
-    for key in ("loss", "first_ce", "residual_ce"):
-        writer.add_scalar("val/" + key, metrics[key], step)
+    # Codec models report first/residual CE; continuous-latent models report FM and EOS.
+    for key in ("loss", "first_ce", "residual_ce", "fm_loss", "eos_loss"):
+        if key in metrics:
+            writer.add_scalar("val/" + key, metrics[key], step)
         for layout in ("streaming_", "non_streaming_"):
             if layout + key in metrics:
                 writer.add_scalar("val/" + layout + key, metrics[layout + key], step)

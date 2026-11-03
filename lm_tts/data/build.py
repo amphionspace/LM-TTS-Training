@@ -165,6 +165,22 @@ def create_build(recipe_path, output, *, paths=None):
         return compose_mixed_build(
             mix["primary"], mix["alternate"], output, mix["fraction"], mix["seed"]
         )
+    if any("dots_manifest" in binding for binding in recipe["bindings"]):
+        from .dots import bind_dots
+        from .split import split_build
+
+        if recipe["evaluation"] != "no_holdout" or not recipe.get("validation_fraction"):
+            raise ValueError("dots builds hold out a validation_fraction of the published rows")
+        tokenizer_info = tokenizer_identity(recipe["tokenizer"])
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_info["path"], fix_mistral_regex=False, local_files_only=True
+        )
+        bind_dots(recipe, output, tokenizer_info, tokenizer)
+        return split_build(
+            Path(output) / "manifest.json",
+            recipe["validation_fraction"],
+            recipe.get("split_seed", 42),
+        )
     root = Path(recipe["root"]).resolve()
     selection_path = root / recipe["selection_manifest"]
     selection = read_complete(selection_path)

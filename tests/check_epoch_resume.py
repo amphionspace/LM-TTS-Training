@@ -71,14 +71,14 @@ def main():
         path.write_text(yaml.safe_dump(config))
 
     launcher = root / "fail_validation.py"
-    launcher.write_text("""from lm_tts.training import validation
+    launcher.write_text("""from lm_tts.training import codec_task
 from lm_tts.train import main
 
 def fail(*args, **kwargs):
     raise RuntimeError('injected validation failure')
 
 if __name__ == "__main__":
-    validation.validate = fail
+    codec_task.validate = fail
     main()
 """)
 

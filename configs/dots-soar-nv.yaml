@@ -1,0 +1,33 @@
+extends: base.yaml
+
+# ---- dots.tts-soar fine-tuning with inline NVSpeech paralinguistic tags ----
+paths:
+  assembled_model: ${paths.project}/assets/assembled/dots-tts-soar-nv18
+
+# Each tag becomes one token; its embedding row starts at the mean of its former subwords.
+assembly:
+  family: dots
+  release: dots.tts-soar
+  tag_tokens:
+    - "[Breathing]"
+    - "[Laughter]"
+    - "[Cough]"
+    - "[Sigh]"
+    - "[Confirmation-en]"
+    - "[Question-en]"
+    - "[Question-ah]"
+    - "[Question-oh]"
+    - "[Surprise-ah]"
+    - "[Surprise-oh]"
+    - "[Dissatisfaction-hnn]"
+    - "[Uhm]"
+    - "[Shh]"
+    - "[Crying]"
+    - "[Surprise-wa]"
+    - "[Surprise-yo]"
+    - "[Question-ei]"
+    - "[Question-yi]"
+
+data:
+  config: ${paths.project}/configs/data-emilia-nv-dots.yaml
+  build_id: dots-emilia-nv-reference-20261103

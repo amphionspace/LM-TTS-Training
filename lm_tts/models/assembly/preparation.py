@@ -17,6 +17,22 @@ def assembly_recipe(config):
     if not isinstance(overrides, dict):
         raise ValueError("assembly must be a mapping")
     family = overrides.get("family", "qwen3")
+    if family == "dots":
+        recipe = {
+            "family": "dots",
+            "release": "dots.tts-soar",
+            "dtype": "float32",
+            "tag_tokens": None,
+        }
+        if set(overrides) - set(recipe):
+            raise ValueError("dots assembly only accepts family, release, dtype and tag_tokens")
+        recipe.update(overrides)
+        tags = recipe["tag_tokens"]
+        if not isinstance(tags, list) or not tags or not all(isinstance(t, str) for t in tags):
+            raise ValueError("assembly.tag_tokens must be a non-empty list of strings")
+        if recipe["dtype"] not in {"float32", "bfloat16"}:
+            raise ValueError("Invalid assembly dtype")
+        return recipe
     if family == "lfm2":
         recipe = {
             "family": "lfm2",
@@ -157,6 +173,33 @@ def prepare_lfm(config, recipe):
         for name, expected in binding["sha256"].items():
             if file_hash(source / name) != expected:
                 raise ValueError(f"Assembled source changed: {source / name}")
+    for name, expected in report["artifact_sha256"].items():
+        if file_hash(assembled / name) != expected:
+            raise ValueError(f"Assembled artifact changed: {name}")
+    return assembled
+
+
+def prepare_dots(config, recipe):
+    import torch
+
+    from .dots import assemble
+
+    source = Path(config["paths"]["project"]) / "assets/base" / recipe["release"]
+    assembled = Path(config["model"]["assembled_model"])
+    if not (assembled / "ASSEMBLY_COMPLETE").is_file():
+        assemble(source, assembled, recipe["tag_tokens"], getattr(torch, recipe["dtype"]))
+    report = json.loads((assembled / "assembly_report.json").read_text())
+    if (
+        report["dtype"] != recipe["dtype"]
+        or list(report["text_vocabulary"]["added_tokens"]) != (recipe["tag_tokens"])
+    ):
+        raise ValueError(f"Assembled recipe differs: {assembled}")
+    release = report["sources"]["release"]
+    if Path(release["resolved_directory"]) != source.resolve():
+        raise ValueError(f"Assembled source differs: {assembled}")
+    for name, expected in release["sha256"].items():
+        if file_hash(source / name) != expected:
+            raise ValueError(f"Assembled source changed: {source / name}")
     for name, expected in report["artifact_sha256"].items():
         if file_hash(assembled / name) != expected:
             raise ValueError(f"Assembled artifact changed: {name}")

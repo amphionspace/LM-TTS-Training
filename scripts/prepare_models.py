@@ -12,6 +12,7 @@ from lm_tts.config import read_yaml
 from lm_tts.models.assembly.preparation import (
     SOURCES,
     assembly_recipe,
+    prepare_dots,
     prepare_lfm,
     verify_assembly,
 )
@@ -24,7 +25,7 @@ def main():
         "--source",
         type=Path,
         default=Path("/workspace/model"),
-        help="Qwen source root to copy; LFM reads the project assets/base directory",
+        help="Qwen source root to copy; LFM and dots read the project assets/base directory",
     )
     args = parser.parse_args()
     config = read_yaml(args.config)
@@ -32,9 +33,13 @@ def main():
     assembled = Path(config["model"]["assembled_model"])
     if (assembled / "config.json").exists():
         family = json.loads((assembled / "config.json").read_text()).get("model_type")
-        expected = "lfm2_tts" if recipe.get("family") == "lfm2" else "qwen3_tts"
+        expected = {"lfm2": "lfm2_tts", "dots": "dots_tts"}.get(recipe.get("family"), "qwen3_tts")
         if family != expected:
             raise ValueError(f"assembly.family disagrees with {assembled}: {family}")
+    if recipe.get("family") == "dots":
+        assembled = prepare_dots(config, recipe)
+        print(json.dumps({"assembled_model": str(assembled), "family": "dots"}))
+        return
     if recipe.get("family") == "lfm2":
         assembled = prepare_lfm(config, recipe)
         print(json.dumps({"assembled_model": str(assembled), "family": "lfm2"}))

@@ -10,7 +10,7 @@ from qwen_tts.core.models.modeling_qwen3_tts import Qwen3TTSForConditionalGenera
 from lm_tts.data.batch import collate
 from lm_tts.inference.frame import next_frame
 from lm_tts.models.protocol import frame_embeddings, interleaved_layout
-from lm_tts.training.engine import talker_lengths
+from lm_tts.training.codec_task import talker_lengths
 
 
 class QwenProtocolTests(test_protocol.ProtocolTests):
