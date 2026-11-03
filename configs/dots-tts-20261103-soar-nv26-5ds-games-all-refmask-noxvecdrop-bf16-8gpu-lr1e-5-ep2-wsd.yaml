@@ -1,0 +1,44 @@
+extends: dots-soar-nv26-games-all-data.yaml
+
+# ---- The 5-dataset NV run plus all ~1,103 h of deduplicated game voice data (zh/en, ~1.46:1) ----
+# Same recipe and step count as dots-tts-20261103-soar-nv26-5ds-refmask-noxvecdrop-...: the dynamic-batch
+# budget grows by total/NV hours (2.465x) instead of adding steps.
+
+train:
+  run_name: dots-tts-20261103-soar-nv26-5ds-games-all-refmask-noxvecdrop-bf16-8gpu-lr1e-5-ep2-wsd
+  precision: bf16
+  interleave_fraction: 0.5
+  xvector_dropout: 0.0
+
+  epochs: 2
+  max_steps: null
+  schedule_steps: null
+  warmup_steps: null
+  lr: 1.0e-5
+  backbone_lr: 1.0e-5
+  scheduler:
+    name: wsd
+    warmup_ratio: 0.02
+    decay_ratio: 0.2
+    min_lr_ratio: 0.1
+
+  # Budgets count 6.25 Hz patches: 2.465x the NV run's 600 / 1000 per GPU, keeping its ~8.2k steps.
+  max_batch_frames: 1480
+  max_batch_tokens: 2470
+  accumulation: 1
+  num_workers: 4
+  prefetch_factor: 2
+
+  log_every: 10
+  first_check_step: 50
+  keep_checkpoints: null
+  save_every: 500
+  eval_every: 500
+
+eval:
+  batch_size: 16
+
+acp:
+  nodes: 1
+  worker_spec: N3lS.Ii.I60.80c896g  # 8 A800 GPUs, 80 vCPU, 896 GiB per node
+  priority: HIGHEST

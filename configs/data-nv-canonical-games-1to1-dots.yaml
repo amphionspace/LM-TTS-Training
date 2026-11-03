@@ -1,0 +1,59 @@
+extends: base.yaml
+
+# ---- Five NV datasets (nv-canonical-v1, 26 tags) + four game voice datasets capped to NV hours (1:1) ----
+# Each game keeps a fixed hash-ordered subset, capped in proportion to its deduplicated share so the
+# games total ~753 h, the NV hours of data-nv-canonical-dots.yaml.
+# Game rows that repeat an NV recording are dropped from the index (tables untouched): b1's loose
+# text/length matches, exact text within 0.3 s, or an audio fingerprint cosine >= 0.90.
+# One selection (tts-selection-supervised-tts-20261103T173114bjt-01) holds out upstream test splits and
+# drops unusable rows; the build partitions the rest into train / validation.
+paths:
+  assembled_model: ${paths.project}/assets/assembled/dots-tts-soar-nv26
+
+root: ${paths.features}
+tokenizer: ${paths.assembled_model}
+evaluation: no_holdout  # The source build is partitioned into train / validation below.
+validation_fraction: 0.01
+split_seed: 42
+audio_dedup_threshold: 0.90
+
+bindings:
+  - dataset_id: emilia_nv
+    dots_manifest: datasets/emilia_nv/v0.1/features/dots_vae/emilia_nv-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261103T173207bjt-01/manifest.json
+    text_kind: nv-canonical-v1
+  - dataset_id: nonverbalspeech38k
+    dots_manifest: datasets/nonverbalspeech38k/v0.1/features/dots_vae/nonverbalspeech38k-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261103T173207bjt-01/manifest.json
+    text_kind: nv-canonical-v1
+  - dataset_id: smiip_nv
+    dots_manifest: datasets/smiip_nv/v0.1/features/dots_vae/smiip_nv-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261103T173207bjt-01/manifest.json
+    text_kind: nv-canonical-v1
+  - dataset_id: disfluencyspeech
+    dots_manifest: datasets/disfluencyspeech/v0.1/features/dots_vae/disfluencyspeech-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261103T173207bjt-01/manifest.json
+    text_kind: nv-canonical-v1
+  - dataset_id: nonverbaltts
+    dots_manifest: datasets/nonverbaltts/v0.1/features/dots_vae/nonverbaltts-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261103T173207bjt-01/manifest.json
+    text_kind: nv-canonical-v1
+  - dataset_id: genshin_voice
+    max_hours: 332.4
+    dots_manifest: datasets/genshin_voice/v0.1/features/dots_vae/genshin_voice-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261103T190254bjt-01/manifest.json
+    text_kind: asr_transcription
+    dedup_against: [emilia_nv, nonverbalspeech38k, smiip_nv, disfluencyspeech, nonverbaltts]
+    exclude_list: {path: /workspace/workspace/yanglin/tts-data-pipeline/reports/nv-game-overlap/loose_pairs.jsonl, field: game_target_id}
+  - dataset_id: starrail_voice
+    max_hours: 217.1
+    dots_manifest: datasets/starrail_voice/v0.1/features/dots_vae/starrail_voice-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261103T190254bjt-01/manifest.json
+    text_kind: asr_transcription
+    dedup_against: [emilia_nv, nonverbalspeech38k, smiip_nv, disfluencyspeech, nonverbaltts, genshin_voice]
+    exclude_list: {path: /workspace/workspace/yanglin/tts-data-pipeline/reports/nv-game-overlap/loose_pairs.jsonl, field: game_target_id}
+  - dataset_id: zenless_voice
+    max_hours: 162.0
+    dots_manifest: datasets/zenless_voice/v0.1/features/dots_vae/zenless_voice-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261103T190254bjt-01/manifest.json
+    text_kind: asr_transcription
+    dedup_against: [emilia_nv, nonverbalspeech38k, smiip_nv, disfluencyspeech, nonverbaltts, genshin_voice, starrail_voice]
+    exclude_list: {path: /workspace/workspace/yanglin/tts-data-pipeline/reports/nv-game-overlap/loose_pairs.jsonl, field: game_target_id}
+  - dataset_id: wutheringwaves
+    max_hours: 41.6
+    dots_manifest: datasets/wutheringwaves/v0.1/features/dots_vae/wutheringwaves-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261103T190254bjt-01/manifest.json
+    text_kind: asr_transcription
+    dedup_against: [emilia_nv, nonverbalspeech38k, smiip_nv, disfluencyspeech, nonverbaltts, genshin_voice, starrail_voice, zenless_voice]
+    exclude_list: {path: /workspace/workspace/yanglin/tts-data-pipeline/reports/nv-game-overlap/loose_pairs.jsonl, field: game_target_id}

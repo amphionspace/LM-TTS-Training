@@ -1,0 +1,5 @@
+extends: dots-soar-nv26.yaml
+
+data:
+  config: ${paths.project}/configs/data-nv-canonical-games-1to1-dots.yaml
+  build_id: dots-nv-canonical-v1-games-1to1-20261103
