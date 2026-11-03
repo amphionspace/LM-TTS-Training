@@ -6,6 +6,7 @@ VAE posteriors and x-vectors stay in the immutable source payloads."""
 import hashlib
 import json
 import re
+import unicodedata
 from collections import defaultdict
 from pathlib import Path
 
@@ -86,21 +87,48 @@ class Layout:
         return {"ids": self.ids, "prompts": self.prompts, "eos": self.eos}
 
 
+def utterance_key(text):
+    """Text identity across re-encoded copies of one recording: tags removed, NFKC, lowercase,
+    letters and digits only."""
+    text = unicodedata.normalize("NFKC", TAG.sub("", text)).lower()
+    return "".join(c for c in text if c.isalnum())
+
+
+def is_duplicate(seen, text, seconds, tolerance=0.3):
+    """Same normalized text and a duration within `tolerance` of an earlier dataset's row."""
+    return any(abs(seconds - other) <= tolerance for other in seen.get(utterance_key(text), ()))
+
+
+def hours_subset(targets, durations, max_hours):
+    """Positions (in original order) of a fixed pseudo-random subset holding at most max_hours.
+    The order depends only on target IDs, so a larger cap keeps every row of a smaller one."""
+    order = sorted(
+        range(len(targets)),
+        key=lambda i: hashlib.sha256(f"hours-cap-v1:{targets[i]}".encode()).digest(),
+    )
+    total = np.cumsum(durations[order]) / 3600
+    return np.sort(np.asarray(order[: int(np.searchsorted(total, max_hours, side="right"))]))
+
+
 def bind_dots(recipe, output, tokenizer_info, tokenizer):
     root, output = Path(recipe["root"]).resolve(), Path(output).resolve()
     bindings = recipe["bindings"]
     if not bindings or any(
         not {"dataset_id", "dots_manifest"}
         <= set(b)
-        <= {"dataset_id", "dots_manifest", "text_kind"}
+        <= {"dataset_id", "dots_manifest", "text_kind", "max_hours", "dedup_against"}
         for b in bindings
     ):
-        raise ValueError("dots bindings take dataset_id, dots_manifest and optionally text_kind")
+        raise ValueError(
+            "dots bindings take dataset_id, dots_manifest and optionally text_kind, max_hours,"
+            " dedup_against"
+        )
     names = [b["dataset_id"] for b in bindings]
     if len(set(names)) != len(names):
         raise ValueError("Duplicate dots datasets would repeat training samples")
     output.mkdir(parents=True, exist_ok=False)
     tags = set(tokenizer.get_added_vocab())
+    utterances = {}
     bound, languages, profiles = [], {}, set()
     for slot, configured in enumerate(bindings):
         manifest, reference, table = feature_reference(
@@ -177,7 +205,16 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                         row["target_id"], frames // PATCH_SIZE
                     ) != (None if published[0] is None else published):
                         raise ValueError(f"reference interval breaks {REFERENCE_RULE}: {dataset}")
+                    seconds = row["processed_frames"] / 48000 if reason is None else None
+                    if reason is None and any(
+                        is_duplicate(utterances[name], row["text"], seconds) for name in against
+                    ):
+                        reason = "duplicate"
                     if reason is None:
+                        utterances[dataset].setdefault(utterance_key(row["text"]), []).append(
+                            seconds
+                        )
+                        targets.append(row["target_id"])
                         language = languages.setdefault(row["language"], len(languages))
                         index[ready] = (
                             observed,
@@ -193,10 +230,22 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                     cached.append({"text_ids": ids, "num_text_tokens": len(ids)})
                 yield pa.RecordBatch.from_pylist(cached, schema=schema)
 
+        targets = []
+        # Re-encoded copies of a recording share no ID or hash, only text and length; rows that
+        # duplicate an earlier binding are excluded from the index, the tables stay unchanged.
+        against = configured.get("dedup_against", [])
+        if not set(against) <= set(utterances):
+            raise ValueError(f"dedup_against must name earlier bindings: {dataset}")
+        utterances[dataset] = {}
         clone = table.shallow_clone(output / f"dots-{slot:03d}.lance", reference["lance_version"])
         clone.add_columns(pa.RecordBatchReader.from_batches(schema, columns()), batch_size=4096)
         if observed != manifest["rows"] or not ready:
             raise ValueError(f"dots build coverage changed or empty: {dataset}")
+        if "max_hours" in configured:
+            kept = hours_subset(targets, index["duration"][:ready], configured["max_hours"])
+            excluded["hours_cap"] += ready - len(kept)
+            index[: len(kept)] = index[kept]
+            ready = len(kept)
         index.flush()
         index = None
         bound.append(

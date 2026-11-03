@@ -3,7 +3,13 @@
 import torch
 from transformers import Qwen2Config
 
-from lm_tts.data.dots import PATCH_SIZE, DotsCollator, reference_interval
+from lm_tts.data.dots import (
+    PATCH_SIZE,
+    DotsCollator,
+    is_duplicate,
+    reference_interval,
+    utterance_key,
+)
 from lm_tts.models.dots import DotsTTSModel
 from lm_tts.objectives.flow import eos_weights, flow_loss
 
@@ -201,3 +207,12 @@ def test_later_latents_cannot_change_earlier_predictions():
     torch.testing.assert_close(a["velocity"][:3], b["velocity"][:3])
     torch.testing.assert_close(a["eos_logits"][:3], b["eos_logits"][:3])
     assert not torch.allclose(a["velocity"][3], b["velocity"][3])
+
+
+def test_duplicates_match_text_and_length_not_tags_or_punctuation():
+    seen = {}
+    seen.setdefault(utterance_key("[Laughter]你好，世界！"), []).append(3.20)
+    assert is_duplicate(seen, "你好世界", 3.45)
+    assert not is_duplicate(seen, "你好世界", 3.60)
+    assert not is_duplicate(seen, "你好，地球", 3.20)
+    assert utterance_key("Hello, World [Sniff]") == "helloworld"
