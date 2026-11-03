@@ -63,8 +63,8 @@ CONFIG=configs/supervised-tts-20260929-all16-textbase-trainable-randproj-bf16-32
 
 | 内容 | 路径 |
 | --- | --- |
-| Greedy 结果 | `res/all16-textbase-step25000-seedtts-greedy-20261009-8gpu` |
-| 采样结果 | `res/all16-textbase-step25000-seedtts-sampling-20261009-8gpu` |
+| Greedy 结果 | `res/archive/all16-textbase/all16-textbase-step25000-seedtts-greedy-20261009-8gpu` |
+| 采样结果 | `res/archive/all16-textbase/all16-textbase-step25000-seedtts-sampling-20261009-8gpu` |
 | 顺序执行日志 | `log/seed-tts-textbase-step25000-sequence.log` |
 
 后台会话为 `seedtts-all16-textbase-s25000-sequence`。具体命令保存在 greedy 结果目录的 `run-sequence.sh`；`sequence-stage.txt` 记录当前阶段，各组 `pipeline_status.json` 记录运行状态，完成后读取 `full/summary.json` 与 `full/audit.json`。若中断，确认该会话和其评测进程均已退出后，可在 UltraEval-Audio 根目录重跑同一脚本，复用已完成音频与评分。

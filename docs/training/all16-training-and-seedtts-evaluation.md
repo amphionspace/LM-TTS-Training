@@ -209,8 +209,8 @@ Frozen-conditioning 最终 step 47,382 的 teacher-forcing 验证：首码本 CE
 
 | 内容 | 路径 |
 | --- | --- |
-| Greedy 结果 | `res/all16-step32500-seedtts-greedy-20261008-8gpu` |
-| 随后采样的结果 | `res/all16-step32500-seedtts-sampling-20261008-8gpu` |
+| Greedy 结果 | `res/archive/all16/all16-step32500-seedtts-greedy-20261008-8gpu` |
+| 随后采样的结果 | `res/archive/all16/all16-step32500-seedtts-sampling-20261008-8gpu` |
 | 顺序执行日志 | `log/seed-tts-step32500-sequence.log` |
 
 **Greedy 于 2026-10-08 10:13 UTC 完成并通过审计**：3,108 条均已生成，英文排除 4 条、中文排除 28 条超过 30 秒的输出；保留的 3,076 条均完成 ASR 和 SIM，无未恢复的生成或评分错误。采样于同日 12:22 UTC 完成并通过审计，3,108 条全部评分、无超过 30 秒的输出；完整指标见第 8 节。
@@ -224,9 +224,9 @@ Frozen-conditioning 最终 step 47,382 的 teacher-forcing 验证：首码本 CE
 
 Step 32,500 的英文 WER 和中文 CER 分别降低 **8.452、4.499 个百分点**，但 SIM 分别降低 **1.462、3.418**，且异常长输出更多。它在保留样本上的内容准确率更好，不能据此认定整体克隆质量更好，也不能仅凭这两组结果确定退化原因。各组保留样本不同；排除的长输出仍须计入失败现象，不能视为模型已经解决这些样本。历史 Qwen 的过滤阈值为 160 秒，与此表也不同。
 
-结果见 [32,500 greedy 汇总](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/summary.json)和[审计](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/audit.json)。后台会话为 `seedtts-all16-s32500-sequence`；顺序启动命令保存在 greedy 目录的 `run-sequence.sh`，阶段见 `sequence-stage.txt`。两组完整成绩均已纳入第 8 节。
+结果见 [32,500 greedy 汇总](../../../UltraEval-Audio/res/archive/all16/all16-step32500-seedtts-greedy-20261008-8gpu/full/summary.json)和[审计](../../../UltraEval-Audio/res/archive/all16/all16-step32500-seedtts-greedy-20261008-8gpu/full/audit.json)。后台会话为 `seedtts-all16-s32500-sequence`；顺序启动命令保存在 greedy 目录的 `run-sequence.sh`，阶段见 `sequence-stage.txt`。两组完整成绩均已纳入第 8 节。
 
-完整结果见 [采样汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/summary.json)、[greedy 汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json)和 [greedy 审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json)。早期小样本诊断保存在 [评测证据](evidence/seed-tts-step47382.json)，正式结论以上述全量结果为准。
+完整结果见 [采样汇总](../../../UltraEval-Audio/res/archive/all16/all16-step47382-seedtts-20261008-8gpu/full/summary.json)、[greedy 汇总](../../../UltraEval-Audio/res/archive/all16/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json)和 [greedy 审计](../../../UltraEval-Audio/res/archive/all16/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json)。早期小样本诊断保存在 [评测证据](evidence/seed-tts-step47382.json)，正式结论以上述全量结果为准。
 
 ### 一个 epoch 附近的对照：step 17,500
 
@@ -234,7 +234,7 @@ Step 32,500 的英文 WER 和中文 CER 分别降低 **8.452、4.499 个百分�
 
 已完成的执行顺序：**32,500 greedy → 32,500 采样 → 17,500 greedy → 17,500 采样**。每组必须完成全量评分并通过审计，才会开始下一组；前序失败则停止接续。17,500 沿用相同 speaker + ICL、数据、采样参数、8 卡和每进程 16 GiB 上限，以及上述各组独立的 30 秒过滤规则，开始前自动核验归档并导出模型。
 
-结果分别写入 UltraEval-Audio 的 `res/all16-step17500-seedtts-greedy-20261008-8gpu` 和 `res/all16-step17500-seedtts-sampling-20261008-8gpu`。Greedy 和采样分别于 2026-10-08 14:39、16:20 UTC 完成并通过审计，指标见第 8 节。调度日志为 `log/seed-tts-step17500-sequence.log`，greedy 目录的 `sequence-stage.txt` 已为 `complete`。
+结果分别写入 UltraEval-Audio 的 `res/archive/all16/all16-step17500-seedtts-greedy-20261008-8gpu` 和 `res/archive/all16/all16-step17500-seedtts-sampling-20261008-8gpu`。Greedy 和采样分别于 2026-10-08 14:39、16:20 UTC 完成并通过审计，指标见第 8 节。调度日志为 `log/seed-tts-step17500-sequence.log`，greedy 目录的 `sequence-stage.txt` 已为 `complete`。
 
 ## 6. 当前训练存在的问题：speaker 条件的训推不一致
 
@@ -286,8 +286,8 @@ UE=/workspace/workspace/yanglin/UltraEval-Audio
 | `raw_data/TwinkStart/Seed-TTS-Eval`、`raw_data/seed_tts_manifests` | HF 数据快照、固定输入清单与参考 WAV |
 | `init_model/` | 本轮导出模型、Whisper、Paraformer、WavLM / ECAPA；模型与数据通过 HF Mirror 无代理下载 |
 | `envs/tts`、`envs/metrics` | 独立推理 / 评分 Conda 环境 |
-| `res/all16-step47382-seedtts-20261008-8gpu` | 已完成的采样 ICL；保留暂停的 speaker-only 记录 |
-| `res/all16-step47382-seedtts-greedy-20261008-8gpu` | 已完成的全量 greedy ICL |
+| `res/archive/all16/all16-step47382-seedtts-20261008-8gpu` | 已完成的采样 ICL；保留暂停的 speaker-only 记录 |
+| `res/archive/all16/all16-step47382-seedtts-greedy-20261008-8gpu` | 已完成的全量 greedy ICL |
 | `log/seed-tts-icl-greedy.log` | Greedy 调度日志 |
 
 数据 HF revision 为 `185352e5da255d788097b835ea7dd11ae4f74976`。下载版本、文件哈希与环境版本记录保留在 UltraEval。中文评分使用 JunHowie 的完整 FP32 SeACo-Paraformer 镜像；已核对模型加载完整，但未与原始 ModelScope 发布文件逐字节比较。
@@ -298,7 +298,7 @@ UE=/workspace/workspace/yanglin/UltraEval-Audio
 cd /workspace/workspace/yanglin/UltraEval-Audio
 envs/tts/bin/python -u scripts/run_seed_tts.py \
   --model-path init_model/all16-frozen-conditioning-step-00047382 \
-  --run-dir res/all16-step47382-seedtts-greedy-20261008-8gpu \
+  --run-dir res/archive/all16/all16-step47382-seedtts-greedy-20261008-8gpu \
   --gpus 7,6,5,4,3,2,1,0 --gpu-memory-gib 16 \
   --modes speaker_icl --greedy
 ```
@@ -357,16 +357,16 @@ envs/tts/bin/python -u scripts/run_seed_tts.py \
 
 | 实验 / Step / 解码 | 完成时间（UTC） | 结果证据 |
 | --- | --- | --- |
-| Frozen-conditioning / 17,500 / Greedy | 2026-10-08 14:39:57 | [汇总](../../../UltraEval-Audio/res/all16-step17500-seedtts-greedy-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step17500-seedtts-greedy-20261008-8gpu/full/audit.json) |
-| Frozen-conditioning / 17,500 / 采样 | 2026-10-08 16:20:04 | [汇总](../../../UltraEval-Audio/res/all16-step17500-seedtts-sampling-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step17500-seedtts-sampling-20261008-8gpu/full/audit.json) |
-| Frozen-conditioning / 32,500 / Greedy | 2026-10-08 10:13:29 | [汇总](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step32500-seedtts-greedy-20261008-8gpu/full/audit.json) |
-| Frozen-conditioning / 32,500 / 采样 | 2026-10-08 12:22:22 | [汇总](../../../UltraEval-Audio/res/all16-step32500-seedtts-sampling-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step32500-seedtts-sampling-20261008-8gpu/full/audit.json) |
-| Frozen-conditioning / 47,382 / Greedy | 2026-10-08 07:22:50 | [汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json) |
-| Frozen-conditioning / 47,382 / 采样 | 2026-10-08 05:02:52 | [汇总](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-step47382-seedtts-20261008-8gpu/full/audit.json) |
-| Textbase / 17,500 / Greedy | 2026-10-09 06:11:28 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step17500-seedtts-greedy-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step17500-seedtts-greedy-20261009-8gpu/full/audit.json) |
-| Textbase / 17,500 / 采样 | 2026-10-09 07:18:23 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step17500-seedtts-sampling-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step17500-seedtts-sampling-20261009-8gpu/full/audit.json) |
-| Textbase / 25,000 / Greedy | 2026-10-09 03:56:09 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-greedy-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-greedy-20261009-8gpu/full/audit.json) |
-| Textbase / 25,000 / 采样 | 2026-10-09 05:00:28 | [汇总](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-sampling-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/all16-textbase-step25000-seedtts-sampling-20261009-8gpu/full/audit.json) |
+| Frozen-conditioning / 17,500 / Greedy | 2026-10-08 14:39:57 | [汇总](../../../UltraEval-Audio/res/archive/all16/all16-step17500-seedtts-greedy-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/all16/all16-step17500-seedtts-greedy-20261008-8gpu/full/audit.json) |
+| Frozen-conditioning / 17,500 / 采样 | 2026-10-08 16:20:04 | [汇总](../../../UltraEval-Audio/res/archive/all16/all16-step17500-seedtts-sampling-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/all16/all16-step17500-seedtts-sampling-20261008-8gpu/full/audit.json) |
+| Frozen-conditioning / 32,500 / Greedy | 2026-10-08 10:13:29 | [汇总](../../../UltraEval-Audio/res/archive/all16/all16-step32500-seedtts-greedy-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/all16/all16-step32500-seedtts-greedy-20261008-8gpu/full/audit.json) |
+| Frozen-conditioning / 32,500 / 采样 | 2026-10-08 12:22:22 | [汇总](../../../UltraEval-Audio/res/archive/all16/all16-step32500-seedtts-sampling-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/all16/all16-step32500-seedtts-sampling-20261008-8gpu/full/audit.json) |
+| Frozen-conditioning / 47,382 / Greedy | 2026-10-08 07:22:50 | [汇总](../../../UltraEval-Audio/res/archive/all16/all16-step47382-seedtts-greedy-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/all16/all16-step47382-seedtts-greedy-20261008-8gpu/full/audit.json) |
+| Frozen-conditioning / 47,382 / 采样 | 2026-10-08 05:02:52 | [汇总](../../../UltraEval-Audio/res/archive/all16/all16-step47382-seedtts-20261008-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/all16/all16-step47382-seedtts-20261008-8gpu/full/audit.json) |
+| Textbase / 17,500 / Greedy | 2026-10-09 06:11:28 | [汇总](../../../UltraEval-Audio/res/archive/all16-textbase/all16-textbase-step17500-seedtts-greedy-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/all16-textbase/all16-textbase-step17500-seedtts-greedy-20261009-8gpu/full/audit.json) |
+| Textbase / 17,500 / 采样 | 2026-10-09 07:18:23 | [汇总](../../../UltraEval-Audio/res/archive/all16-textbase/all16-textbase-step17500-seedtts-sampling-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/all16-textbase/all16-textbase-step17500-seedtts-sampling-20261009-8gpu/full/audit.json) |
+| Textbase / 25,000 / Greedy | 2026-10-09 03:56:09 | [汇总](../../../UltraEval-Audio/res/archive/all16-textbase/all16-textbase-step25000-seedtts-greedy-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/all16-textbase/all16-textbase-step25000-seedtts-greedy-20261009-8gpu/full/audit.json) |
+| Textbase / 25,000 / 采样 | 2026-10-09 05:00:28 | [汇总](../../../UltraEval-Audio/res/archive/all16-textbase/all16-textbase-step25000-seedtts-sampling-20261009-8gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/all16-textbase/all16-textbase-step25000-seedtts-sampling-20261009-8gpu/full/audit.json) |
 
 ## 9. 文本维度与 projector 差异：当前结论和待验证问题
 
@@ -415,7 +415,7 @@ Textbase 同时改变了**文本表示维度、初始化来源、projector 初�
 
 | 内容 | 路径 |
 | --- | --- |
-| Greedy | `res/all16-no-spk-step10000-seedtts-greedy-bs1-20261010-8gpu` |
+| Greedy | `res/archive/all16-no-spk/all16-no-spk-step10000-seedtts-greedy-bs1-20261010-8gpu` |
 | 采样 | `res/all16-no-spk-step10000-seedtts-sampling-bs1-20261010-8gpu` |
 | Batch 对照日志 | `log/seed-tts-no-spk-step10000-preflight.log` |
 | 正式顺序日志 | `log/seed-tts-no-spk-step10000-bs1-8gpu-sequence.log` |
@@ -458,7 +458,7 @@ FP32 对照使用同一份 BF16 舍入后的权重转为 FP32 计算，用于隔
 
 30.16 秒对应本轮 378 token 的生成上限附近，大量输出集中到这一长度，说明存在明显的生成终止异常；现有证据尚不能区分模型、输入协议或解码策略的原因。之前的小样本审计检查了文件、输入身份、条件和覆盖率，**不代表生成质量正常**。这些达到上限的样本必须保留在诊断统计中，不能仅剔除后报告剩余样本的评分。
 
-按要求只取 Seed-TTS 中英文各前 5 条做双采样试验，batch size 1；Talker / Code Predictor 均为 `do_sample=true`、`top_k=50`、`top_p=1.0`、`temperature=0.9`，其他条件与 greedy 相同。已有 9 条同样本 greedy 输出可配对，中文 index 4 尚无 greedy 输出；不补跑全量。试验目录为 `UltraEval-Audio/res/all16-no-spk-step10000-seedtts-sampling10-bs1-20261010`，音频在 `output/icl_only/`，逐条时长对照保存在 `comparison.json`。此试验只诊断生成长度，不是 ASR / SIM 评分。
+按要求只取 Seed-TTS 中英文各前 5 条做双采样试验，batch size 1；Talker / Code Predictor 均为 `do_sample=true`、`top_k=50`、`top_p=1.0`、`temperature=0.9`，其他条件与 greedy 相同。已有 9 条同样本 greedy 输出可配对，中文 index 4 尚无 greedy 输出；不补跑全量。试验目录为 `UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step10000-seedtts-sampling10-bs1-20261010`，音频在 `output/icl_only/`，逐条时长对照保存在 `comparison.json`。此试验只诊断生成长度，不是 ASR / SIM 评分。
 
 采样试验于 06:23 UTC 完成。10 条生成记录均成功，实际设置已检查为双采样；同样本的文本、参考音频 hash、seed 和无 speaker 条件与 greedy 一致。结果如下：
 
@@ -556,7 +556,7 @@ Run 名称为 `supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1
 - 生成：GPU 0–7，共 8 个分片；每进程 PyTorch 分配上限 4 GiB，启动检查保留 0.5 GiB 余量。
 - 评分：GPU 0、1、6、7；英文 Whisper large-v3 WER、中文 SeACo-Paraformer CER、WavLM large + ECAPA 说话人相似度。先完成小样本评分和审计，再自动生成全量、评分、汇总和审计。
 - 统计：保留所有生成记录；超过 30 秒的音频按既有规则排除评分，并单独报告排除数量与比例，不能只看保留样本的均分。
-- 结果目录：`UltraEval-Audio/res/all16-no-spk-step17500-seedtts-sampling-bs1-20261012-8gpu`。复现命令为目录内的 `run.sh`，主日志 `run.log`，阶段状态 `pipeline_status.json`；最终结果为 `full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/icl_only/`。
+- 结果目录：`UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step17500-seedtts-sampling-bs1-20261012-8gpu`。复现命令为目录内的 `run.sh`，主日志 `run.log`，阶段状态 `pipeline_status.json`；最终结果为 `full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/icl_only/`。
 - 后台会话：`seedtts-no-spk-s17500-sampling-full`。Step 10,000 的旧任务仍保持暂停。
 
 四条评分预检和审计已通过：英文两条 WER 均为 0，中文两条平均 CER 为 36.36%；样本太少，不能代表全量结果。首次全量启动因 5 卡可用显存略低于 4 GiB + 1 GiB 启动门槛而退出，随后维持 4 GiB 上限，将启动余量调整为 0.5 GiB 并恢复；复用原预检记录。全量双采样已完成，结果如下。
@@ -573,9 +573,9 @@ Run 名称为 `supervised-tts-20260929-all16-no-spk-bf16-16gpu-acc2-lr3e-4-bblr1
 
 英文报告 WER，中文报告 CER，均为逐句错误率的算术平均；SIM 为余弦相似度乘 100。中文 5 条输出均为 30.16 秒，因超过 30 秒排除，占中文总数约 **0.25%**；`2015/2015` 的评分分母为排除后的有效样本数。DNSMOS 本轮未计算，`—` 不表示零分。
 
-原始证据：[全量汇总](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-sampling-bs1-20261012-8gpu/full/summary.json) · [完整性审计及排除清单](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-sampling-bs1-20261012-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `icl_only/`。
+原始证据：[全量汇总](../../../UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step17500-seedtts-sampling-bs1-20261012-8gpu/full/summary.json) · [完整性审计及排除清单](../../../UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step17500-seedtts-sampling-bs1-20261012-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `icl_only/`。
 
-Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu`；同样为 8 卡、batch size 1、纯 ICL、3,108 条。两组独立按 30 秒规则排除长音频，汇总时分别报告排除数量。
+Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu`；同样为 8 卡、batch size 1、纯 ICL、3,108 条。两组独立按 30 秒规则排除长音频，汇总时分别报告排除数量。
 
 接续脚本为 greedy 目录内的 `wait-and-run.py`，实际运行命令为 `run.sh`，后台会话为 `seedtts-no-spk-s17500-greedy-queued`。`queue_status.json` / `queue.log` 记录等待与接续状态；greedy 启动后的状态和日志为 `pipeline_status.json` / `run.log`，最终结果同样在 `full/summary.json`、`full/audit.json`。脚本等待 sampling 释放运行锁，再确认 checkpoint 身份、完成状态、审计通过以及 3,108 条全部已评分或按规则排除；若 sampling 失败或不完整，则停止接续，不启动 greedy。
 
@@ -593,7 +593,7 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 
 与双采样的英文 0 条、中文 5 条超长输出相比，双 greedy 出现了大量无法在上限前结束的输出，且保留样本的内容错误率仍很高。两组按各自时长独立过滤，评分子集差异很大，不能把过滤后的均分差值视为同一批样本上的严格配对提升。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/summary.json) · [完整性审计及排除清单](../../../UltraEval-Audio/res/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `icl_only/`。两组全量评测及自动接续现已完成。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/summary.json) · [完整性审计及排除清单](../../../UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step17500-seedtts-greedy-bs1-20261012-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `icl_only/`。两组全量评测及自动接续现已完成。
 
 
 ## 12. No-speaker step 25,000：全量双采样与双 greedy（2026-10-13）
@@ -609,8 +609,8 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 
 | 内容 | `UltraEval-Audio/` 下的路径 |
 | --- | --- |
-| 全量双采样 | `res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/` |
-| 全量双 greedy | `res/all16-no-spk-step25000-seedtts-greedy-bs1-20261013-8gpu/` |
+| 全量双采样 | `res/archive/all16-no-spk/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/` |
+| 全量双 greedy | `res/archive/all16-no-spk/all16-no-spk-step25000-seedtts-greedy-bs1-20261013-8gpu/` |
 | 每组命令、状态、日志 | 各目录内的 `run.sh`、`pipeline_status.json`、`run.log` |
 | 完成后的结果与审计 | 各目录内的 `full/results_table.md`、`full/summary.json`、`full/audit.json` |
 | 生成音频与逐条评分 | 各目录内的 `full/icl_only/` |
@@ -634,7 +634,7 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 
 与第 11 节 step 17,500 的同设置双采样相比，英文 WER **4.398% → 3.508%**、SIM **44.778% → 47.483%**；中文 CER **22.659% → 7.325%**、SIM **48.587% → 56.077%**，中文超长排除从 **5 条降为 0 条**。本轮汇总指标更好；中文前一轮只评分 2,015 条，本轮评分全部 2,020 条，因此中文均分并非严格相同子集上的配对比较。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `icl_only/`。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/archive/all16-no-spk/all16-no-spk-step25000-seedtts-sampling-bs1-20261013-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `icl_only/`。
 
 双 greedy 于 **2026-10-13 05:10:31 UTC** 自动接续，现已完成并通过审计，完整结果待补录；本节上述数值仅属于双采样。
 
@@ -668,8 +668,8 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 | 内容 | `UltraEval-Audio/` 下的路径 |
 | --- | --- |
 | 独立导出模型 | `init_model/emilia2-refmask-step-00010000/` |
-| 全量双采样 | `res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/` |
-| 全量双 greedy | `res/emilia2-refmask-step10000-seedtts-greedy-bs1-20261014-8gpu/` |
+| 全量双采样 | `res/archive/emilia2-refmask/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/` |
+| 全量双 greedy | `res/archive/emilia2-refmask/emilia2-refmask-step10000-seedtts-greedy-bs1-20261014-8gpu/` |
 
 每组的 `run.sh` 保存复现命令，`pipeline_status.json` / `run.log` 记录阶段与日志；最终评分表、汇总、审计在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/speaker_icl/`。Greedy 目录中的 `wait-and-run.py` / `queue_status.json` 负责接续：只有双采样 checkpoint 身份匹配、全部 3,108 条评分或按规则排除且审计通过后才启动。
 
@@ -689,7 +689,7 @@ Greedy 的接续任务使用独立目录 `UltraEval-Audio/res/all16-no-spk-step1
 
 与第 12 节 no-speaker step 25,000 的双采样汇总相比，本轮英文 WER **3.508% → 5.016%**，中文 CER **7.325% → 4.594%**；英文 SIM **47.483% → 53.470%**，中文 SIM **56.077% → 65.478%**。即中文错误率更低、中英文相似度更高，但英文错误率更高。两轮都没有时长排除；训练数据、speaker 条件和训练进度不同，这不是 refmask 的单变量对照。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `speaker_icl/`。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step10000-seedtts-sampling-bs1-20261014-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `speaker_icl/`。
 
 双 greedy 于 **2026-10-14 02:36:54 UTC** 启动，后于 **03:10 UTC** 按要求停止，接续进程与八个生成分片均已退出。停止时保留 **827** 条成功生成记录，其中 **130** 条超过 30 秒；未完成全量生成或评分，不作为正式结果。状态文件中的 `failed` 来自主动中断，接续状态为 `stopped`。上述完整结果仅属于双采样。
 
@@ -722,7 +722,7 @@ LFM checkpoint 使用 `lm_tts` 的生成路径：沿用训练输入构造，加�
 评测为 **speaker + ICL、batch size 1、Auto、non-streaming、BF16 + SDPA**；Talker / Code Predictor 均采样，top-k 50、top-p 1.0、temperature 0.9，Talker repetition penalty 1.05。英文 1,088 条、中文 2,020 条；8 卡生成、GPU 0–3 评分，每进程生成显存上限 8 GiB、预留 2 GiB。继续使用相同的 WER / CER、WavLM SIM 和独立 30 秒排除规则，DNSMOS 不计算。
 
 - 导出：`UltraEval-Audio/init_model/emilia2-lfm230m-text2048-spk-refmask-step-00005000/`；权重 SHA256 `dd8c2a7d757bd8d408a86be27799b80ba1dbf1904055110f4662b7843ff2978d`。
-- 结果：`UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/`。
+- 结果：`UltraEval-Audio/res/archive/emilia2-lfm230m-text2048-spk-refmask/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/`。
 - 复现命令为结果目录的 `run.sh`；阶段及日志为 `pipeline_status.json` / `run.log`；完整结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频和逐条评分在 `full/speaker_icl/`。
 - 后台会话：`seedtts-emilia2-lfm230m-s5000-sampling-full`。中英文各两条生成、评分与审计均已通过；3,108 条全量音频已全部生成并评分，修复评分中断后完成审计（见下文）。未安排 greedy，本轮评测已完成。
 
@@ -760,7 +760,7 @@ LFM checkpoint 使用 `lm_tts` 的生成路径：沿用训练输入构造，加�
 
 本次 LFM checkpoint 的中英文错误率均更高、相似度均更低。两轮使用相同的 Emilia2 样本划分与完整 Seed-TTS 测试集，但 LFM 仅消费 **34,642,179** 条训练样本，Qwen 已消费 **66,839,436** 条；主干、tokenizer、文本前端初始化及冻结范围也不同。因此这反映的是两个当前 checkpoint 的结果，不能据此单独判定 LFM 主干或 refmask 方案的优劣。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `speaker_icl/`。本轮仅运行双采样，没有后续 greedy 任务。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-lfm230m-text2048-spk-refmask/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/archive/emilia2-lfm230m-text2048-spk-refmask/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/archive/emilia2-lfm230m-text2048-spk-refmask/emilia2-lfm230m-text2048-spk-refmask-step5000-seedtts-sampling-bs1-20261014-8gpu/full/audit.json)。逐条转写、评分和 WAV 位于同目录的 `speaker_icl/`。本轮仅运行双采样，没有后续 greedy 任务。
 
 
 ## 15. Emilia2 refmask step 12,500：每卡四个 worker 的双采样评测（2026-10-14）
@@ -774,7 +774,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-b
 | 内容 | `UltraEval-Audio/` 下的路径 |
 | --- | --- |
 | 独立导出模型 | `init_model/emilia2-refmask-step-00012500/` |
-| 本轮运行目录 | `res/emilia2-refmask-step12500-seedtts-sampling-bs1-20261014-8gpu-4wpg/` |
+| 本轮运行目录 | `res/archive/emilia2-refmask/emilia2-refmask-step12500-seedtts-sampling-bs1-20261014-8gpu-4wpg/` |
 | 复现 / 恢复命令 | 上述运行目录的 `run.sh` |
 | 阶段 / 日志 | `pipeline_status.json`、`run.log`、`logs/` |
 | 正式结果 | `full/results_table.md`、`full/summary.json`、`full/audit.json` |
@@ -794,7 +794,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-b
 
 英文为逐句 WER 均值，中文为逐句 CER 均值，SIM 为余弦相似度乘 100；DNSMOS 未计算。英文最长 **9.28 秒**，中文最长 **13.52 秒**。相较同一实验 step 10,000，英文 WER **5.016% → 4.420%**，中文 CER **4.594% → 4.352%**；英文 SIM **53.470% → 53.353%**，中文 SIM **65.478% → 66.503%**。两组均使用完整测试集。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-step12500-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-refmask-step12500-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/emilia2-refmask-step12500-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/audit.json)。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step12500-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step12500-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step12500-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/audit.json)。
 
 
 ## 16. Emilia2 LFM230M step 6,000：双采样评测（2026-10-14）
@@ -804,7 +804,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 沿用第 14 节的 **speaker embedding + ICL、Talker / Code Predictor 双采样、Auto、non-streaming、BF16 + SDPA、batch size 1**；top-k 50、top-p 1.0、temperature 0.9，Talker repetition penalty 1.05。英文 1,088 条、中文 2,020 条，仅运行 sampling。推理仍为 LFM 完整前缀计算、无 KV cache；本次使用 **8 卡 × 每卡 4 个 worker，共 32 分片**，每条随机种子为 `42 + 原始 index`。每进程显存上限 8 GiB、预留 2 GiB；评分最初使用 GPU 0–3、中英文各两分片；后按要求切换为 **8 卡 × 每卡 4 个评分 worker，共 32 个**：英文 16 分片使用 GPU 2–5，中文 16 分片使用 GPU 0、1、6、7。英文 ASR 进程显存占用更高，优先放在空闲显存充足的卡上。四条预检评分及审计通过后自动进入全量生成、评分与审计，沿用相同指标和独立 30 秒超长排除规则。
 
 - 导出模型：`UltraEval-Audio/init_model/emilia2-lfm230m-text2048-spk-refmask-step-00006000/`。
-- 结果目录：`UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/`。
+- 结果目录：`UltraEval-Audio/res/archive/emilia2-lfm230m-text2048-spk-refmask/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/`。
 - 复现 / 恢复：结果目录的 `run.sh`；恢复时保持 32 个生成分片；评分可改变并行度，读取所有已有评分分片并跳过成功记录。切换并行度前先停止旧评分进程，避免同一批样本被两个调度器重复处理。
 - 阶段与日志：`pipeline_status.json`、`run.log`、`logs/`；正式结果为 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/speaker_icl/`。
 
@@ -829,7 +829,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 
 与同一实验 step 5,000 相比，英文 WER **8.682% → 9.417%**、SIM **39.195% → 43.251%**；中文 CER **9.399% → 8.727%**、SIM **55.248% → 58.582%**。相似度均提升，中文错误率下降，英文错误率上升。WER / CER 为逐句算术平均，SIM 为余弦相似度乘 100，DNSMOS 未计算。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/audit.json)。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-lfm230m-text2048-spk-refmask/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/archive/emilia2-lfm230m-text2048-spk-refmask/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/summary.json) · [完整性审计](../../../UltraEval-Audio/res/archive/emilia2-lfm230m-text2048-spk-refmask/emilia2-lfm230m-text2048-spk-refmask-step6000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/audit.json)。
 
 
 ## 17. Qwen Emilia2 refmask step 15,000：自动等待与双采样评测
@@ -837,7 +837,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 每 **30 分钟**检查一次 `supervised-tts-20261012-emilia2-refmask-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd/checkpoints/step-00015000/`，仅在 `COMPLETE` 与 `metadata.json` 存在且元数据 step 为 15,000 时开始。确认后自动以第 13 节组装模型导出 FP32 权重，再运行 **speaker + ICL、双采样、BF16 推理、batch size 1** 的 Seed-TTS 中英文全量评测；生成和评分均为 **8 卡 × 每卡 4 个 worker，共 32 个**。采样参数、评分模型和 30 秒超长排除规则沿用第 15 节。
 
 - 后台会话：`seedtts-emilia2-refmask-s15000-watch`。
-- 运行目录：`UltraEval-Audio/res/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/`。
+- 运行目录：`UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/`。
 - 等待 / 自动启动脚本：运行目录的 `watch-and-run.py`；检查状态与历史为 `watch_status.json`、`watch_events.jsonl`，日志为 `watch.log`。
 - 固定评测命令：同目录 `run.sh`；模型为 `UltraEval-Audio/init_model/emilia2-refmask-step-00015000/`。
 - 导出日志为 `export.log`，评测状态 / 日志为 `pipeline_status.json` / `run.log`；正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。
@@ -856,7 +856,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 
 英文为逐句 WER 均值，中文为逐句 CER 均值；SIM 为余弦相似度乘 100，DNSMOS 未计算。与 step 12,500 比较时须考虑本轮排除了 5 条超长输出，评分分母不同。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md) · [汇总及排除清单](../../../UltraEval-Audio/res/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/audit.json)。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md) · [汇总及排除清单](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step15000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/audit.json)。
 
 
 ## 18. Qwen Emilia2 refmask step 17,500 / 20,000：每十分钟自动检查
@@ -877,7 +877,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 
 已将同一 Qwen Emilia2 refmask 训练的 `checkpoints/step-00022500/` 加入自动评测，每 **1 分钟**检查一次。完整标记与元数据核验通过、且 step 20,000 已完成并通过审计后，自动导出并运行相同的 **speaker + ICL 双采样**全量评测：BF16 推理、batch size 1，生成和评分各 32 worker（8 卡 × 每卡 4 个）。失败后每 1 分钟重试并复用成功记录。
 
-后台会话为 `seedtts-emilia2-refmask-s22500-watch`，运行目录为 `UltraEval-Audio/res/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/`。检查器、固定评测命令、当前状态和历史分别为该目录的 `watch-and-run.py`、`run.sh`、`watch_status.json`、`watch_events.jsonl`；日志与结果布局同上。导出模型为 `UltraEval-Audio/init_model/emilia2-refmask-step-00022500/`。设置时 step 20,000 已完成，step 22,500 尚未出现。
+后台会话为 `seedtts-emilia2-refmask-s22500-watch`，运行目录为 `UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/`。检查器、固定评测命令、当前状态和历史分别为该目录的 `watch-and-run.py`、`run.sh`、`watch_status.json`、`watch_events.jsonl`；日志与结果布局同上。导出模型为 `UltraEval-Audio/init_model/emilia2-refmask-step-00022500/`。设置时 step 20,000 已完成，step 22,500 尚未出现。
 
 
 ## 19. Step 17,500 / 20,000 等权平均模型（2026-10-15）
@@ -892,7 +892,7 @@ Checkpoint 为 `supervised-tts-20261012-emilia2-lfm230m-text2048-spk-refmask-bf1
 
 评测沿用 **speaker + ICL、Talker / Code Predictor 双采样、BF16 + SDPA、batch size 1、Auto、non-streaming**；top-k 50、top-p 1.0、temperature 0.9，Talker repetition penalty 1.05。Seed-TTS 英文 1,088 条、中文 2,020 条，生成与评分各 **8 卡 × 每卡 4 worker，共 32 个**。指标及独立 30 秒超长排除规则不变，DNSMOS 不计算。
 
-运行目录为 `UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/`，后台会话为 `seedtts-emilia2-refmask-avg17500-20000`。`merge.sh` 保存合并命令（目标目录必须不存在），`merge_verification.json` 保存逐张量核验；`run.sh` 为评测 / 恢复命令，阶段和日志为 `pipeline_status.json`、`run.log`、`logs/`，正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。中英文各两条预检生成、评分及审计通过：英文 WER **0.000%**、SIM **64.755%**；中文 CER **6.818%**、SIM **78.992%**，无超长排除。全量评测随后已完成，见下文；预检仅验证流程。
+运行目录为 `UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/`，后台会话为 `seedtts-emilia2-refmask-avg17500-20000`。`merge.sh` 保存合并命令（目标目录必须不存在），`merge_verification.json` 保存逐张量核验；`run.sh` 为评测 / 恢复命令，阶段和日志为 `pipeline_status.json`、`run.log`、`logs/`，正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。中英文各两条预检生成、评分及审计通过：英文 WER **0.000%**、SIM **64.755%**；中文 CER **6.818%**、SIM **78.992%**，无超长排除。全量评测随后已完成，见下文；预检仅验证流程。
 
 Step 22,500 的每分钟自动检查继续运行；其启动条件改为本轮平均模型评测完成并通过审计，再接续评测，避免与本轮争抢 GPU。
 
@@ -904,7 +904,7 @@ Step 22,500 的每分钟自动检查继续运行；其启动条件改为本轮�
 | step 17,500 | 3.368 | 58.359 | 3.272 | 67.995 | 0 / 1 |
 | step 20,000 | 3.367 | 59.638 | 3.244 | 69.735 | 0 / 1 |
 
-两份源模型均生成全部 3,108 条音频，英文评分 1,088 条、中文评分 2,019 条。来源：[step 17,500 结果表](../../../UltraEval-Audio/res/emilia2-refmask-step17500-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md)、[step 20,000 结果表](../../../UltraEval-Audio/res/emilia2-refmask-step20000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md)。平均模型须完成独立全量评分后再比较，分别保留各自超长排除数。
+两份源模型均生成全部 3,108 条音频，英文评分 1,088 条、中文评分 2,019 条。来源：[step 17,500 结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step17500-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md)、[step 20,000 结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step20000-seedtts-sampling-bs1-20261014-8gpu-4wpg/full/results_table.md)。平均模型须完成独立全量评分后再比较，分别保留各自超长排除数。
 
 
 ### 两模型平均的全量结果
@@ -918,7 +918,7 @@ Step 22,500 的每分钟自动检查继续运行；其启动条件改为本轮�
 
 相较单独 step 20,000，两模型平均的英文 WER **3.367% → 3.035%**、SIM **59.638% → 59.818%**，中文 CER **3.244% → 2.662%**、SIM **69.735% → 70.013%**。平均模型未排除超长样本，单独 step 20,000 排除 1 条中文，比较时需考虑分母变化。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/audit.json)。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/audit.json)。
 
 
 ## 20. Step 17,500 / 20,000 / 22,500 三模型平均：自动接续
@@ -929,7 +929,7 @@ Step 22,500 已导出，单模型评测正在运行。**三模型平均此前暂
 
 - 后台会话：`seedtts-emilia2-refmask-avg17500-20000-22500-watch`。
 - 独立模型：`UltraEval-Audio/init_model/emilia2-refmask-average-step17500-step20000-step22500/`。
-- 运行目录：`UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/`。
+- 运行目录：`UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/`。
 - `watch-and-run.py` 自动等待与接续；`watch_status.json` / `watch_events.jsonl` 记录状态和检查历史；`watch.log` / `merge.log` / `run.log` 保存日志。
 - `merge.sh` 为合并命令（先写入 `.exporting` 目录再由检查器重命名）；`verify-merge.py` / `merge_verification.json` 为逐张量核验及记录；`run.sh` 为固定评测与恢复命令。
 - 评测继续使用 **speaker + ICL 双采样、BF16 + SDPA、batch size 1、Auto、non-streaming**；采样参数与第 19 节一致，生成和评分各 **32 worker（8 卡 × 每卡 4 个）**。正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频在 `full/speaker_icl/`，使用相同指标和独立 30 秒排除规则。
@@ -961,7 +961,7 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 
 相较 step 20,000，step 22,500 的中文 CER 更低，英文 WER 更高，中英文 SIM 略低；两轮中文评分分母相差 1 条。两模型平均与 step 22,500 都无排除，前者本轮四项指标均更好。三模型平均任务仍按要求暂停，未因 step 22,500 完成而自动恢复。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/audit.json)。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/audit.json)。
 
 
 ### 三模型平均恢复运行（2026-10-15）
@@ -994,14 +994,14 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 
 首次汇总曾发现英文 index **981** 的 WAV 存在但缺少成功生成记录，完整性检查因此拒绝结束任务。自动恢复仅补齐该条生成与评分，其余 3,107 条评分复用；重生成 WAV 与保留的原 WAV **SHA256 完全一致**，没有通过删除样本或忽略审计获得完整结果。原 WAV 和恢复说明保存在运行目录的 `recovery/`，缺失记录的具体原因尚未确定。最终 3,108 条生成记录及评分均唯一、无未恢复错误。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/audit.json)。后台检查器已在成功完成后退出。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-step22500-seedtts-sampling-bs1-20261015-8gpu-4wpg/full/audit.json)。后台检查器已在成功完成后退出。
 
 
 ## 21. 三模型平均双 greedy 评测（2026-10-15）
 
 按后续更正，新增第 20 节三模型平均的 **greedy** 评测，复用同一平均模型，独立生成和评分。**Talker `do_sample=false`、Code Predictor `subtalker_dosample=false`**；其余沿用 speaker + ICL、Auto、non-streaming、BF16 + SDPA、batch size 1、Talker repetition penalty 1.05。使用完整 Seed-TTS 英文 1,088 条、中文 2,020 条，超过 30 秒的生成输出按本轮自身规则排除并报告数量，DNSMOS 不计算。
 
-- 运行目录：`UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/`。
+- 运行目录：`UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/`。
 - 后台会话：`seedtts-emilia2-refmask-avg3-greedy`。
 - `run.sh` 为固定运行 / 恢复命令；`pipeline_status.json`、`run.log`、`logs/` 为状态和日志；正式结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`，音频及逐条评分在 `full/speaker_icl/`。
 - GPU **0、1、6、7**，生成并发 **16**、固定 **32 个逻辑分片**，评分并发 **8**。启动前检查每卡至少 30 GiB 空闲，生成进程上限 6 GiB、预留 6 GiB。
@@ -1020,7 +1020,7 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 
 与同一模型双采样相比，greedy 保留样本的英文 WER **2.880% → 2.152%**、中文 CER **2.479% → 2.164%**；英文 SIM **60.314% → 58.245%**、中文 SIM **70.233% → 68.254%**。Greedy 排除了 193 条，而双采样无排除，因此不能仅凭保留样本上更低的错误率判定 greedy 整体更好；生成超长比例和相似度也需同时考虑。DNSMOS 未计算。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/full/results_table.md) · [汇总及排除清单](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/full/audit.json)。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/full/results_table.md) · [汇总及排除清单](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step17500-step20000-step22500-seedtts-greedy-bs1-20261015-4gpu/full/audit.json)。
 
 
 ## 22. 三模型平均混合解码：十条 smoke
@@ -1061,7 +1061,7 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 
 使用 GPU **0、1、6、7**，固定 **32 个生成逻辑分片**、并发 **16 worker** 分两批运行；评分并发 **8 worker**，英文使用 0、1，中文使用 6、7。启动前核对模型权重哈希及四卡各至少 30 GiB 空闲，生成每进程分配上限 6 GiB、预留 6 GiB。全部生成后再次断言实际采样参数匹配，再自动评分、汇总与完整性审计；超过 30 秒的输出按本轮独立规则排除并报告数量，DNSMOS 不计算。
 
-- 运行目录：`UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/`。
+- 运行目录：`UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/`。
 - 后台会话：`seedtts-average3-mixed-full`。
 - 复现 / 恢复命令：在 UltraEval-Audio 根目录运行上述目录的 `run.sh`，脚本保留分片与随机种子并复用成功生成 / 评分记录。
 - `model_identity.json` 保存源模型身份；`pipeline_status.json`、`run.log`、`logs/` 为阶段和日志；音频与逐条记录在 `full/speaker_icl/`；正式结果为 `full/results_table.md`、`full/summary.json`、`full/audit.json`。
@@ -1087,14 +1087,14 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 | 内容 | 位置（相对 UltraEval-Audio 根目录） |
 | --- | --- |
 | 自动队列脚本 | `scripts/watch_seed_tts_checkpoints.py` |
-| 配置与启动命令 | `res/auto-emilia2-refmask-default-sampling/config.json`、`watch.sh` |
+| 配置与启动命令 | `res/archive/emilia2-refmask/auto-emilia2-refmask-default-sampling/config.json`、`watch.sh` |
 | 当前队列 / 历史检查 | 同目录 `queue.json`、`checks.jsonl` |
 | 检查器日志 | 同目录 `watch.log` |
 | 每个 checkpoint 的独立导出 | `init_model/emilia2-refmask-step-<8位step>/` |
 | 默认采样结果 | `res/emilia2-refmask-auto-step<step>-seedtts-default-sampling-4gpu/` |
 | 混合解码结果 | `res/emilia2-refmask-auto-step<step>-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/` |
 
-每轮的 `export_command.json` / `eval_command.json` 保存精确参数，`launcher.log` / `job.log` / `logs/` 保存日志；评分结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。需要手动恢复某一轮时，可在 UltraEval-Audio 根目录执行 `envs/tts/bin/python -m scripts.watch_seed_tts_checkpoints --config res/auto-emilia2-refmask-default-sampling/config.json --step <step> --variant default`；混合解码使用 `--variant mixed`。
+每轮的 `export_command.json` / `eval_command.json` 保存精确参数，`launcher.log` / `job.log` / `logs/` 保存日志；评分结果在 `full/results_table.md`、`full/summary.json`、`full/audit.json`。需要手动恢复某一轮时，可在 UltraEval-Audio 根目录执行 `envs/tts/bin/python -m scripts.watch_seed_tts_checkpoints --config res/archive/emilia2-refmask/auto-emilia2-refmask-default-sampling/config.json --step <step> --variant default`；混合解码使用 `--variant mixed`。
 
 后台会话为 `seedtts-emilia2-new-checkpoints`。检查器已升级为以 `<step>:<variant>` 分别记录两组状态，保留旧默认采样队列及已完成结果，只新增缺少的混合组。生成参数也进入 run 身份，恢复时不允许混用两组配置。完整 checkpoint 发现、旧队列迁移、两组去重与排序、单任务启动持久化、独立命令参数及既有审计等 **39 项测试通过**，静态检查通过。
 
@@ -1112,7 +1112,7 @@ GPU 2–5 被其他任务占用，4、5 当时仅剩约 3–4 GiB。Step 22,500 
 
 该组为 Talker temperature 0.3、top-p 1、top-k 10、repetition penalty 2，Code Predictor greedy。与同模型默认双采样比较，英文 WER **2.880% → 2.199%**、中文 CER **2.479% → 1.769%**；英文 SIM **60.314% → 59.224%**、中文 SIM **70.233% → 69.827%**。两组都无排除，混合参数错误率更低、相似度略低。上述是补齐五条后的正式全量值，替代此前 3,103 条的暂定均分。
 
-[正式结果表](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/full/audit.json)。
+[正式结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/full/results_table.md) · [全量汇总](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average3-talkert03-k10-rp2-cpgreedy-full-20261015-4gpu/full/audit.json)。
 
 ### 自动队列改为动态选择 GPU（2026-10-15）
 
@@ -1127,7 +1127,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 按 **2026-10-16 本次请求时**目录中的最新三份完整 checkpoint，固定选取同一 Emilia2 refmask 实验的 **step 27,500、30,000、32,500**，以 FP32 **各 1/3 等权平均**。三份 `COMPLETE` 与元数据步数均已核对，复用各自独立导出；源权重及已有评测结果保留。使用既有 `scripts/average_exports.py` 校验源文件哈希、配置、tokenizer、张量形状与 dtype，并对合并产物逐张量核验，冻结的相同源张量严格保持原值。
 
-平均模型为 `UltraEval-Audio/init_model/emilia2-refmask-average-step27500-step30000-step32500/`。协调目录为 `UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-20261016/`，后台会话为 `seedtts-refmask-average27500-30000-32500`。其中 `merge.sh`、`verify-merge.py`、`merge_verification.json` 为合并及核验，`run.py` 自动串行接续两组评测，`pipeline_status.json` / `run.log` / `merge.log` 保存状态和日志。
+平均模型为 `UltraEval-Audio/init_model/emilia2-refmask-average-step27500-step30000-step32500/`。协调目录为 `UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step27500-step30000-step32500-20261016/`，后台会话为 `seedtts-refmask-average27500-30000-32500`。其中 `merge.sh`、`verify-merge.py`、`merge_verification.json` 为合并及核验，`run.py` 自动串行接续两组评测，`pipeline_status.json` / `run.log` / `merge.log` 保存状态和日志。
 
 | 组别 | 参数 | `UltraEval-Audio/res/` 下的结果目录 |
 | --- | --- | --- |
@@ -1153,9 +1153,9 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 混合参数在同一完整测试集上的中英文错误率更低，相似度略低。英文报告逐句 WER 均值、中文报告逐句 CER 均值，SIM 为余弦相似度乘 100，DNSMOS 未计算。
 
-默认组：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-default-sampling-20261016-4gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-default-sampling-20261016-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-default-sampling-20261016-4gpu/full/audit.json)。
+默认组：[结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step27500-step30000-step32500-default-sampling-20261016-4gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step27500-step30000-step32500-default-sampling-20261016-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step27500-step30000-step32500-default-sampling-20261016-4gpu/full/audit.json)。
 
-混合组：[结果表](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-talkert03-k10-rp2-cpgreedy-20261016-4gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-talkert03-k10-rp2-cpgreedy-20261016-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-refmask-average-step27500-step30000-step32500-talkert03-k10-rp2-cpgreedy-20261016-4gpu/full/audit.json)。
+混合组：[结果表](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step27500-step30000-step32500-talkert03-k10-rp2-cpgreedy-20261016-4gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step27500-step30000-step32500-talkert03-k10-rp2-cpgreedy-20261016-4gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step27500-step30000-step32500-talkert03-k10-rp2-cpgreedy-20261016-4gpu/full/audit.json)。
 
 
 ## 26. 最终 checkpoint step 34,257：双配置评测
@@ -1165,8 +1165,8 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 自动队列于 **2026-10-16 05:17 UTC** 已发现并启动默认组，先导出 FP32 权重，再按照第 24 节流程运行默认与混合两组完整评测：speaker + ICL、BF16 + SDPA、batch size 1；默认为双采样 temperature 0.9、top-p 1、top-k 50，Talker repetition penalty 1.05；混合为 Talker temperature 0.3、top-p 1、top-k 10、repetition penalty 2，Code Predictor greedy。两组各 3,108 条，独立时长排除与指标定义沿用前文。
 
 - 模型：`UltraEval-Audio/init_model/emilia2-refmask-step-00034257/`。
-- 默认结果：`UltraEval-Audio/res/emilia2-refmask-auto-step34257-seedtts-default-sampling-4gpu/`。
-- 混合结果：`UltraEval-Audio/res/emilia2-refmask-auto-step34257-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/`。
+- 默认结果：`UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-auto-step34257-seedtts-default-sampling-4gpu/`。
+- 混合结果：`UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-auto-step34257-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/`。
 
 两组实际使用 GPU **1、2、4、5**，生成并发 16、逻辑分片 32、评分并发 8。默认组于 **2026-10-16 06:19 UTC** 完成，3,108 条全部生成并评分、无超长排除，完整性审计通过。每组的精确命令、状态及日志布局与第 24 节一致，最终评分表、汇总和审计在 `full/`。
 
@@ -1183,10 +1183,10 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 按后续要求，在 step 34,257 的默认与混合两组均完成并通过完整性审计后，自动追加 **step 30,000、32,500、34,257 各 1/3 等权平均**及双配置全量评测。所选三份是当前同一 Emilia2 refmask 训练目录的最新完整 checkpoint。合并前保留等待条件，不会提前占用 GPU；FP32 合并与逐张量核验完成后，按默认双采样、混合参数顺序执行，参数与第 25 节一致。
 
 - 模型：`UltraEval-Audio/init_model/emilia2-refmask-average-step30000-step32500-step34257/`。
-- 协调目录：`UltraEval-Audio/res/emilia2-refmask-average-step30000-step32500-step34257-20261016/`。
+- 协调目录：`UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step30000-step32500-step34257-20261016/`。
 - 后台会话：`seedtts-refmask-average30000-32500-34257`。
-- 默认结果：`UltraEval-Audio/res/emilia2-refmask-average-step30000-step32500-step34257-default-sampling-20261016-4gpu/`。
-- 混合结果：`UltraEval-Audio/res/emilia2-refmask-average-step30000-step32500-step34257-talkert03-k10-rp2-cpgreedy-20261016-4gpu/`。
+- 默认结果：`UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step30000-step32500-step34257-default-sampling-20261016-4gpu/`。
+- 混合结果：`UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-average-step30000-step32500-step34257-talkert03-k10-rp2-cpgreedy-20261016-4gpu/`。
 
 每分钟检查前置任务状态。两组均为 speaker + ICL、BF16 + SDPA、batch size 1，全量各 3,108 条；动态选择显存充足的四卡，生成并发 16、逻辑分片 32，评分并发 8。失败重试、成功结果复用、日志和正式评分布局与第 25 节相同。**2026-10-16 07:30 UTC**，step 34,257 两组均完整评分并通过审计，协调任务已自动进入 CPU 合并阶段。合并核验通过后接默认双采样，再接混合参数；本次平均模型尚无评测分数。
 
@@ -1207,7 +1207,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 采用默认双采样：Talker / Code Predictor 均为 temperature 0.9、top-p 1、top-k 50，Talker repetition penalty 1.05；Auto、non-streaming、BF16 + SDPA、batch size 1。Seed-TTS 英文 1,088 条、中文 2,020 条，指标和独立 30 秒排除规则沿用前文。**08:41 UTC** 在 GPU 1、2、4、5 启动，先进行中英文各两条 smoke 及审计，再自动执行全量；生成并发 16、固定逻辑分片 32，评分并发 8。
 
-结果目录：`UltraEval-Audio/res/emilia2-refmask-step34257-speaker-only-default-sampling-20261016-4gpu/`。精确命令在 `eval_command.json` / `run.sh`，评测状态在 `pipeline_status.json`，日志在 `job.log` / `logs/`，最终结果在 `full/results_table.md` / `summary.json` / `audit.json`。`continue-after-speaker-only.py` 与 `continuation_status.json` 负责本次优先任务和 average 混合组的自动接续，后台会话为 `seedtts-step34257-speaker-only`；执行期间持有 average 协调锁，避免自动 checkpoint 队列重叠占卡。当前尚无 speaker only 的正式全量结果。
+结果目录：`UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-step34257-speaker-only-default-sampling-20261016-4gpu/`。精确命令在 `eval_command.json` / `run.sh`，评测状态在 `pipeline_status.json`，日志在 `job.log` / `logs/`，最终结果在 `full/results_table.md` / `summary.json` / `audit.json`。`continue-after-speaker-only.py` 与 `continuation_status.json` 负责本次优先任务和 average 混合组的自动接续，后台会话为 `seedtts-step34257-speaker-only`；执行期间持有 average 协调锁，避免自动 checkpoint 队列重叠占卡。当前尚无 speaker only 的正式全量结果。
 
 
 ### Speaker only 已生成音频检查（09:22 UTC，非全量结论）
@@ -1258,7 +1258,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 本次使用 **speaker embedding + ICL**，匹配该训练配置的评测要求。默认 Talker / Code Predictor 均采样，temperature 0.9、top-p 1、top-k 50，Talker repetition penalty 1.05；Auto、non-streaming、BF16 + SDPA、batch size 1。Seed-TTS 英文 1,088 条、中文 2,020 条，先中英文各两条 smoke 生成、评分及审计，通过后自动执行全量。英文 WER、中文 CER、WavLM SIM 与独立大于 30 秒排除规则沿用前文，不计算 DNSMOS。
 
 - 独立导出：`UltraEval-Audio/init_model/emilia2-prefixref-step-00030000/`，CPU 加载该 checkpoint 后保存 FP32 权重并复制 tokenizer，核对 checkpoint 身份、元数据和权重哈希。
-- 结果目录：`UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/`。
+- 结果目录：`UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/`。
 - 后台会话：`seedtts-prefixref-step30000`；`01:19 UTC` 已启动，先导出模型，再使用 GPU **3、5、6**，生成并发 12、固定逻辑分片 32，评分并发 6。执行前检查每卡至少空闲 30 GiB，失败每分钟重试并复用成功结果。
 - `job_config.json`、`export_command.json`、`eval_command.json` 保存配置与精确命令；`coordinator_status.json` / `coordinator.log` 为导出及接续状态，`pipeline_status.json` / `job.log` / `logs/` 为评测状态和日志；正式评分表、汇总、审计在 `full/results_table.md` / `summary.json` / `audit.json`。
 
@@ -1274,7 +1274,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 | speaker_icl | seed_tts_eval_en | 1088/1088 | 1088/1088 | 3.007 | 60.339 | — | — | 完整 |
 | speaker_icl | seed_tts_eval_zh | 2020/2020 | 2020/2020 | 2.133 | 69.315 | — | — | 完整 |
 
-英文为逐句 WER 算术平均，中文为逐句 CER 算术平均，SIM 为 WavLM 余弦相似度乘 100；DNSMOS 未计算。原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/full/audit.json)。
+英文为逐句 WER 算术平均，中文为逐句 CER 算术平均，SIM 为 WavLM 余弦相似度乘 100；DNSMOS 未计算。原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-prefixref-step30000-seedtts-default-sampling-20261019-3gpu/full/audit.json)。
 
 执行期间，英文分片 3 / 7 所在的物理 GPU 3 因其他进程增加显存占用，导致 Whisper 加载 OOM，子进程退出后上层仍等待。02:03 UTC 停止本次卡住的评分并迁至 GPU 5、6，保留全部成功结果，仅补算缺失的 272 条英文评分；02:09:22 UTC 完成并通过审计。未重生成音频、未改变参数或随机种子，未因 OOM 排除测试样本。
 
@@ -1284,7 +1284,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 **2026-10-19 02:16 UTC** 已启动。物理 GPU 3 显存不足，本次使用 GPU **0、1、2、4、5、6、7**，生成并发上限 28、固定逻辑分片 32；评分固定 GPU **5、6**、每卡 4 worker，避免再次使用已发生 OOM 的卡。先跑 smoke 并审计，通过后自动执行全量，失败每分钟重试并复用成功结果。
 
-- 结果目录：`UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/`。
+- 结果目录：`UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/`。
 - 后台会话：`seedtts-prefixref-step30000-lowtemp`。
 - 配置、精确命令、协调与评测状态和最终评分布局沿用本节默认组。
 
@@ -1297,7 +1297,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 相对同一 prefixref checkpoint 的默认采样，英文 WER **3.007% → 2.301%**，中文 CER **2.133% → 1.597%**；SIM 分别 **60.339% → 59.422%**、**69.315% → 68.942%**。两组都覆盖完整 3,108 条，低温的错误率更低，相似度略低。
 
-原始证据：[结果表](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/full/audit.json)。
+原始证据：[结果表](../../../UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/full/results_table.md) · [汇总](../../../UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/full/summary.json) · [审计](../../../UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-prefixref-step30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-7gpu/full/audit.json)。
 
 
 ## 30. Prefixref / refmask 两份 step 30,000 平均：仅低温评测
@@ -1307,7 +1307,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 本次只跑 speaker + ICL 的低温参数：Talker temperature 0.3、top-p 1、top-k 10、repetition penalty 2，Code Predictor greedy；BF16 + SDPA、Auto、non-streaming、batch size 1。完整 Seed-TTS 英文 1,088 条、中文 2,020 条，指标与独立 30 秒排除规则沿用第 29 节。固定逻辑分片 32，每卡生成 4 worker、评分 2 worker；按显存余量选择 4–8 卡，每卡启动前至少空闲 30 GiB。
 
 - 平均模型：`UltraEval-Audio/init_model/emilia2-average-prefixref30000-refmask30000/`。
-- 结果目录：`UltraEval-Audio/res/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/`。
+- 结果目录：`UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/`。
 - 后台会话：`seedtts-prefixref-refmask-average30k`。
 - `control/config.json` / `merge_command.json` 保存合并来源和命令，`control/merge_verification.json` 为核验记录，`control/status.json` / `run.log` 为协调状态与日志；推理命令在结果目录的 `eval_command.json` / `run.sh`，最终结果在 `full/`。
 
@@ -1326,7 +1326,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 持续检查第 29 节训练目录的 `checkpoints/`，**每 60 秒**发现 `step > 30000` 的新完整 checkpoint。只有存在 `COMPLETE`、元数据 step 与目录一致且分布式状态存在时才入队；当前 step 30,000 的已完成两组不重复执行。每份新 checkpoint 串行跑 **默认双采样 → 同一 low-temperature 参数**，分别保存结果、共用独立导出，成功音频与评分复用。
 
-后台会话为 `seedtts-prefixref-new-checkpoints`。配置与状态在 `UltraEval-Audio/res/auto-emilia2-prefixref-checkpoints/`：`config.json` 指定训练目录、阈值、参数组和等待任务；`queue.json` 显示队列与实际卡号，`checks.jsonl` / `watch.log` 保存巡检与错误，`watch.sh` 可重新启动检查器。新结果使用 `emilia2-prefixref-auto-step<step>-seedtts-<参数组>-auto-gpu/` 命名。
+后台会话为 `seedtts-prefixref-new-checkpoints`。配置与状态在 `UltraEval-Audio/res/archive/emilia2-prefixref/auto-emilia2-prefixref-checkpoints/`：`config.json` 指定训练目录、阈值、参数组和等待任务；`queue.json` 显示队列与实际卡号，`checks.jsonl` / `watch.log` 保存巡检与错误，`watch.sh` 可重新启动检查器。新结果使用 `emilia2-prefixref-auto-step<step>-seedtts-<参数组>-auto-gpu/` 命名。
 
 队列等待第 30 节平均模型评测结束；即使期间出现新 checkpoint，也先登记、后执行。启动任务时从 GPU 0–7 中选择显存足够的 **4–8 卡**，每卡至少空闲 30 GiB；数量不足则等待，不占满显存强行启动。物理卡号可以变化，32 个逻辑分片、每条随机种子和参数保持不变。失败每分钟重试并保留成功结果；Whisper 子进程退出时现在会让评分报错，避免此前 OOM 后无限等待。自动队列、资源变化和 Whisper 退出/正常返回相关 **19 项测试通过**。
 
@@ -1350,7 +1350,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 按相同样本逐条配对，低温组 prefixref 英文 WER 更低 / 相同 / 更高为 **91 / 923 / 74** 条，中文 CER 为 **243 / 1,610 / 167** 条；因此并非每一条都改善。DNSMOS 没有计算，也没有单独量化韵律、自然度，不能仅据 WER/CER 推断整体听感更好。
 
-原 refmask 的 [默认结果](../../../UltraEval-Audio/res/emilia2-refmask-auto-step30000-seedtts-default-sampling-4gpu/full/results_table.md) / [低温结果](../../../UltraEval-Audio/res/emilia2-refmask-auto-step30000-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/full/results_table.md)，prefixref 的结果及审计见第 29 节。
+原 refmask 的 [默认结果](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-auto-step30000-seedtts-default-sampling-4gpu/full/results_table.md) / [低温结果](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-auto-step30000-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/full/results_table.md)，prefixref 的结果及审计见第 29 节。
 
 ### 训练结束时：两份最终 checkpoint step 34,257
 
@@ -1365,7 +1365,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 **训练结束时句内随机参考整体更优。** refmask 的 SIM 四组均更高（**+1.3 至 +1.8** 个百分点），英文 WER 两组也更低（低温 **2.409% 对 3.044%**）；prefixref 只在中文 CER 上仍略低，低温组差距缩小到 **0.066** 个百分点。结论同样来自单次生成，不作显著性判断。后续参考截取沿用句内随机区间，不改用固定前缀。
 
-原始证据：refmask [默认](../../../UltraEval-Audio/res/emilia2-refmask-auto-step34257-seedtts-default-sampling-4gpu/full/results_table.md) / [低温](../../../UltraEval-Audio/res/emilia2-refmask-auto-step34257-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/full/results_table.md)；prefixref [默认](../../../UltraEval-Audio/res/emilia2-prefixref-auto-step34257-seedtts-default-sampling-auto-gpu/full/results_table.md) / [低温](../../../UltraEval-Audio/res/emilia2-prefixref-auto-step34257-seedtts-talkert03-k10-rp2-cpgreedy-auto-gpu/full/results_table.md)。
+原始证据：refmask [默认](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-auto-step34257-seedtts-default-sampling-4gpu/full/results_table.md) / [低温](../../../UltraEval-Audio/res/archive/emilia2-refmask/emilia2-refmask-auto-step34257-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/full/results_table.md)；prefixref [默认](../../../UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-prefixref-auto-step34257-seedtts-default-sampling-auto-gpu/full/results_table.md) / [低温](../../../UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-prefixref-auto-step34257-seedtts-talkert03-k10-rp2-cpgreedy-auto-gpu/full/results_table.md)。
 
 ### 各模块权重差异与平均失败
 
@@ -1382,7 +1382,7 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 Talker 的绝对权重余弦较高，部分原因是二者共享预训练主干；扣除共同初始化后，训练增量方向已明显不同。随机初始化并联合训练的 Code Predictor、codec embeddings / heads 也已分化，不能因为表的维度和 token ID 一样，就认为两套内部表示及上下游配合能在平均后保留。这与第 30 节 50% / 50% 平均模型的 smoke 失败相符，说明这次跨实验平均没有可用效果；尚未做分模块替换或插值消融，不能断言某一个模块单独造成 100% 错误率，也不把全量比较的结论推广到其他合并比例。
 
-完整数值记录：[source_model_comparison.json](../../../UltraEval-Audio/res/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/control/source_model_comparison.json)。本次仅读取权重和既有评分，没有恢复已停止的平均模型评测。
+完整数值记录：[source_model_comparison.json](../../../UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/control/source_model_comparison.json)。本次仅读取权重和既有评分，没有恢复已停止的平均模型评测。
 
 
 ### Code Predictor 为什么差异大：早期 checkpoint 与分层核对
@@ -1410,7 +1410,7 @@ Talker 的绝对权重余弦较高，部分原因是二者共享预训练主干�
 
 这是结合代码与权重轨迹的解释，尚未通过固定 Talker、固定 mask 或参数对齐等消融分离各因素。低权重余弦不等于功能完全不同，两份单独模型都能正常评测；但不能保证把各自配合好的 Talker、Code Predictor 与 embedding/head 同时平均后还能配合。这里不把差异简单认定为正常，也不根据一个余弦值断言训练存在 bug。
 
-原始记录：[predictor_divergence_check.json](../../../UltraEval-Audio/res/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/control/predictor_divergence_check.json)。
+原始记录：[predictor_divergence_check.json](../../../UltraEval-Audio/res/archive/emilia2-prefixref/emilia2-average-prefixref30000-refmask30000-seedtts-talkert03-k10-rp2-cpgreedy-20261019-auto-gpu/control/predictor_divergence_check.json)。
 
 
 ## 33. Codec embedding 与 codec 码本：分析与码本初始化实验
@@ -1615,7 +1615,7 @@ R²（与 codec 码本拟合，方法同第 33 节，结果在 `evidence/codec-e
 
 \* 2,500 步中文有 2 条生成音频达到 30.16 s，超过上限被排除，评分 2,018 / 2,020 条。
 
-结果：[2,500](../../../UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-step2500-seedtts-default-sampling-auto-gpu/full/results_table.md) / [5,000](../../../UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-step5000-seedtts-default-sampling-auto-gpu/full/results_table.md) / [7,500](../../../UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-step7500-seedtts-default-sampling-auto-gpu/full/results_table.md)。
+结果：[2,500](../../../UltraEval-Audio/res/archive/emilia-v4-emilia2-cbinit-langid/emilia-v4-emilia2-cbinit-langid-step2500-seedtts-default-sampling-auto-gpu/full/results_table.md) / [5,000](../../../UltraEval-Audio/res/archive/emilia-v4-emilia2-cbinit-langid/emilia-v4-emilia2-cbinit-langid-step5000-seedtts-default-sampling-auto-gpu/full/results_table.md) / [7,500](../../../UltraEval-Audio/res/archive/emilia-v4-emilia2-cbinit-langid/emilia-v4-emilia2-cbinit-langid-step7500-seedtts-default-sampling-auto-gpu/full/results_table.md)。
 
 7,500 步的评测曾卡在打分阶段：别人的任务占用了 GPU 2、4、7 的显存，自动评测的打分无法启动。最后用相同的设置，在 GPU 5、6、7 上手动完成了打分。推理结果是原来生成的，身份校验和审计都通过了。
 
@@ -1626,7 +1626,7 @@ R²（与 codec 码本拟合，方法同第 33 节，结果在 `evidence/codec-e
 | Auto | 5.182 | 52.400 | 5.489 | 65.096 |
 | 显式语言 | 5.498 | 52.559 | 5.025 | 65.297 |
 
-显式语言时，中文 CER 低 0.464 个百分点，英文 WER 反而高 0.316 个百分点，SIM 两种语言都只高约 0.2。两组各只采样一次，没有重复采样来估计波动，所以这些差值不能用来判断显式语言整体更好还是更差。能确认的是：一半样本用 Auto 训练后，Auto 推理的结果和显式语言接近，没有明显变差。[结果](../../../UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-step7500-seedtts-default-sampling-explicit-language-auto-gpu/full/results_table.md)
+显式语言时，中文 CER 低 0.464 个百分点，英文 WER 反而高 0.316 个百分点，SIM 两种语言都只高约 0.2。两组各只采样一次，没有重复采样来估计波动，所以这些差值不能用来判断显式语言整体更好还是更差。能确认的是：一半样本用 Auto 训练后，Auto 推理的结果和显式语言接近，没有明显变差。[结果](../../../UltraEval-Audio/res/archive/emilia-v4-emilia2-cbinit-langid/emilia-v4-emilia2-cbinit-langid-step7500-seedtts-default-sampling-explicit-language-auto-gpu/full/results_table.md)
 
 ### 输出头与 codec 码本、与输入表的关系（2026-10-24）
 
@@ -1712,7 +1712,7 @@ prefill | t₁ … t₅ | F₁ … F₁₀ | t₆ … t₁₀ | F₁₁ … F₂
 
 - 每个 checkpoint 由自动评测跑两组：streaming 和 non-streaming。设置与第 34 节相同：默认双采样，batch size 1，32 个逻辑分片，最长 30 s，Auto 语言，每组完整生成并评分 3,108 条，审计通过。
 - **解码器**：交错导出由 UltraEval `scripts/local_qwen.py` 调用 lm_tts 自己的生成（带 KV cache）解码，两种模式都是。官方 qwen_tts 不认识交错排布。第 34 节和 streaming50 用的是官方 qwen_tts。
-- **两个解码器的一致性**：在 streaming50 step 7,500 上，用两个解码器各跑一遍 non-streaming，结果 lm_tts 为 6.474 / 7.850，官方为 6.345 / 7.604，SIM 都是 51.6 / 64.7，差异在采样波动内，所以下表可以跨 run 直接比。结果见 `UltraEval-Audio/res/archive-parity-lm-tts-decoder-streaming50-step7500-nonstreaming-20261027`。
+- **两个解码器的一致性**：在 streaming50 step 7,500 上，用两个解码器各跑一遍 non-streaming，结果 lm_tts 为 6.474 / 7.850，官方为 6.345 / 7.604，SIM 都是 51.6 / 64.7，差异在采样波动内，所以下表可以跨 run 直接比。结果见 `UltraEval-Audio/res/archive/emilia-v4-emilia2-cbinit-langid-streaming50/archive-parity-lm-tts-decoder-streaming50-step7500-nonstreaming-20261027`。
 
 ### SeedTTS 结果
 
@@ -1830,7 +1830,7 @@ streaming50 在 10,000 步没有评 streaming，12,500 步两种都没有评。�
 | 55,000 | 0.99 / 0.97 | — |
 | 56,384（最终） | 1.00 / 1.03 | — |
 
-结果：`UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-interleaved5x10-step{2500,5000,7500,10000,12500,15000,17500,20000,22500,25000,27500,30000,32500,35000,37500,40000,42500,45000,47500,50000,52500,55000,56384}-default-sampling{-streaming,}-auto-gpu/seed_tts/full/results_table.md`。
+结果：`UltraEval-Audio/res/archive/emilia-v4-emilia2-cbinit-langid-interleaved5x10/emilia-v4-emilia2-cbinit-langid-interleaved5x10-step{2500,5000,7500,10000,12500,15000,17500,20000,22500,25000,27500,30000,32500,35000,37500,40000,42500,45000,47500,50000,52500,55000,56384}-default-sampling{-streaming,}-auto-gpu/seed_tts/full/results_table.md`。
 
 ### CV3 hard 结果
 
@@ -1885,7 +1885,7 @@ SIM/% ↑（英文 / 中文）：
 - 22,500 步中文交错两种模式都落后第 34 节（19.7 / 18.5 对 14.9）。逐条比，streaming 和 non-streaming 都是 27 条更差、12–13 条更好，去掉任一方超过 50% 的样本后仍落后（7.4 / 9.2 对 6.7）。两种模式一起落后，说明不是 streaming 的代价。17,500、20,000 步中文逐条比基本打平（20 / 19、26 / 19 等），所以这一步先看作单点，要看 25,000 步是否持续。25,000 步中文逐条比又接近打平（streaming 21 / 18，non-streaming 23 / 19），去掉超过 50% 的样本后 8.0 / 6.2 对 7.6，non-streaming 反而略好，但 27,500 步中文又落后（15.9 / 16.3 对 13.8；逐条 streaming 23 / 16，non-streaming 24 / 12；去掉超过 50% 的样本后 6.5 / 7.1 对 5.3 / 5.0）。从 22,500 步起三个点里，交错中文 hard 的总分都比第 34 节高 1.5–4.7 个点，两种模式一起落后，像是交错训练在长难中文句子上的一个小的持续差距，不是 streaming 的代价。30,000 步中文仍落后（18.1 / 18.0 对 15.3），但逐条只是小幅落后（streaming 16 / 14，non-streaming 22 / 18；去掉超过 50% 的样本后 7.6 / 6.2 对 6.7 / 5.6）。英文 hard 交错 non-streaming 在 22,500–27,500 步好于第 34 节，30,000 步被几条失控样本拉到 18.2，streaming 13.3 好于第 34 节的 13.7。交错的 hard SIM 大多略高于第 34 节。英文 non-streaming 13.3 好于第 34 节，streaming 16.2 主要被几条绕口令拉高（去掉超过 50% 的样本后 10.3 对 10.4）。
 - 第 34 节最终 checkpoint（56,384 步）为 10.352 / 11.667，我们复现的 Qwen3-TTS 0.6B（过滤后）为 6.263 / 7.243。
 
-结果：`UltraEval-Audio/res/emilia-v4-emilia2-cbinit-langid-interleaved5x10-step{17500,20000,22500,25000,27500,30000,32500,35000,37500,40000,42500,45000,47500,50000,52500,55000,56384}-default-sampling{-streaming,}-auto-gpu/cv3_hard/full/results_table.md`（20,000 步是指向手动结果目录的软链接）。
+结果：`UltraEval-Audio/res/archive/emilia-v4-emilia2-cbinit-langid-interleaved5x10/emilia-v4-emilia2-cbinit-langid-interleaved5x10-step{17500,20000,22500,25000,27500,30000,32500,35000,37500,40000,42500,45000,47500,50000,52500,55000,56384}-default-sampling{-streaming,}-auto-gpu/cv3_hard/full/results_table.md`（20,000 步是指向手动结果目录的软链接）。
 
 ### 结论
 
