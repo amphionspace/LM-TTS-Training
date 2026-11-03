@@ -5,6 +5,7 @@ VAE posteriors and x-vectors stay in the immutable source payloads."""
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -27,6 +28,7 @@ SPECIAL_TOKENS = {
 }
 PROMPTS = {"text": "[文本]", "audio": "[文本对应语音]", "interleave": "[流式语音合成]"}
 REFERENCE_RULE = "dots-reference-v1:codec-grid-v1-on-patches"
+TAG = re.compile(r"\[[A-Za-z]+(?:-[A-Za-z]+)*\]")
 
 
 def reference_interval(target_id, patches):
@@ -87,12 +89,18 @@ class Layout:
 def bind_dots(recipe, output, tokenizer_info, tokenizer):
     root, output = Path(recipe["root"]).resolve(), Path(output).resolve()
     bindings = recipe["bindings"]
-    if not bindings or any(set(b) != {"dataset_id", "dots_manifest"} for b in bindings):
-        raise ValueError("dots bindings take exactly dataset_id and dots_manifest")
+    if not bindings or any(
+        not {"dataset_id", "dots_manifest"}
+        <= set(b)
+        <= {"dataset_id", "dots_manifest", "text_kind"}
+        for b in bindings
+    ):
+        raise ValueError("dots bindings take dataset_id, dots_manifest and optionally text_kind")
     names = [b["dataset_id"] for b in bindings]
     if len(set(names)) != len(names):
         raise ValueError("Duplicate dots datasets would repeat training samples")
     output.mkdir(parents=True, exist_ok=False)
+    tags = set(tokenizer.get_added_vocab())
     bound, languages, profiles = [], {}, set()
     for slot, configured in enumerate(bindings):
         manifest, reference, table = feature_reference(
@@ -106,6 +114,10 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
             raise ValueError("dots manifest identity or profile digest differs")
         if manifest["profile"].get("reference_rule") != REFERENCE_RULE:
             raise ValueError("dots features lack reference x-vectors under the expected rule")
+        # A pinned text_kind (e.g. nv-canonical-v1) guards against reading another text revision.
+        text_kind = configured.get("text_kind")
+        if text_kind and manifest.get("text", {}).get("text_kind") != text_kind:
+            raise ValueError(f"dots features carry another text revision: {dataset}")
         profiles.add(manifest["profile_id"])
         index_path = output / f"sampling-{slot:03d}.npy"
         index = np.lib.format.open_memmap(
@@ -122,6 +134,7 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                     "target_id",
                     "status",
                     "text",
+                    "text_kind",
                     "language",
                     "num_latent_frames",
                     "processed_frames",
@@ -139,6 +152,15 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                 cached = []
                 for row, ids in zip(records, tokens, strict=True):
                     frames = row["num_latent_frames"]
+                    if row["status"] == "ok":
+                        if text_kind and row["text_kind"] != text_kind:
+                            raise ValueError(f"Row text_kind {row['text_kind']!r}: {dataset}")
+                        # A tag the tokenizer does not hold would be read aloud as subwords.
+                        unknown = set(TAG.findall(row["text"])) - tags
+                        if unknown:
+                            raise ValueError(
+                                f"Tags outside the tokenizer {sorted(unknown)}: {dataset}"
+                            )
                     reason = (
                         "status"
                         if row["status"] != "ok"
