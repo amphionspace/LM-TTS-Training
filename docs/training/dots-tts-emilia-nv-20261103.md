@@ -110,7 +110,64 @@ CV3（WER / CER 与 SIM×100；括号内为超过 30 s 被排除的条数）：
 
 原始结果：[refmask Seed-TTS](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-step6448-default-sampling/seed_tts/full/results_table.md) · [noxvecdrop Seed-TTS](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-noxvecdrop-step6448-default-sampling/seed_tts/full/results_table.md) · [未训练 soar Seed-TTS](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/seed_tts/full/results_table.md) · [未训练 soar CV3](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/cv3/full/results_table.md) · [refmask CV3](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-step6448-default-sampling/cv3/full/results_table.md) · [noxvecdrop CV3](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-noxvecdrop-step6448-default-sampling/cv3/full/results_table.md)。
 
-## 4. 评测怎么跑
+## 4. 第二轮：26 个标签、5 个 NV 数据集
+
+### 数据与配置
+
+- **数据**：在 Emilia-NV 之外加入 NonVerbalSpeech-38K（中英，122.5 h）、SMIIP-NV（中文，27.6 h）、DisfluencySpeech（英文，9.6 h）、NonverbalTTS（英文，只保留 Expresso 48 kHz 的 4.0 h），共约 753 h。各数据集的原生标签由数据侧统一成 `nv-canonical-v1` 文本（`tts-data-pipeline/docs/nv-tags.md`）：能对应的映射到原 18 个标签，其余新增 8 个标签 `[Sniff]` `[Throat-clearing]` `[Gasp]` `[Yawn]` `[Groan]` `[Snore]` `[Sneeze]` `[Mouth-noise]`（喷鼻息并入 Sniff，哼声并入 `[Dissatisfaction-hnn]`，咂嘴与吞咽合成 Mouth-noise）。SMIIP 的整段（边笑边说）标注、NonverbalTTS 的 16 kHz VoxCeleb 部分被排除；DisfluencySpeech 的 uh/um 保留为文字。
+- **词表**：`assets/assembled/dots-tts-soar-nv26`（`configs/dots-soar-nv26.yaml`），原 18 个标签 ID 不变，新增 151690–151697。
+- **build**：`dots-nv-canonical-v1-20261103`（`configs/data-nv-canonical-dots.yaml`）。build 校验每行 `text_kind == nv-canonical-v1`，且文本中出现的标签都必须是词表里的 token。
+- **训练**：`configs/dots-tts-20261103-soar-nv26-5ds-refmask-noxvecdrop-bf16-8gpu-lr1e-5-ep2-wsd.yaml`，ACP `pt-7gbkk9q7`。从 soar 全模型训练，x-vector dropout 0，其余同第 1 节；2 epoch = 8,191 步，最终验证 FM 0.7499 / EOS 0.0363。
+
+### NV-Bench
+
+| 子集 | 第一轮 noxvecdrop（终） | 第二轮 step 3,500（≈1 epoch） | 第二轮 step 8,191（终） | NV-CV3 | Ming-tiny |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| zh_single CER / PCER / OCER | 2.76 / 20.62 / 3.10 | 2.87 / 31.23 / 3.58 | 3.05 / **18.31** / 3.37 | 3.80 / 27.69 / 4.90 | 2.80 / 17.23 / 3.20 |
+| zh_multi CER / PCER / OCER | 3.70 / 34.79 / 4.71 | 3.32 / 44.89 / 4.97 | 3.07 / 33.33 / 4.14 | 3.44 / **30.04** / 4.84 | 4.49 / 32.88 / 5.81 |
+| en_single CER / PCER / OCER | 6.40 / 40.40 / 6.63 | 5.41 / 56.73 / 5.79 | 5.42 / 34.96 / 5.58 | 8.33 / 46.13 / 9.44 | 5.86 / **32.95** / 7.05 |
+| en_multi CER / PCER / OCER | 6.39 / 44.19 / 6.81 | 6.82 / 50.00 / 7.42 | 6.24 / **39.19** / 6.63 | 6.70 / 47.13 / 10.10 | 5.12 / 46.13 / 7.68 |
+| SIM zh_s / zh_m / en_s / en_m | 0.773 / 0.782 / 0.733 / 0.767 | 0.778 / 0.782 / 0.740 / 0.768 | 0.768 / 0.773 / 0.730 / 0.764 | 0.768 / 0.776 / 0.698 / 0.721 | — |
+
+- 最终模型四个子集的 PCER 都好于第一轮（低 1.5–5.4 点）；en_multi 是表中所有模型最好，zh_single 与 Ming-tiny 只差 1.1 点，zh_multi 仍差 NV-CV3 约 3 点。
+- 1 epoch 时明显落后，主要是 `[Cough]` 召回崩到 22%（中文）/ 18%（英文）；训满 2 epoch 后回到 86% / 60%，其余标签也回升。看中间 checkpoint 不能判断这类混合数据的效果。
+
+### Seed-TTS 与 CV3
+
+Seed-TTS（WER / CER，SIM×100）：
+
+| 模型 | only en | only zh | icl en | icl zh |
+| --- | --- | --- | --- | --- |
+| dots.tts-soar（未训练） | 2.151 / 72.694 | 0.904 / 77.234 | 2.076 / 76.402 | 0.868 / 80.981 |
+| 第一轮 noxvecdrop（终） | 2.619 / 61.438 | 1.250 / 68.927 | 2.488 / 72.338 | 1.504 / 76.483 |
+| 第二轮 step 3,500 | 2.078 / 62.493 | 1.427 / 69.407 | 2.355 / 72.789 | 1.574 / 76.630 |
+| 第二轮 step 8,191 | 2.560 / 60.871 | 1.225 / 68.464 | 2.107 / 72.070 | 1.424 / 75.942 |
+
+CV3 普通子集（WER / CER，SIM×100）：
+
+| 模型 | only en | only zh | icl en | icl zh |
+| --- | --- | --- | --- | --- |
+| dots.tts-soar（未训练） | 3.995 / 75.970 | 3.351 / 79.181 | 4.262 / 75.626 | 3.899 / 79.727 |
+| 第一轮 noxvecdrop（终） | 4.752 / 65.495 | 3.738 / 72.988 | 5.162 / 71.292 | 4.169 / 75.677 |
+| 第二轮 step 3,500 | 4.058 / 65.404 | 3.976 / 72.752 | 4.546 / 71.067 | 4.299 / 75.320 |
+| 第二轮 step 8,191 | 4.269 / 64.777 | 4.274 / 72.024 | 5.163 / 70.104 | 4.079 / 75.101 |
+
+- 加入 4 个 NV 数据集没有改善说话人相似度：与第一轮一样，speaker_only 比未训练的 soar 低 9–12 点，speaker_icl 低 4–5 点；最终模型还比 1 epoch 时略低。
+- 内容准确率与第一轮相当：Seed-TTS 中文 CER 1.2–1.4，英文 WER 2.1–2.6。
+
+原始结果：[step 3,500](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-noxvecdrop-step3500-default-sampling/) · [step 8,191](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-noxvecdrop-step8191-default-sampling/)。
+
+## 5. 第三轮：混入去重后的游戏语音（进行中）
+
+为验证普通数据能否挽回说话人相似度，在第二轮数据上混入 4 个游戏语音数据集（原神、星穹铁道、绝区零、鸣潮；中英，ASR 文本，无标签）。
+
+- **去重**（只在训练索引中排除，不修改任何 lance）：游戏样本若满足任一条件即排除：在数据侧给出的游戏↔Emilia-NV 宽松匹配表中（`tts-data-pipeline/reports/nv-game-overlap/loose_pairs.jsonl`，原神 5,783 / 星铁 5,670 条）；归一化文本完全一致（≥5 字）且时长差 ≤0.3 s；或 VAE latent 音频指纹余弦 ≥0.90（与全部 NV 数据集及排在前面的游戏比较）。指纹为标准化后的 VAE 后验均值按 4 个时间段平均。阈值用宽松匹配表的 11,777 对已知重复校准：其中位余弦 0.996，97.4% ≥0.90；而 NV 数据集之间不同录音的最高相似度 p99.9 仅 0.88–0.91。目的是同一段音频不同时以"带标签"和"不带标签"两种文本出现。
+- **两个实验**（步数与第二轮相同，按 总小时 / NV 小时 放大每卡 dynamic batching 预算）：
+  - 1:1：每个游戏按去重后小时占比截取，合计约 753 h；每卡 1,200 patch / 2,000 token；ACP `pt-e2sq5euo`。
+  - 全部：去重后游戏数据 1,102.8 h（约 1.46:1）；每卡 1,480 patch / 2,470 token；ACP `pt-uk27o1b9`。
+- 配置：`configs/dots-tts-20261103-soar-nv26-5ds-games-{1to1,all}-refmask-noxvecdrop-bf16-8gpu-lr1e-5-ep2-wsd.yaml`。结果待补。
+
+## 6. 评测怎么跑
 
 UltraEval-Audio 中：`init_model/<run-short>-step-<8 位 step>` 为导出模型（`LM-TTS-Training/scripts/export_checkpoint.py` 直接导出为官方 runtime 布局），结果在 `res/<run-short>-step<N>-default-sampling/{nv_bench,seed_tts,cv3}/`。一个模型的全部评测作为一个 ACP 任务提交：
 
