@@ -1,0 +1,40 @@
+extends: base.yaml
+
+# ---- dots.tts-soar fine-tuning with 26 inline paralinguistic tags ----
+# The 18 NVSpeech tags keep their order (and token IDs) from dots-soar-nv.yaml; 8 extended tags
+# cover NonverbalTTS, DisfluencySpeech, NonVerbalSpeech-38K and SMIIP-NV events (nv-canonical-v1).
+paths:
+  assembled_model: ${paths.project}/assets/assembled/dots-tts-soar-nv26
+
+# Each tag becomes one token; its embedding row starts at the mean of its former subwords.
+assembly:
+  family: dots
+  release: dots.tts-soar
+  tag_tokens:
+    - "[Breathing]"
+    - "[Laughter]"
+    - "[Cough]"
+    - "[Sigh]"
+    - "[Confirmation-en]"
+    - "[Question-en]"
+    - "[Question-ah]"
+    - "[Question-oh]"
+    - "[Surprise-ah]"
+    - "[Surprise-oh]"
+    - "[Dissatisfaction-hnn]"
+    - "[Uhm]"
+    - "[Shh]"
+    - "[Crying]"
+    - "[Surprise-wa]"
+    - "[Surprise-yo]"
+    - "[Question-ei]"
+    - "[Question-yi]"
+    - "[Sniff]"
+    - "[Throat-clearing]"
+    - "[Gasp]"
+    - "[Yawn]"
+    - "[Groan]"
+    - "[Snore]"
+    - "[Sneeze]"
+    - "[Mouth-noise]"
+
