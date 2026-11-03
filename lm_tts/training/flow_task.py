@@ -46,9 +46,18 @@ class FlowTask:
     def configure(self, model):
         if model.llm.model.embed_tokens.num_embeddings != self.vocabulary:
             raise ValueError("LLM embedding rows disagree with the assembled tokenizer")
+        # The release trains with x-vector dropout; an experiment may override the rate.
+        rate = self.settings.get("xvector_dropout", model.xvec_drop_rate)
+        if type(rate) not in (int, float) or not 0 <= rate <= 1:
+            raise ValueError("train.xvector_dropout must be in [0, 1]")
+        model.xvec_drop_rate = rate
 
     def describe(self, model):
-        return {"interleave_fraction": self.interleave_fraction}
+        return {
+            "interleave_fraction": self.interleave_fraction,
+            "xvector_dropout": model.xvec_drop_rate,
+            "cfg_dropout": model.cfg_droprate,
+        }
 
     def begin_step(self, model, batches, device, split):
         self.counts = torch.tensor(

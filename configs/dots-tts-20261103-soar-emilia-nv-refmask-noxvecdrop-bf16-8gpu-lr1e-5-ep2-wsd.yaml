@@ -1,0 +1,9 @@
+extends: dots-tts-20261103-soar-emilia-nv-refmask-bf16-8gpu-lr1e-5-ep2-wsd.yaml
+
+# ---- Single variable against the refmask run: no x-vector dropout (release default 0.2) ----
+# The DiT always sees the reference-crop x-vector; CFG dropout of the LLM hidden stays at 0.2, so
+# classifier-free guidance at inference is unchanged.
+
+train:
+  run_name: dots-tts-20261103-soar-emilia-nv-refmask-noxvecdrop-bf16-8gpu-lr1e-5-ep2-wsd
+  xvector_dropout: 0.0
