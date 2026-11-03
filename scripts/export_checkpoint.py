@@ -5,6 +5,7 @@ import json
 import shutil
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.distributed.checkpoint as dcp
 from safetensors.torch import save_file
@@ -22,7 +23,7 @@ def main():
     parser.add_argument(
         "--copy-tokenizer",
         action="store_true",
-        help="Copy the speech tokenizer for a self-contained export instead of linking it",
+        help="Copy the speech tokenizer (dots: VAE and CAM++) for a self-contained export instead of linking it",
     )
     args = parser.parse_args()
     if not (args.checkpoint / "COMPLETE").is_file():
@@ -65,6 +66,19 @@ def main():
             not in {"assembly_report.json", "export.json", "model.safetensors.index.json"}
         ):
             shutil.copy2(source, args.output / source.name)
+    if json.loads((args.assembled_model / "config.json").read_text())["model_type"] == "dots_tts":
+        # The official dots.tts runtime reads these release file names and formats.
+        for name in ("vocoder.safetensors", "speaker_encoder.safetensors"):
+            source = (args.assembled_model / name).resolve()
+            if args.copy_tokenizer:
+                shutil.copyfile(source, args.output / name)
+            else:
+                (args.output / name).symlink_to(source)
+        stats = json.loads((args.assembled_model / "latent_stats.json").read_text())
+        torch.save(
+            {key: np.asarray(stats[key], dtype=np.float32) for key in ("mean", "var")},
+            args.output / "latent_stats.pt",
+        )
     language = metadata["signature"].get("model", {}).get("language_conditioning", "auto")
     if language != "auto":
         # Inference must pass the language (or Auto) the official way; record how it was trained.
