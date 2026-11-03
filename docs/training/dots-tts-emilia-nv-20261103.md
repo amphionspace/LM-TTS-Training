@@ -73,7 +73,7 @@ SIM（模型卡未提供 Ming 的 SIM；NV-CV3 取自 NV-Bench 论文表 4）：
 
 用来判断微调是否伤到通用能力。speaker_only 只用 prompt 的 x-vector；speaker_icl 再加 prompt 文本和音频前缀。默认采样，超过 30 s 的输出单独排除。
 
-refmask 的 Seed-TTS 首次运行因审计脚本按 24 kHz 校验 dots 的 48 kHz 输出而失败，已修复（UltraEval `a885ea9`）后重跑。**noxvecdrop 的 CV3 仍在运行**（2026-11-03 02:00 PDT）。
+refmask 的 Seed-TTS 首次运行因审计脚本按 24 kHz 校验 dots 的 48 kHz 输出而失败，已修复（UltraEval `a885ea9`）后重跑。全部评测已完成。
 
 Seed-TTS（英文 WER / 中文 CER，SIM×100）：
 
@@ -89,25 +89,26 @@ Seed-TTS（英文 WER / 中文 CER，SIM×100）：
 - **Seed-TTS 同样显示相似度明显下降**：speaker_only 降 7.6–11.3 点，speaker_icl 降 3.6–4.5 点；中文 CER 从 0.87–0.90 升到 1.14–1.50，英文 WER refmask 基本持平（2.15 / 2.17），noxvecdrop 升到 2.5–2.6。
 - **去掉 x-vector dropout 没有挽回相似度**，内容准确率还略差。训练时始终给 x-vector 也照样下降，说明原因不在 dropout，更可能是训练用的参考段 x-vector 太短太噪（推理时的完整 prompt 向量反而被弱化），或全模型微调冲掉了 SOAR 只在 DiT 上做的相似度提升。下一轮可对照：冻结 DiT、提高参考段最短长度、降低学习率。
 
-CV3（WER / CER 与 SIM×100；括号内为超过 30 s 被排除的条数；noxvecdrop 待补）：
+CV3（WER / CER 与 SIM×100；括号内为超过 30 s 被排除的条数）：
 
-| 条件 | 子集 | 未训练 soar | | refmask step 6,448 | |
-| --- | --- | ---: | ---: | ---: | ---: |
-| | | WER/CER | SIM | WER/CER | SIM |
-| speaker_only | zero_shot_en | 3.995 | 75.970 | 4.789 | 65.914 |
-| speaker_only | zero_shot_zh | 3.351 | 79.181 | 3.514 | 72.838 |
-| speaker_only | hard_en | 7.420 (6) | 76.564 | 6.829 (1) | 68.116 |
-| speaker_only | hard_zh | 11.038 (4) | 77.967 | 11.378 (4) | 71.703 |
-| speaker_icl | zero_shot_en | 4.262 | 75.626 | 4.950 | 71.453 |
-| speaker_icl | zero_shot_zh | 3.899 | 79.727 | 4.428 | 76.121 |
-| speaker_icl | hard_en | 9.823 (9) | 77.252 | 8.493 (1) | 72.505 |
-| speaker_icl | hard_zh | 9.958 (6) | 78.034 | 11.915 (2) | 72.893 |
+| 条件 | 子集 | 未训练 soar | | refmask step 6,448 | | refmask-noxvecdrop step 6,448 | |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| | | WER/CER | SIM | WER/CER | SIM | WER/CER | SIM |
+| speaker_only | zero_shot_en | 3.995 | 75.970 | 4.789 | 65.914 | 4.752 | 65.495 |
+| speaker_only | zero_shot_zh | 3.351 | 79.181 | 3.514 | 72.838 | 3.738 | 72.988 |
+| speaker_only | hard_en | 7.420 (6) | 76.564 | 6.829 (1) | 68.116 | 6.669 | 67.562 |
+| speaker_only | hard_zh | 11.038 (4) | 77.967 | 11.378 (4) | 71.703 | 11.512 (3) | 71.873 |
+| speaker_icl | zero_shot_en | 4.262 | 75.626 | 4.950 | 71.453 | 5.162 | 71.292 |
+| speaker_icl | zero_shot_zh | 3.899 | 79.727 | 4.428 | 76.121 | 4.169 | 75.677 |
+| speaker_icl | hard_en | 9.823 (9) | 77.252 | 8.493 (1) | 72.505 | 7.794 (1) | 72.997 |
+| speaker_icl | hard_zh | 9.958 (6) | 78.034 | 11.915 (2) | 72.893 | 11.032 (3) | 72.880 |
 
 - **微调明显降低了说话人相似度**：refmask 的 SIM 在八项里全部下降，speaker_only 降 6.3–10.1 点（英文最多，75.97 → 65.91），speaker_icl 降 3.6–5.1 点。
+- **noxvecdrop 与 refmask 在 CV3 上几乎一样**：SIM 差异在 ±0.6 点内，WER/CER 互有高低，同样没有挽回相似度。
 - **内容准确率基本持平**：普通子集 WER/CER 高 0.2–0.8 点；hard 子集互有升降，且微调后超长输出（被排除）明显变少。
 - speaker_only 的下降远大于 speaker_icl，说明模型对 x-vector 的依赖变弱了。可能的原因：训练时 x-vector 来自句内的短参考段（约三分之一短于 2 s），比推理时整段 prompt 算出的向量噪声大；全模型微调也可能冲掉了 SOAR（只调 DiT）带来的相似度。noxvecdrop（始终使用 x-vector）的结果可以帮助区分。
 
-原始结果：[refmask Seed-TTS](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-step6448-default-sampling/seed_tts/full/results_table.md) · [noxvecdrop Seed-TTS](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-noxvecdrop-step6448-default-sampling/seed_tts/full/results_table.md) · [未训练 soar Seed-TTS](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/seed_tts/full/results_table.md) · [未训练 soar CV3](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/cv3/full/results_table.md) · [refmask CV3](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-step6448-default-sampling/cv3/full/results_table.md)。
+原始结果：[refmask Seed-TTS](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-step6448-default-sampling/seed_tts/full/results_table.md) · [noxvecdrop Seed-TTS](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-noxvecdrop-step6448-default-sampling/seed_tts/full/results_table.md) · [未训练 soar Seed-TTS](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/seed_tts/full/results_table.md) · [未训练 soar CV3](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/cv3/full/results_table.md) · [refmask CV3](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-step6448-default-sampling/cv3/full/results_table.md) · [noxvecdrop CV3](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-noxvecdrop-step6448-default-sampling/cv3/full/results_table.md)。
 
 ## 4. 评测怎么跑
 
