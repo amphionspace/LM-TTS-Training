@@ -73,7 +73,7 @@ SIM（模型卡未提供 Ming 的 SIM；NV-CV3 取自 NV-Bench 论文表 4）：
 
 用来判断微调是否伤到通用能力。speaker_only 只用 prompt 的 x-vector；speaker_icl 再加 prompt 文本和音频前缀。默认采样，超过 30 s 的输出单独排除。
 
-**部分结果尚未完成**（2026-11-03 01:30 PDT）：refmask 的 Seed-TTS 因审计脚本按 24 kHz 校验 dots 的 48 kHz 输出而失败，已修复（UltraEval `a885ea9`）并重跑；noxvecdrop 的 Seed-TTS / CV3 仍在运行。
+refmask 的 Seed-TTS 首次运行因审计脚本按 24 kHz 校验 dots 的 48 kHz 输出而失败，已修复（UltraEval `a885ea9`）后重跑。**noxvecdrop 的 CV3 仍在运行**（2026-11-03 02:00 PDT）。
 
 Seed-TTS（英文 WER / 中文 CER，SIM×100）：
 
@@ -81,8 +81,13 @@ Seed-TTS（英文 WER / 中文 CER，SIM×100）：
 | --- | --- | ---: | ---: | ---: | ---: |
 | dots.tts-soar（未训练） | speaker_only | 2.151 | 72.694 | 0.904 | 77.234 |
 | dots.tts-soar（未训练） | speaker_icl | 2.076 | 76.402 | 0.868 | 80.981 |
-| dots refmask step 6,448 | 两种 | 待补 | | | |
-| dots refmask-noxvecdrop step 6,448 | 两种 | 待补 | | | |
+| dots refmask step 6,448 | speaker_only | 2.145 | 62.987 | 1.143 | 69.665 |
+| dots refmask step 6,448 | speaker_icl | 2.169 | 72.756 | 1.260 | 76.860 |
+| dots refmask-noxvecdrop step 6,448 | speaker_only | 2.619 | 61.438 | 1.250 | 68.927 |
+| dots refmask-noxvecdrop step 6,448 | speaker_icl | 2.488 | 72.338 | 1.504 | 76.483 |
+
+- **Seed-TTS 同样显示相似度明显下降**：speaker_only 降 7.6–11.3 点，speaker_icl 降 3.6–4.5 点；中文 CER 从 0.87–0.90 升到 1.14–1.50，英文 WER refmask 基本持平（2.15 / 2.17），noxvecdrop 升到 2.5–2.6。
+- **去掉 x-vector dropout 没有挽回相似度**，内容准确率还略差。训练时始终给 x-vector 也照样下降，说明原因不在 dropout，更可能是训练用的参考段 x-vector 太短太噪（推理时的完整 prompt 向量反而被弱化），或全模型微调冲掉了 SOAR 只在 DiT 上做的相似度提升。下一轮可对照：冻结 DiT、提高参考段最短长度、降低学习率。
 
 CV3（WER / CER 与 SIM×100；括号内为超过 30 s 被排除的条数；noxvecdrop 待补）：
 
@@ -102,7 +107,7 @@ CV3（WER / CER 与 SIM×100；括号内为超过 30 s 被排除的条数；noxv
 - **内容准确率基本持平**：普通子集 WER/CER 高 0.2–0.8 点；hard 子集互有升降，且微调后超长输出（被排除）明显变少。
 - speaker_only 的下降远大于 speaker_icl，说明模型对 x-vector 的依赖变弱了。可能的原因：训练时 x-vector 来自句内的短参考段（约三分之一短于 2 s），比推理时整段 prompt 算出的向量噪声大；全模型微调也可能冲掉了 SOAR（只调 DiT）带来的相似度。noxvecdrop（始终使用 x-vector）的结果可以帮助区分。
 
-原始结果：[未训练 soar Seed-TTS](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/seed_tts/full/results_table.md) · [未训练 soar CV3](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/cv3/full/results_table.md) · [refmask CV3](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-step6448-default-sampling/cv3/full/results_table.md)。
+原始结果：[refmask Seed-TTS](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-step6448-default-sampling/seed_tts/full/results_table.md) · [noxvecdrop Seed-TTS](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-noxvecdrop-step6448-default-sampling/seed_tts/full/results_table.md) · [未训练 soar Seed-TTS](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/seed_tts/full/results_table.md) · [未训练 soar CV3](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/cv3/full/results_table.md) · [refmask CV3](../../../UltraEval-Audio/res/dots-soar-emilia-nv-refmask-step6448-default-sampling/cv3/full/results_table.md)。
 
 ## 4. 评测怎么跑
 
