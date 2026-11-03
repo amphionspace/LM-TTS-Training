@@ -151,12 +151,19 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
     if not bindings or any(
         not {"dataset_id", "dots_manifest"}
         <= set(b)
-        <= {"dataset_id", "dots_manifest", "text_kind", "max_hours", "dedup_against"}
+        <= {
+            "dataset_id",
+            "dots_manifest",
+            "text_kind",
+            "max_hours",
+            "dedup_against",
+            "exclude_list",
+        }
         for b in bindings
     ):
         raise ValueError(
             "dots bindings take dataset_id, dots_manifest and optionally text_kind, max_hours,"
-            " dedup_against"
+            " dedup_against, exclude_list"
         )
     names = [b["dataset_id"] for b in bindings]
     if len(set(names)) != len(names):
@@ -252,6 +259,8 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                     ) != (None if published[0] is None else published):
                         raise ValueError(f"reference interval breaks {REFERENCE_RULE}: {dataset}")
                     seconds = row["processed_frames"] / 48000 if reason is None else None
+                    if reason is None and row["target_id"] in listed:
+                        reason = "listed_duplicate"
                     if reason is None and any(
                         is_duplicate(utterances[name], row["text"], seconds) for name in against
                     ):
@@ -267,7 +276,9 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                                     latents[position].numpy(), latent_mean, latent_std
                                 )
                             )
-                        language = languages.setdefault(row["language"], len(languages))
+                        # Upstream labels vary (zh-CN, en-US); the index keeps the base language.
+                        base_language = row["language"].split("-")[0].lower()
+                        language = languages.setdefault(base_language, len(languages))
                         index[ready] = (
                             observed,
                             frames // PATCH_SIZE,
@@ -289,6 +300,12 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
         if not set(against) <= set(utterances):
             raise ValueError(f"dedup_against must name earlier bindings: {dataset}")
         utterances[dataset] = {}
+        # Externally matched duplicates: {"path": jsonl, "field": target_id key}, read only.
+        listed = set()
+        if "exclude_list" in configured:
+            spec = configured["exclude_list"]
+            with open(spec["path"]) as lines:
+                listed = {json.loads(line)[spec["field"]] for line in lines}
         clone = table.shallow_clone(output / f"dots-{slot:03d}.lance", reference["lance_version"])
         clone.add_columns(pa.RecordBatchReader.from_batches(schema, columns()), batch_size=4096)
         if observed != manifest["rows"] or not ready:
