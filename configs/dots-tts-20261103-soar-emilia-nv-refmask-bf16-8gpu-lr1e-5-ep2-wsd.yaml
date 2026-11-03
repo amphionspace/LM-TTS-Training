@@ -1,0 +1,46 @@
+extends: dots-soar-nv.yaml
+
+# ---- dots.tts-soar on Emilia-NV (18 inline paralinguistic tags), cropped-reference x-vectors ----
+# The x-vector comes from a random in-utterance reference span that takes no FM loss (codec reference
+# policy on the 0.16 s patch grid), so conditioning cannot leak the supervised speech. Basic and
+# interleaved layouts are mixed 1:1 as in the official fine-tuning recipe.
+
+train:
+  run_name: dots-tts-20261103-soar-emilia-nv-refmask-bf16-8gpu-lr1e-5-ep2-wsd
+  precision: bf16
+  interleave_fraction: 0.5
+
+  # Gentle fine-tuning of the full model (LLM, PatchEncoder, DiT); VAE and CAM++ stay offline.
+  epochs: 2
+  max_steps: null
+  schedule_steps: null
+  warmup_steps: null
+  lr: 1.0e-5
+  backbone_lr: 1.0e-5
+  scheduler:
+    name: wsd
+    warmup_ratio: 0.02
+    decay_ratio: 0.2
+    min_lr_ratio: 0.1
+
+  # Budgets count 6.25 Hz patches; ~96 s of audio per GPU, ~770 s per optimizer step on 8 GPUs.
+  # The longest sample has 549 patches and 772 tokens.
+  max_batch_frames: 600
+  max_batch_tokens: 1000
+  accumulation: 1
+  num_workers: 4
+  prefetch_factor: 2
+
+  log_every: 10
+  first_check_step: 50
+  keep_checkpoints: null
+  save_every: 500
+  eval_every: 500
+
+eval:
+  batch_size: 16
+
+acp:
+  nodes: 1
+  worker_spec: N3lS.Ii.I60.80c896g  # 8 A800 GPUs, 80 vCPU, 896 GiB per node
+  priority: HIGHEST
