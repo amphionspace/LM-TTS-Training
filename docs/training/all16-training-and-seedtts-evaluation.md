@@ -1352,6 +1352,21 @@ Step 25,000 默认组已恢复，本次选择 GPU **1、3、4、5**；混合组�
 
 原 refmask 的 [默认结果](../../../UltraEval-Audio/res/emilia2-refmask-auto-step30000-seedtts-default-sampling-4gpu/full/results_table.md) / [低温结果](../../../UltraEval-Audio/res/emilia2-refmask-auto-step30000-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/full/results_table.md)，prefixref 的结果及审计见第 29 节。
 
+### 训练结束时：两份最终 checkpoint step 34,257
+
+上面 step 30,000 的差异在训练结束时**没有保持**。两个实验各自跑完 3 epoch，最终 checkpoint 均为 step 34,257，由各自的自动评测队列（第 24、31 节）完成两组解码；四组均完整生成并评分 3,108 条、无超长排除，审计通过。
+
+| 解码 | 模型 | 英文 WER/% ↓ | 英文 SIM/% ↑ | 中文 CER/% ↓ | 中文 SIM/% ↑ |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 默认双采样 | refmask 34,257 | 2.928 | 63.870 | 2.353 | 72.868 |
+| 默认双采样 | prefixref 34,257 | 2.997 | 62.110 | 1.967 | 71.534 |
+| 低温、Code Predictor greedy | refmask 34,257 | 2.409 | 62.978 | 1.719 | 72.615 |
+| 低温、Code Predictor greedy | prefixref 34,257 | 3.044 | 61.521 | 1.653 | 71.276 |
+
+**训练结束时句内随机参考整体更优。** refmask 的 SIM 四组均更高（**+1.3 至 +1.8** 个百分点），英文 WER 两组也更低（低温 **2.409% 对 3.044%**）；prefixref 只在中文 CER 上仍略低，低温组差距缩小到 **0.066** 个百分点。结论同样来自单次生成，不作显著性判断。后续参考截取沿用句内随机区间，不改用固定前缀。
+
+原始证据：refmask [默认](../../../UltraEval-Audio/res/emilia2-refmask-auto-step34257-seedtts-default-sampling-4gpu/full/results_table.md) / [低温](../../../UltraEval-Audio/res/emilia2-refmask-auto-step34257-seedtts-talkert03-k10-rp2-cpgreedy-4gpu/full/results_table.md)；prefixref [默认](../../../UltraEval-Audio/res/emilia2-prefixref-auto-step34257-seedtts-default-sampling-auto-gpu/full/results_table.md) / [低温](../../../UltraEval-Audio/res/emilia2-prefixref-auto-step34257-seedtts-talkert03-k10-rp2-cpgreedy-auto-gpu/full/results_table.md)。
+
 ### 各模块权重差异与平均失败
 
 在 CPU 上逐张量比较两个独立 FP32 导出，并用共同组装模型作为训练初始权重。冻结的 text embedding、text projector、speaker encoder 共 **81 个张量全部逐元素一致**；其余 **397 个张量均有差异**。下表相对 L2 定义为 `||W_prefixref − W_refmask||₂ / ||W_refmask||₂`；余弦均在每个模块的全部张量展平并合并后计算，不是逐张量余弦的平均。
