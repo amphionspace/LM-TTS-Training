@@ -211,8 +211,11 @@ def test_later_latents_cannot_change_earlier_predictions():
 
 def test_duplicates_match_text_and_length_not_tags_or_punctuation():
     seen = {}
-    seen.setdefault(utterance_key("[Laughter]你好，世界！"), []).append(3.20)
-    assert is_duplicate(seen, "你好世界", 3.45)
-    assert not is_duplicate(seen, "你好世界", 3.60)
-    assert not is_duplicate(seen, "你好，地球", 3.20)
+    seen.setdefault(utterance_key("[Laughter]你好，美丽的世界！"), []).append(3.20)
+    assert is_duplicate(seen, "你好美丽的世界", 3.45)
+    assert not is_duplicate(seen, "你好美丽的世界", 3.60)
+    assert not is_duplicate(seen, "你好，美丽的地球", 3.20)
     assert utterance_key("Hello, World [Sniff]") == "helloworld"
+    # A lone tag leaves no text to compare.
+    seen.setdefault(utterance_key("[Cough]"), []).append(1.41)
+    assert not is_duplicate(seen, "[Breathing]", 1.41)

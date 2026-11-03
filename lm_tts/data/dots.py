@@ -94,9 +94,44 @@ def utterance_key(text):
     return "".join(c for c in text if c.isalnum())
 
 
-def is_duplicate(seen, text, seconds, tolerance=0.3):
-    """Same normalized text and a duration within `tolerance` of an earlier dataset's row."""
-    return any(abs(seconds - other) <= tolerance for other in seen.get(utterance_key(text), ()))
+def is_duplicate(seen, text, seconds, tolerance=0.3, min_characters=5):
+    """Same normalized text and a duration within `tolerance` of an earlier dataset's row. Texts
+    shorter than `min_characters` (e.g. a lone tag) identify nothing and are left to the audio."""
+    key = utterance_key(text)
+    return len(key) >= min_characters and any(
+        abs(seconds - other) <= tolerance for other in seen.get(key, ())
+    )
+
+
+def audio_fingerprint(latents, mean, std, segments=4):
+    """Unit vector of the standardized VAE posterior mean averaged over equal time segments.
+    Re-encodings of one recording keep it nearly unchanged; edge silence is already normalized."""
+    z = (latents - mean) / std
+    vector = np.concatenate([part.mean(0) for part in np.array_split(z, segments)])
+    return vector / (np.linalg.norm(vector) + 1e-8)
+
+
+def audio_matches(new_fp, new_seconds, old_fp, old_seconds, tolerance=0.3, chunk=4096):
+    """Highest cosine similarity of each new row to an old row within `tolerance` seconds."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    best = np.full(len(new_fp), -1.0, dtype=np.float32)
+    if not len(old_fp) or not len(new_fp):
+        return best
+    order_old = np.argsort(old_seconds)
+    old_sorted = old_seconds[order_old]
+    old = torch.from_numpy(old_fp[order_old]).to(device, torch.float32)
+    order_new = np.argsort(new_seconds)
+    for start in range(0, len(order_new), chunk):
+        rows = order_new[start : start + chunk]
+        low = np.searchsorted(old_sorted, new_seconds[rows].min() - tolerance, side="left")
+        high = np.searchsorted(old_sorted, new_seconds[rows].max() + tolerance, side="right")
+        if low == high:
+            continue
+        query = torch.from_numpy(new_fp[rows]).to(device, torch.float32)
+        gap = np.abs(new_seconds[rows][:, None] - old_sorted[None, low:high]) > tolerance
+        similarity = (query @ old[low:high].T).masked_fill(torch.from_numpy(gap).to(device), -1.0)
+        best[rows] = similarity.max(1).values.cpu().numpy()
+    return best
 
 
 def hours_subset(targets, durations, max_hours):
@@ -128,7 +163,13 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
         raise ValueError("Duplicate dots datasets would repeat training samples")
     output.mkdir(parents=True, exist_ok=False)
     tags = set(tokenizer.get_added_vocab())
-    utterances = {}
+    utterances, fingerprints = {}, {}
+    # Rows whose audio fingerprint matches an earlier binding at or above this cosine are dropped.
+    audio_threshold = recipe.get("audio_dedup_threshold")
+    if audio_threshold is not None:
+        stats = json.loads((Path(tokenizer_info["path"]) / "latent_stats.json").read_text())
+        latent_mean = np.asarray(stats["mean"], dtype=np.float32)
+        latent_std = np.sqrt(np.asarray(stats["var"], dtype=np.float32))
     bound, languages, profiles = [], {}, set()
     for slot, configured in enumerate(bindings):
         manifest, reference, table = feature_reference(
@@ -168,17 +209,22 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                     "processed_frames",
                     "reference_start_patch",
                     "reference_end_patch",
+                    *(["vae_mean"] if audio_threshold is not None else []),
                 ],
                 scan_in_order=True,
                 batch_size=4096,
             ).to_batches():
+                latents = None
+                if audio_threshold is not None:
+                    latents = posteriors(batch.column("vae_mean"))
+                    batch = batch.drop_columns(["vae_mean"])
                 records = batch.to_pylist()
                 tokens = tokenizer(
                     [r["text"] if r["status"] == "ok" else "" for r in records],
                     add_special_tokens=False,
                 )["input_ids"]
                 cached = []
-                for row, ids in zip(records, tokens, strict=True):
+                for position, (row, ids) in enumerate(zip(records, tokens, strict=True)):
                     frames = row["num_latent_frames"]
                     if row["status"] == "ok":
                         if text_kind and row["text_kind"] != text_kind:
@@ -215,6 +261,12 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                             seconds
                         )
                         targets.append(row["target_id"])
+                        if latents is not None:
+                            prints.append(
+                                audio_fingerprint(
+                                    latents[position].numpy(), latent_mean, latent_std
+                                )
+                            )
                         language = languages.setdefault(row["language"], len(languages))
                         index[ready] = (
                             observed,
@@ -230,7 +282,7 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                     cached.append({"text_ids": ids, "num_text_tokens": len(ids)})
                 yield pa.RecordBatch.from_pylist(cached, schema=schema)
 
-        targets = []
+        targets, prints = [], []
         # Re-encoded copies of a recording share no ID or hash, only text and length; rows that
         # duplicate an earlier binding are excluded from the index, the tables stay unchanged.
         against = configured.get("dedup_against", [])
@@ -241,11 +293,29 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
         clone.add_columns(pa.RecordBatchReader.from_batches(schema, columns()), batch_size=4096)
         if observed != manifest["rows"] or not ready:
             raise ValueError(f"dots build coverage changed or empty: {dataset}")
+        kept = np.arange(ready)
+        if audio_threshold is not None:
+            prints = np.stack(prints).astype(np.float16)
+            seconds = index["duration"][:ready].astype(np.float32)
+            best = np.full(ready, -1.0, dtype=np.float32)
+            for name in against:
+                best = np.maximum(best, audio_matches(prints, seconds, *fingerprints[name]))
+            similarity = {f">={t}": int((best >= t).sum()) for t in (0.9, 0.95, 0.97, 0.98, 0.99)}
+            # Per-row best match, aligned with the pre-dedup index, for threshold audits.
+            np.save(output / f"audio-similarity-{slot:03d}.npy", best)
+            kept = kept[best < audio_threshold]
+            excluded["audio_duplicate"] += ready - len(kept)
         if "max_hours" in configured:
-            kept = hours_subset(targets, index["duration"][:ready], configured["max_hours"])
-            excluded["hours_cap"] += ready - len(kept)
+            capped = hours_subset(
+                [targets[i] for i in kept], index["duration"][kept], configured["max_hours"]
+            )
+            excluded["hours_cap"] += len(kept) - len(capped)
+            kept = kept[capped]
+        if len(kept) < ready:
             index[: len(kept)] = index[kept]
             ready = len(kept)
+        if audio_threshold is not None:
+            fingerprints[dataset] = (prints[kept], index["duration"][:ready].astype(np.float32))
         index.flush()
         index = None
         bound.append(
@@ -264,6 +334,7 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                 "sampling_sha256": file_hash(index_path),
                 "ready_rows": ready,
                 "coverage": {"ready": ready, "excluded": dict(excluded)},
+                **({"audio_similarity": similarity} if audio_threshold is not None else {}),
             }
         )
         print(json.dumps({"built": dataset, "ready": ready, "excluded": excluded}), flush=True)
