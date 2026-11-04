@@ -134,6 +134,10 @@ def initialize_from(source, model, optimizer, signature):
     shared = ("protocol", "model", "assembly_sha256", "build", "val_build")
     if any(origin[key] != signature[key] for key in shared):
         raise ValueError("init_from requires the same model, assembly and data builds")
+    # Adapted runs rename and add parameters, so the checkpoint must have the same structure.
+    for key in ("lora", "embedding_rows"):
+        if origin["settings"].get(key) != signature["settings"].get(key):
+            raise ValueError(f"init_from requires the same train.{key}")
     if source["load_optimizer"]:
         # Parameter groups and their decay must match for the moments to mean the same thing.
         for key, default in (
@@ -141,6 +145,7 @@ def initialize_from(source, model, optimizer, signature):
             ("backbone_lr", None),
             ("weight_decay", None),
             ("text_embedding_lr_group", "fresh"),
+            ("adapter_lr", None),
         ):
             if origin["settings"].get(key, default) != signature["settings"].get(key, default):
                 raise ValueError(f"init_from with optimizer state requires the same {key}")

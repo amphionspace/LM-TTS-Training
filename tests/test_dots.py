@@ -11,6 +11,7 @@ from lm_tts.data.dots import (
     utterance_key,
 )
 from lm_tts.models.dots import DotsTTSModel
+from lm_tts.models.lora import lora_parameters
 from lm_tts.objectives.flow import eos_weights, flow_loss
 
 SPAN, START, END, TEXT_END, EOS = 90, 91, 92, 93, 94
@@ -207,6 +208,66 @@ def test_later_latents_cannot_change_earlier_predictions():
     torch.testing.assert_close(a["velocity"][:3], b["velocity"][:3])
     torch.testing.assert_close(a["eos_logits"][:3], b["eos_logits"][:3])
     assert not torch.allclose(a["velocity"][3], b["velocity"][3])
+
+
+ADAPTED = {
+    "lr": 1e-5,
+    "adapter_lr": 1e-4,
+    "embedding_rows": "added",
+    "lora": {
+        "modules": ["llm"],
+        "targets": ["q_proj", "v_proj", "down_proj"],
+        "rank": 4,
+        "alpha": 8,
+        "dropout": 0.0,
+    },
+}
+
+
+def adapted_model():
+    model = tiny_model()
+    model.pretrained_rows = 90  # The last ten rows stand in for the tag tokens added at assembly.
+    return model
+
+
+def test_adapted_model_starts_pretrained_and_trains_only_new_parameters():
+    model, batch = adapted_model(), batch_of([row(3, 4, text=(20, 95))])
+    before = predict(model, batch)
+    model.adapt(ADAPTED)
+    after = predict(model, batch)
+    for key in ("velocity", "eos_logits"):
+        torch.testing.assert_close(after[key], before[key], atol=0, rtol=0)
+    model.train()
+    flow_loss(model(batch), batch)["fm_sum"].backward()
+    llm = model.llm.model
+    assert llm.embed_tokens.pretrained.grad is None
+    assert llm.embed_tokens.added.grad[95 - 90].abs().sum() > 0
+    assert llm.layers[0].self_attn.q_proj.base.weight.grad is None
+    assert llm.layers[0].self_attn.q_proj.lora_B.grad.abs().sum() > 0
+    pretrained, new = model.parameter_groups(ADAPTED)
+    assert (pretrained["lr"], new["lr"], new["weight_decay"]) == (1e-5, 1e-4, 0.0)
+    assert new["params"] == [*lora_parameters(model), llm.embed_tokens.added]
+    assert all(p.requires_grad for p in pretrained["params"])
+
+
+def test_merged_export_matches_the_adapted_model_under_the_original_names():
+    model = adapted_model()
+    names = set(model.state_dict())
+    model.adapt(ADAPTED)
+    with torch.no_grad():
+        for parameter in model.parameter_groups(ADAPTED)[1]["params"]:
+            parameter.normal_(std=0.2)
+    batch = batch_of([row(3, 5, text=(20, 95))])
+    adapted = predict(model, batch)
+    # Export rebuilds the adapters on a fresh model, loads the checkpoint, then merges.
+    restored = adapted_model()
+    restored.adapt(ADAPTED)
+    restored.load_state_dict(model.state_dict())
+    restored.merge_adapters()
+    assert set(restored.state_dict()) == names
+    merged = predict(restored, batch)
+    for key in ("velocity", "eos_logits"):
+        torch.testing.assert_close(merged[key], adapted[key], atol=1e-5, rtol=1e-5)
 
 
 def test_duplicates_match_text_and_length_not_tags_or_punctuation():

@@ -103,6 +103,10 @@ class CodecTask:
 
     def configure(self, model):
         settings, full_config = self.settings, self.full_config
+        if {"lora", "embedding_rows", "adapter_lr"} & set(settings):
+            raise ValueError(
+                "lora, embedding_rows and adapter_lr are implemented for dots.tts only"
+            )
         if self.language == "codec_language_id":
             if full_config.get("model_type") != "qwen3_tts":
                 raise ValueError("Language conditioning is implemented for Qwen talkers only")

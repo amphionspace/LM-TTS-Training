@@ -1,0 +1,19 @@
+extends: dots-tts-20261103-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-bf16-8gpu-lr1e-5-ep2-wsd.yaml
+
+# ---- Against the 5ds frozen-head run: the LLM trains through LoRA, and only the new tag rows of its embedding ----
+# Freezing the DiT raised Seed-TTS speaker-only SIM (5ds: en 60.9 -> 65.7, zh 68.5 -> 70.3) but left it far
+# below the SOAR release (72.7 / 77.2), so most of the drift is upstream of the DiT. The LLM's attention and
+# MLP projections become rank-32 adapters and its pretrained embedding rows stay fixed. Adapters and the 26
+# tag rows are new parameters: adapter_lr, no weight decay. The patch encoder, LLM norms and EOS head still
+# train fully at lr 1e-5, as in the frozen-head run.
+
+train:
+  run_name: dots-tts-20261104-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-llmlora-r32-addedrows-bf16-8gpu-lr1e-5-adapterlr1e-4-ep2-wsd
+  embedding_rows: added
+  adapter_lr: 1.0e-4
+  lora:
+    modules: [llm]
+    targets: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+    rank: 32
+    alpha: 64
+    dropout: 0.0

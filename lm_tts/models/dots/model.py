@@ -17,6 +17,8 @@ from transformers import Qwen2Config, Qwen2Model
 
 from ...artifacts import file_hash
 from ..assembly.common import load_prefix
+from ..embedding import AddedRowsEmbedding
+from ..lora import LoRASpec, apply_lora, lora_parameters, merge_lora
 from .modules import DiT, PatchEncoder
 
 CHUNK = 5  # One hidden state followed by the 4 latent frames of its patch.
@@ -60,6 +62,7 @@ class DotsTTSModel(nn.Module):
         self.register_buffer("latent_mean", torch.tensor(latent_mean), persistent=False)
         self.register_buffer("latent_std", torch.tensor(latent_var).sqrt(), persistent=False)
         self.checkpointing = False
+        self.pretrained_rows = None  # Vocabulary size before assembly added the tag tokens.
 
     def sharding_modules(self):
         """Ordered FSDP units; module and parameter names remain checkpoint-stable."""
@@ -75,9 +78,34 @@ class DotsTTSModel(nn.Module):
         )
         self.checkpointing = True
 
+    def adapt(self, settings):
+        """Swap in the parameter-efficient layers a run trains. Exports repeat this before loading
+        the checkpoint and then call merge_adapters, so the published layout never changes."""
+        if settings.get("embedding_rows", "all") == "added":
+            self.llm.model.embed_tokens = AddedRowsEmbedding(
+                self.llm.model.embed_tokens, self.pretrained_rows
+            )
+        if "lora" in settings:
+            apply_lora(self, LoRASpec(**settings["lora"]))
+
+    def merge_adapters(self):
+        merge_lora(self)
+        if isinstance(self.llm.model.embed_tokens, AddedRowsEmbedding):
+            self.llm.model.embed_tokens = self.llm.model.embed_tokens.merged()
+
     def parameter_groups(self, settings):
-        # Every trainable weight is pretrained, including the new tag rows inside the embedding.
-        return [{"params": [p for p in self.parameters() if p.requires_grad], "lr": settings["lr"]}]
+        """Pretrained weights fine-tune at lr; parameters this run introduces (LoRA adapters and
+        added embedding rows) learn at adapter_lr without weight decay."""
+        embedding = self.llm.model.embed_tokens
+        new = lora_parameters(self)
+        if isinstance(embedding, AddedRowsEmbedding):
+            new.append(embedding.added)
+        ids = {id(p) for p in new}
+        pretrained = [p for p in self.parameters() if p.requires_grad and id(p) not in ids]
+        groups = [{"params": pretrained, "lr": settings["lr"]}]
+        if new:
+            groups.append({"params": new, "lr": settings["adapter_lr"], "weight_decay": 0.0})
+        return groups
 
     def _layers(self, layers, x, *args):
         for layer in layers:
@@ -214,6 +242,7 @@ class DotsTTSModel(nn.Module):
                 if file_hash(directory / name) != expected:
                     raise ValueError(f"Assembled artifact changed: {name}")
         model = cls.from_config(directory, attn_implementation)
+        model.pretrained_rows = report["text_vocabulary"]["source_token_count"]
         if load_weights:
             model.load_state_dict(load_prefix(directory, ""), strict=True)
         return model

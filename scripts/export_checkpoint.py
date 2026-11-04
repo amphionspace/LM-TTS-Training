@@ -41,8 +41,14 @@ def main():
         attn_implementation="sdpa",
         use_speaker_embedding=metadata["signature"].get("model", {}).get("use_speaker_embedding"),
     )
+    # Rebuild the run's LoRA / added-row layers so the checkpoint loads, then fold them back.
+    adaptable = hasattr(model, "adapt")
+    if adaptable:
+        model.adapt(metadata["signature"].get("settings", {}))
+    dcp.load({"model": model.state_dict()}, checkpoint_id=args.checkpoint / "distributed")
+    if adaptable:
+        model.merge_adapters()
     state = model.state_dict()
-    dcp.load({"model": state}, checkpoint_id=args.checkpoint / "distributed")
     dtype = torch.bfloat16 if args.precision == "bf16" else torch.float32
     state = {
         key: value.to(dtype) if value.is_floating_point() else value for key, value in state.items()

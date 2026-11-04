@@ -219,3 +219,116 @@ python -m scripts.acp.submit --name evalsuite-<run> --log-dir res/<run>/logs --s
 ```
 
 dots 推理使用 `envs/dots`（官方 dots.tts @ `4cf7d6b`），打分沿用 `envs/metrics`。
+
+## 7. 第四轮：冻结 DiT + LLM LoRA（2026-11-04）
+
+冻结 DiT 让 Seed-TTS speaker_only SIM 有所回升（5ds：en 60.9 → 65.7，zh 68.5 → 70.3），但离未训练的 soar（72.7 / 77.2）仍差很远，speaker_icl 也只到 73.6 / 77.3。所以大部分相似度损失不在 DiT，而在它上游的 LLM / PatchEncoder。本轮在 5ds 冻结 DiT 的基础上，看限制 LLM 的更新幅度能否让 SIM 超过冻结 DiT 的结果。
+
+| | 主实验 | 对照：再冻结 PatchEncoder |
+| --- | --- | --- |
+| DiT 及其条件投影 | 冻结 | 冻结 |
+| LLM attention / MLP（`q/k/v/o_proj`、`gate/up/down_proj`） | LoRA r32、alpha 64、dropout 0 | 同左 |
+| LLM embedding | 只训练新加的 26 行标签，原有 151,672 行冻结 | 同左 |
+| PatchEncoder | 全量，lr 1e-5 | 冻结 |
+| LLM norm、EOS head | 全量，lr 1e-5 | 同左 |
+
+- 学习率：LoRA adapter 和 26 行标签是本轮新引入的参数，用 `train.adapter_lr` 1e-4、不加 weight decay；其余参数仍为 lr 1e-5、weight decay 0.01。数据、步数、WSD 调度都与 5ds frozenhead 相同。
+- 配置：`configs/dots-tts-20261104-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-{,frozenpe-}llmlora-r32-addedrows-bf16-8gpu-lr1e-5-adapterlr1e-4-ep2-wsd.yaml`。
+- 实现：模型的 `adapt` 按 `train.lora` / `train.embedding_rows` 换入 adapter 层，B 初始化为 0，第 0 步输出与原模型完全一致。导出时按 checkpoint 签名重建这些层、加载权重，再用 `merge_adapters` 合并回原权重，导出结构和参数名与此前完全相同。
+- 判断标准：Seed-TTS / CV3 的 speaker_only SIM 高于 5ds frozenhead 终点（Seed-TTS 65.7 / 70.3），NV-Bench PCER 不差于它（20.3 / 32.6 / 42.7 / 40.3）。两个实验都评 epoch 1 和终点。
+- 已知风险：评测用 bf16 推理。合并后的 W + ΔW 转成 bf16 时，ΔW 中小于 bf16 精度的部分会被舍掉，而训练时 adapter 支路是单独计算的。导出后要实测合并前后 velocity 的差异，必要时改用 fp32 推理。
+- 另一种解释，本轮区分不了：训练用的 x-vector 来自句内的短参考段，噪声较大。冻结 DiT 后，LLM 可能会转而从 teacher-forced 的历史里携带音色，speaker_only 推理时没有历史，SIM 就会下降。如果两个实验都没有明显回升，下一步先做不需要训练的诊断：把冻结 DiT 模型里的 LLM 或 PatchEncoder 换回 release 版本，或者把微调权重和 release 权重做插值。
+
+## 8. 冻结 DiT 最终评测汇总（2026-11-04）
+
+本节只比较最终 checkpoint；5ds 为第 4 节的五个 NV 数据集，games 1:1 为第 5 节混入等时长游戏语音的版本。Base 指未微调的 `dots.tts-soar`。两组 frozenhead 都从原始 soar-nv26 组装权重开始，训练 2 epochs，冻结 `velocity_field_predictor`（DiT）和 `hidden_proj`、`latent_proj`、`coordinate_proj`、`xvec_proj`；LLM、PatchEncoder 和 EOS head 仍全量训练。其余训练设置沿用对应未冻结实验。
+
+### 训练与完成状态
+
+| 实验 | 训练 ACP | 最终 step | 验证 FM / EOS / 总 loss | 最终评测 ACP | 评测完成时间（UTC） |
+| --- | --- | ---: | --- | --- | --- |
+| 5ds 冻结 | `pt-rfqo5avq` | 8,191 | 0.7532 / 0.0267 / 0.7799 | `pt-2mwh19i2` | 2026-11-04 08:33:49 |
+| games 1:1 冻结 | `pt-k7ephanh` | 7,615 | 0.7483 / 0.0291 / 0.7774 | `pt-bvul6so7` | 2026-11-04 09:01:16 |
+
+截至 2026-11-04 09:01:16 UTC，两组最终评测均为 `SUCCEEDED`：NV-Bench、Seed-TTS、CV3 全部完成；Seed-TTS 和 CV3 的两种条件均通过完整性检查。
+
+中间点 games 1:1 frozenhead step 3,000 的原评测 `pt-pkgou6e2` 在 CV3 的 `speaker_icl` shard 27 触发单进程 8 GiB 显存上限，未影响训练或已完成的 NV-Bench、Seed-TTS。将上限调到 16 GiB 后，仅续跑 CV3，复用已有输出；补跑 `pt-ef7296gl` 于 2026-11-04 08:47:07 UTC 成功完成。中间点不列入以下最终结果对比。
+
+### NV-Bench：CER / PCER / OCER
+
+每格为 **CER / PCER / OCER（%，均越低越好）**。沿用第 2 节的字符、标签和混合序列口径。Ming 0.5B 数值复用第 2 节收录的模型卡结果，并非本地复测；英文文本归一化可能不同，跨来源英文 CER / OCER 不宜直接判优，PCER 的可比性相对更好。
+
+| 模型 | zh_single | zh_multi | en_single | en_multi |
+| --- | --- | --- | --- | --- |
+| Ming-3.0-tts-0.5b（模型卡） | 2.70 / 22.80 / 3.20 | 3.50 / 36.60 / 8.10 | 7.60 / 37.00 / 8.90 | 7.90 / 47.30 / 10.40 |
+| Base（未微调 soar） | 31.11 / 93.23 / 32.43 | 46.13 / 91.81 / 47.86 | 9.75 / 78.80 / 9.97 | 11.48 / 76.94 / 11.73 |
+| 5ds 未冻结 · 8,191 | 3.05 / 18.31 / 3.37 | 3.07 / 33.33 / 4.14 | 5.42 / 34.96 / 5.58 | 6.24 / 39.19 / 6.63 |
+| 5ds 冻结 · 8,191 | 2.86 / 20.31 / 3.25 | 2.83 / 32.55 / 3.91 | 5.88 / 42.69 / 6.11 | 5.74 / 40.32 / 6.09 |
+| games 1:1 未冻结 · 7,615 | 2.84 / 24.77 / 3.42 | 3.12 / 37.37 / 4.52 | 5.07 / 50.43 / 5.49 | 6.26 / 50.16 / 6.84 |
+| games 1:1 冻结 · 7,615 | 2.54 / 27.54 / 3.16 | 3.04 / 38.27 / 4.43 | 4.91 / 51.86 / 5.32 | 5.84 / 46.77 / 6.40 |
+
+NV-Bench SIM（原始余弦值，越高越好；Ming 模型卡未提供）：
+
+| 模型 | zh_single | zh_multi | en_single | en_multi |
+| --- | ---: | ---: | ---: | ---: |
+| Base（未微调 soar） | 0.7191 | 0.7131 | 0.7796 | 0.8070 |
+| 5ds 未冻结 · 8,191 | 0.7675 | 0.7734 | 0.7298 | 0.7643 |
+| 5ds 冻结 · 8,191 | 0.7865 | 0.7944 | 0.7599 | 0.7936 |
+| games 1:1 未冻结 · 7,615 | 0.7634 | 0.7682 | 0.7209 | 0.7466 |
+| games 1:1 冻结 · 7,615 | 0.7811 | 0.7935 | 0.7513 | 0.7830 |
+
+### Seed-TTS
+
+每格为 **英文 WER / 中文 CER（%）↓ / SIM×100 ↑**；错误率为逐句算术平均，SIM 为 WavLM 相似度均值乘 100。`only` 为 speaker_only，`icl` 为 speaker_icl。每个条件英文 1,088 条、中文 2,020 条，表中所有结果均完整且无超长排除；Seed-TTS 未计算 DNSMOS。
+
+| 模型 | only en | only zh | icl en | icl zh |
+| --- | --- | --- | --- | --- |
+| Base（未微调 soar） | 2.151 / 72.694 | 0.904 / 77.234 | 2.076 / 76.402 | 0.868 / 80.981 |
+| 5ds 未冻结 · 8,191 | 2.560 / 60.871 | 1.225 / 68.464 | 2.107 / 72.070 | 1.424 / 75.942 |
+| 5ds 冻结 · 8,191 | 1.885 / 65.674 | 1.250 / 70.255 | 2.169 / 73.609 | 1.299 / 77.308 |
+| games 1:1 未冻结 · 7,615 | 1.706 / 59.120 | 1.031 / 67.850 | 1.753 / 71.240 | 1.083 / 76.451 |
+| games 1:1 冻结 · 7,615 | 1.755 / 59.594 | 1.092 / 65.267 | 1.867 / 73.364 | 1.058 / 78.249 |
+
+### CV3 普通子集
+
+同样每格为 **WER 或 CER（%）↓ / SIM×100 ↑**。每个条件中英各 500 条，全部生成、评分完成，无超长排除。
+
+| 模型 | only en | only zh | icl en | icl zh |
+| --- | --- | --- | --- | --- |
+| Base（未微调 soar） | 3.995 / 75.970 | 3.351 / 79.181 | 4.262 / 75.626 | 3.899 / 79.727 |
+| 5ds 未冻结 · 8,191 | 4.269 / 64.777 | 4.274 / 72.024 | 5.163 / 70.104 | 4.079 / 75.101 |
+| 5ds 冻结 · 8,191 | 4.680 / 69.509 | 3.673 / 73.641 | 4.988 / 73.160 | 4.367 / 77.030 |
+| games 1:1 未冻结 · 7,615 | 3.052 / 63.454 | 3.252 / 71.889 | 4.274 / 69.434 | 3.699 / 75.045 |
+| games 1:1 冻结 · 7,615 | 3.452 / 65.981 | 3.436 / 71.350 | 4.136 / 73.346 | 3.698 / 77.682 |
+
+### CV3 hard 子集
+
+每格为 **WER 或 CER（%）↓ / SIM×100 ↑（排除条数）**。每个条件英文 64 条、中文 60 条；超过 30 s 的输出按各模型分别排除。因此各模型的评分样本集合不完全相同，不能把差值视为同一批样本上的配对改善。
+
+| 模型 | only en | only zh | icl en | icl zh |
+| --- | --- | --- | --- | --- |
+| Base（未微调 soar） | 7.420 / 76.564（6） | 11.038 / 77.967（4） | 9.823 / 77.252（9） | 9.958 / 78.034（6） |
+| 5ds 未冻结 · 8,191 | 7.908 / 67.540（0） | 11.659 / 69.965（4） | 8.783 / 71.080（0） | 11.019 / 71.773（3） |
+| 5ds 冻结 · 8,191 | 8.086 / 71.563（0） | 12.372 / 71.812（5） | 8.258 / 75.329（0） | 12.143 / 74.682（5） |
+| games 1:1 未冻结 · 7,615 | 6.563 / 66.316（0） | 11.188 / 70.502（4） | 6.936 / 70.321（1） | 11.182 / 71.390（5） |
+| games 1:1 冻结 · 7,615 | 5.480 / 70.830（1） | 10.936 / 72.309（4） | 7.234 / 75.153（0） | 10.445 / 76.069（3） |
+
+CV3 还计算了 DNSMOS P808 / OVRL，完整数值见下方各 run 的原始结果表；本节与此前主对比表一致，集中列错误率和 SIM。
+
+### 对照结论
+
+- **冻结 DiT 挽回了部分相似度，但没有恢复到 Base。** 5ds 的 Seed-TTS 四项 SIM 均提高（only en / zh、icl en / zh 分别为 +4.803 / +1.791 / +1.539 / +1.366 点），CV3 普通与 hard 的八项 SIM 也全部提高；两组冻结模型的 Seed-TTS / CV3 SIM 仍全部低于未微调 soar。
+- **games 1:1 的 ICL 改善较稳定，speaker_only 仍有问题。** Seed-TTS ICL SIM 英文 / 中文提高 2.124 / 1.798 点，CV3 普通子集提高 3.912 / 2.637 点。但 only 中文 SIM 在 Seed-TTS 下降 2.583 点，在 CV3 普通子集下降 0.539 点。
+- **读字准确率没有一致改善。** 5ds 的 Seed-TTS only 英文 WER 2.560 → 1.885、ICL 中文 CER 1.424 → 1.299，另外两项略差；games 1:1 的 Seed-TTS 四项错误率中三项略差，仅 ICL 中文改善。CV3 普通子集中，games 1:1 的 only 中英错误率变差，ICL 英文改善、中文基本持平。
+- **副语言能力有取舍。** 两组冻结版的 NV-Bench PCER 都是四项中三项变差：5ds 英文单轮 34.96 → 42.69；games 1:1 仅英文多轮改善（50.16 → 46.77）。5ds 未冻结的四项 PCER 均低于 Ming 0.5B 模型卡；5ds 冻结版有三项低于它，英文单轮例外。不能只看 CER 和 SIM 就认为冻结头全面更好。
+- **这些结果尚不能定位相似度下降的唯一原因。** 冻结 DiT 后上游 LLM / PatchEncoder 仍会更新，参考段 x-vector、teacher-forced 历史和模块间配合也可能影响结果。只能确认冻结 DiT 不足以完全保护普通语音克隆能力；当前是单次生成对比，未估计随机波动。
+
+### 原始结果与审计
+
+| 模型 | NV-Bench | Seed-TTS | CV3 | 完整性审计 |
+| --- | --- | --- | --- | --- |
+| Base（未微调 soar） | [结果](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/nv_bench/results_table.md) | [结果](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/seed_tts/full/results_table.md) | [结果](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/cv3/full/results_table.md) | [Seed-TTS](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/seed_tts/full/audit.json) · [CV3](../../../UltraEval-Audio/res/dots-studio-soar-default-sampling/cv3/full/audit.json) |
+| 5ds 未冻结 · 8,191 | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-noxvecdrop-step8191-default-sampling/nv_bench/results_table.md) | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-noxvecdrop-step8191-default-sampling/seed_tts/full/results_table.md) | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-noxvecdrop-step8191-default-sampling/cv3/full/results_table.md) | [Seed-TTS](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-noxvecdrop-step8191-default-sampling/seed_tts/full/audit.json) · [CV3](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-noxvecdrop-step8191-default-sampling/cv3/full/audit.json) |
+| 5ds 冻结 · 8,191 | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-frozenhead-step8191-default-sampling/nv_bench/results_table.md) | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-frozenhead-step8191-default-sampling/seed_tts/full/results_table.md) | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-frozenhead-step8191-default-sampling/cv3/full/results_table.md) | [Seed-TTS](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-frozenhead-step8191-default-sampling/seed_tts/full/audit.json) · [CV3](../../../UltraEval-Audio/res/dots-soar-nv26-5ds-frozenhead-step8191-default-sampling/cv3/full/audit.json) |
+| games 1:1 未冻结 · 7,615 | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-games-1to1-step7615-default-sampling/nv_bench/results_table.md) | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-games-1to1-step7615-default-sampling/seed_tts/full/results_table.md) | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-games-1to1-step7615-default-sampling/cv3/full/results_table.md) | [Seed-TTS](../../../UltraEval-Audio/res/dots-soar-nv26-games-1to1-step7615-default-sampling/seed_tts/full/audit.json) · [CV3](../../../UltraEval-Audio/res/dots-soar-nv26-games-1to1-step7615-default-sampling/cv3/full/audit.json) |
+| games 1:1 冻结 · 7,615 | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-games-1to1-frozenhead-step7615-default-sampling/nv_bench/results_table.md) | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-games-1to1-frozenhead-step7615-default-sampling/seed_tts/full/results_table.md) | [结果](../../../UltraEval-Audio/res/dots-soar-nv26-games-1to1-frozenhead-step7615-default-sampling/cv3/full/results_table.md) | [Seed-TTS](../../../UltraEval-Audio/res/dots-soar-nv26-games-1to1-frozenhead-step7615-default-sampling/seed_tts/full/audit.json) · [CV3](../../../UltraEval-Audio/res/dots-soar-nv26-games-1to1-frozenhead-step7615-default-sampling/cv3/full/audit.json) |

@@ -1,9 +1,11 @@
 """Validate an experiment before model loading or distributed initialization."""
 
 import math
+from dataclasses import fields
 from pathlib import Path
 
 from ..config import read_yaml
+from ..models.lora import LoRASpec
 from ..objectives.tts import LOSS_REDUCTION_EXPONENTS
 from .precision import training_precision
 from .telemetry import tensorboard_groups
@@ -215,6 +217,20 @@ def load_config(path):
             raise ValueError(f"train.{key} must be finite and nonnegative")
     if not train["lr"] or not train["backbone_lr"] or not train["grad_clip"]:
         raise ValueError("Learning rates and gradient clipping must be positive")
+    if train.get("embedding_rows", "all") not in {"all", "added"}:
+        raise ValueError("train.embedding_rows must be all or added")
+    if "lora" in train:
+        keys = {field.name for field in fields(LoRASpec)}
+        if not isinstance(train["lora"], dict) or set(train["lora"]) != keys:
+            raise ValueError(f"train.lora needs exactly {sorted(keys)}")
+        LoRASpec(**train["lora"])
+    # Parameters a run introduces (LoRA adapters, added embedding rows) take their own rate.
+    introduces = "lora" in train or train.get("embedding_rows") == "added"
+    if introduces != ("adapter_lr" in train):
+        raise ValueError("train.adapter_lr is required exactly when LoRA or added rows train")
+    rate = train.get("adapter_lr", 1)
+    if type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0:
+        raise ValueError("train.adapter_lr must be positive")
     if data.get("evaluation") != "no_holdout" and not data.get("val_build"):
         raise ValueError("Specify data.evaluation=no_holdout or a separately isolated val_build")
     if not model.get("assembled_model") or not data.get("build"):

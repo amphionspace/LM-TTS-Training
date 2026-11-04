@@ -8,6 +8,7 @@ from transformers import AutoTokenizer
 from ..data.batch import val_batches
 from ..data.build import verify_tokenizer_compatibility
 from ..data.dots import DotsCollator, DotsFeatureDataset, Layout
+from ..models.lora import LoRALinear
 from ..objectives.flow import flow_loss
 from .distributed import batch_health, move
 
@@ -19,6 +20,7 @@ FLOW_HEAD = (
     "coordinate_proj",
     "xvec_proj",
 )
+FREEZABLE = (*FLOW_HEAD, "patch_encoder")
 
 
 class FlowTask:
@@ -63,10 +65,12 @@ class FlowTask:
         # SOAR post-trained only the flow-matching head; freezing it keeps that alignment.
         # Gradients still flow through the frozen head into the LLM and patch encoder.
         frozen = self.settings.get("frozen_modules", [])
-        if not set(frozen) <= set(FLOW_HEAD):
-            raise ValueError(f"train.frozen_modules must be among {FLOW_HEAD}")
+        if not set(frozen) <= set(FREEZABLE):
+            raise ValueError(f"train.frozen_modules must be among {FREEZABLE}")
         for name in frozen:
             getattr(model, name).requires_grad_(False)
+        # Adapters go in after freezing, so they also train inside a frozen module.
+        model.adapt(self.settings)
 
     def describe(self, model):
         return {
@@ -74,6 +78,8 @@ class FlowTask:
             "xvector_dropout": model.xvec_drop_rate,
             "cfg_dropout": model.cfg_droprate,
             "frozen_modules": self.settings.get("frozen_modules", []),
+            "embedding_rows": self.settings.get("embedding_rows", "all"),
+            "lora_layers": sum(isinstance(m, LoRALinear) for m in model.modules()),
             "trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
         }
 

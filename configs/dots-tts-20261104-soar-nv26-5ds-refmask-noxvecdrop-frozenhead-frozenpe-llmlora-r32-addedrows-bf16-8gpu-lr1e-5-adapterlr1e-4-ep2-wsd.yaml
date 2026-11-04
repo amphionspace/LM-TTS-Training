@@ -1,0 +1,10 @@
+extends: dots-tts-20261104-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-llmlora-r32-addedrows-bf16-8gpu-lr1e-5-adapterlr1e-4-ep2-wsd.yaml
+
+# ---- Single variable against the LLM-LoRA run: the patch encoder is frozen too ----
+# It feeds the timbre of the audio history into the LLM and was never touched by SOAR, so this run
+# separates its drift from the LLM's. Only the LoRA adapters, tag rows, LLM norms and EOS head train.
+
+train:
+  run_name: dots-tts-20261104-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-frozenpe-llmlora-r32-addedrows-bf16-8gpu-lr1e-5-adapterlr1e-4-ep2-wsd
+  frozen_modules:
+    [velocity_field_predictor, hidden_proj, latent_proj, coordinate_proj, xvec_proj, patch_encoder]
