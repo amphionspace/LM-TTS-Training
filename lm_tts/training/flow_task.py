@@ -11,6 +11,15 @@ from ..data.dots import DotsCollator, DotsFeatureDataset, Layout
 from ..objectives.flow import flow_loss
 from .distributed import batch_health, move
 
+# The flow-matching head: the DiT and the projections that condition it.
+FLOW_HEAD = (
+    "velocity_field_predictor",
+    "hidden_proj",
+    "latent_proj",
+    "coordinate_proj",
+    "xvec_proj",
+)
+
 
 class FlowTask:
     def __init__(self, config, full_config, assembled, rank, backend):
@@ -51,12 +60,21 @@ class FlowTask:
         if type(rate) not in (int, float) or not 0 <= rate <= 1:
             raise ValueError("train.xvector_dropout must be in [0, 1]")
         model.xvec_drop_rate = rate
+        # SOAR post-trained only the flow-matching head; freezing it keeps that alignment.
+        # Gradients still flow through the frozen head into the LLM and patch encoder.
+        frozen = self.settings.get("frozen_modules", [])
+        if not set(frozen) <= set(FLOW_HEAD):
+            raise ValueError(f"train.frozen_modules must be among {FLOW_HEAD}")
+        for name in frozen:
+            getattr(model, name).requires_grad_(False)
 
     def describe(self, model):
         return {
             "interleave_fraction": self.interleave_fraction,
             "xvector_dropout": model.xvec_drop_rate,
             "cfg_dropout": model.cfg_droprate,
+            "frozen_modules": self.settings.get("frozen_modules", []),
+            "trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
         }
 
     def begin_step(self, model, batches, device, split):

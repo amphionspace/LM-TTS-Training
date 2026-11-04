@@ -1,0 +1,10 @@
+extends: dots-tts-20261103-soar-nv26-5ds-refmask-noxvecdrop-bf16-8gpu-lr1e-5-ep2-wsd.yaml
+
+# ---- Single variable against the 5-dataset NV run: the flow-matching head stays frozen ----
+# SOAR post-trained only the DiT; every fine-tuned run so far lost speaker similarity (speaker-only
+# SIM down 8–14 points). Freezing the DiT and its conditioning projections tests whether full
+# fine-tuning washed that out; the LLM, patch encoder and EOS head still train.
+
+train:
+  run_name: dots-tts-20261103-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-bf16-8gpu-lr1e-5-ep2-wsd
+  frozen_modules: [velocity_field_predictor, hidden_proj, latent_proj, coordinate_proj, xvec_proj]
