@@ -285,6 +285,50 @@ LoRA 秩虽低，但 adapter_lr 1e-4、scale（alpha / rank）2 时，权重变�
 - 配置：`configs/dots-tts-20261104-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-llmlora-r16-addedrows-bf16-8gpu-lr1e-5-adapterlr2e-5-ep2-wsd.yaml`。
 - 判读：如果 speaker_only SIM 明显回升，说明 LLM 更新幅度确实是主因，再在 SIM 和 PCER 之间找合适的 lr；如果 SIM 仍停在 66 / 71 左右，就基本排除"更新太多"这个原因，下一步转向训练数据：改用同一说话人其他句子的 x-vector，并配合权重插值、换回 release 模块等不需要训练的诊断。
 
+#### 结果：更新压住了，SIM 没有回升
+
+训练 ACP `pt-9249dstr`，跑完 8,191 步。step 3,500 时 LLM 投影层相对变化为 1.3–2.3%，约为全量微调的 1/3、r32 的 1/5，幅度达到了目标。SIM×100：
+
+| 模型 | Seed only en / zh | Seed icl en / zh | CV3 only en / zh |
+| --- | --- | --- | --- |
+| r16 · 3,500 | 67.8 / 71.8 | 74.2 / 77.8 | 71.3 / 74.9 |
+| r16 · 8,191 | 66.5 / 70.9 | 74.2 / 78.0 | —（speaker_icl 分片在 8 GiB 上限下 OOM，待用 16 GiB 重跑） |
+
+NV-Bench PCER（zh_single / zh_multi / en_single / en_multi）：step 3,500 为 35.7 / 47.1 / 58.7 / 49.8，step 8,191 为 23.7 / 35.6 / 49.0 / 50.2，都比冻结 DiT（20.3 / 32.5 / 42.7 / 40.3）差。
+
+更新幅度只有 r32 的 1/5，speaker_only SIM 仍停在 66–68 / 71–72。可见 SIM 下降和 LoRA 更新幅度无关，LoRA 这条线到此为止。
+
+### 不需要训练的诊断：换模块与权重插值（2026-11-05）
+
+以下都在 Seed-TTS speaker_only 子集上测（en、zh 各 60 条，seed 42，num_steps 10，guidance 1.2），打分用 WavLM-large，与正式 simo 打分一致（误差约 0.0003）。微调模型为 5ds 冻结 DiT · 8,191。
+
+| 变体 | SIM en / zh | 相对 release |
+| --- | --- | --- |
+| release | 74.2 / 77.7 | — |
+| 全部微调（LLM + PatchEncoder + eos） | 65.5 / 70.0 | −8.7 / −7.7 |
+| 只换微调 LLM | 65.6 / 68.5 | −8.6 / −9.2 |
+| 只换微调 PatchEncoder | 74.2 / 77.8 | 0 / 0 |
+| 全部微调，speaker_scale 1.5 → 3.0 | 66.8 / 70.0 | −7.4 / −7.7 |
+| release，speaker_scale 3.0 | 74.1 / 77.0 | — |
+
+- **SIM 损失全部来自 LLM**，PatchEncoder 微调无害。
+- **不是 x-vector 权重不够**：放大 speaker_scale 救不回来。
+- 逐句配对分析：82–95% 的句子 SIM 都下降，与 prompt 长度无关，是整体偏移。
+
+于是对 LLM 做 WiSE-FT 插值：W(α) = W_release + α·(W_ft − W_release)；26 行标签、PatchEncoder、eos_proj 直接取微调值，DiT 本来就冻结。NV-Bench 用全集每 4 行取 1 行的子集（414 条，单个子集的 PCER 误差约 ±3–5 点）：
+
+| 模型 | Seed only SIM en / zh | NV PCER zs / zm / es / em ↓ | NV CER ↓ | NV SIM ↑ |
+| --- | --- | --- | --- | --- |
+| release（α = 0） | 74.2 / 77.7 | 95.1 / 91.1 / 81.8 / 73.5 | 28.65 / 48.39 / 10.55 / 9.99 | .715 / .695 / .795 / .816 |
+| α = 0.5 | 74.6 / 76.6 | 28.8 / 37.9 / 50.0 / 53.7 | 1.93 / 3.03 / 5.79 / 3.77 | .803 / .807 / .788 / .810 |
+| α = 0.7 | 72.3 / 74.1 | 22.1 / 35.3 / 39.8 / 42.6 | 2.23 / 2.88 / 5.96 / 3.88 | .792 / .798 / .779 / .807 |
+| 冻结 DiT · 3,500 | — | 35.6 / 42.4 / 52.3 / 49.4 | 4.01 / 3.79 / 5.30 / 5.69 | .777 / .781 / .771 / .783 |
+| 冻结 DiT · 8,191（α = 1） | 65.5 / 70.0 | 19.6 / 28.1 / 47.7 / 39.5 | 2.72 / 2.90 / 6.32 / 4.09 | .783 / .789 / .765 / .800 |
+
+- **插值的效果是非线性的。** α = 0.7 拿回了大部分 PCER 改善，zm 以外与 α = 1 基本持平；Seed SIM 只比 release 低 2–3.6 点，而 α = 1 要低 8–9 点。
+- **插值点在训练步数的权衡曲线外侧。** α = 0.5 的 PCER 三项、SIM 全部优于 step 3,500，说明插值不等于少训几步。
+- **还不确定的地方：** 子集评测，单个 seed，没有 CV3。下一步拿 α = 0.6 / 0.7 / 0.8 去跑全集评测（NV-Bench、Seed-TTS、CV3）。
+
 ## 8. 冻结 DiT 最终评测汇总（2026-11-04）
 
 本节只比较最终 checkpoint；5ds 为第 4 节的五个 NV 数据集，games 1:1 为第 5 节混入等时长游戏语音的版本。Base 指未微调的 `dots.tts-soar`。两组 frozenhead 都从原始 soar-nv26 组装权重开始，训练 2 epochs，冻结 `velocity_field_predictor`（DiT）和 `hidden_proj`、`latent_proj`、`coordinate_proj`、`xvec_proj`；LLM、PatchEncoder 和 EOS head 仍全量训练。其余训练设置沿用对应未冻结实验。
