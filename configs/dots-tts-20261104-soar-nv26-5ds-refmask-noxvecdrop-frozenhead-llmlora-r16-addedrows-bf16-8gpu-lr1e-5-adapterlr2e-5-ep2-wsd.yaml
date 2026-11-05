@@ -1,0 +1,17 @@
+extends: dots-tts-20261104-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-llmlora-r32-addedrows-bf16-8gpu-lr1e-5-adapterlr1e-4-ep2-wsd.yaml
+
+# ---- Against the r32 LLM-LoRA run: a LoRA that actually moves the LLM less than full fine-tuning ----
+# At rank 32 and adapter_lr 1e-4 the merged LLM projections ended 9-18% (relative Frobenius norm) away from
+# the release, about twice the full fine-tune's 5-9%, and SIM matched the frozen-head run. Rank 16 and
+# adapter_lr 2e-5 (scale alpha / rank stays 2) aim at roughly a quarter of the full fine-tune's drift. If
+# speaker-only SIM still falls, the size of the LLM update is not what costs similarity.
+
+train:
+  run_name: dots-tts-20261104-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-llmlora-r16-addedrows-bf16-8gpu-lr1e-5-adapterlr2e-5-ep2-wsd
+  adapter_lr: 2.0e-5
+  lora:
+    modules: [llm]
+    targets: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+    rank: 16
+    alpha: 32
+    dropout: 0.0

@@ -239,6 +239,52 @@ dots 推理使用 `envs/dots`（官方 dots.tts @ `4cf7d6b`），打分沿用 `e
 - 已知风险：评测用 bf16 推理。合并后的 W + ΔW 转成 bf16 时，ΔW 中小于 bf16 精度的部分会被舍掉，而训练时 adapter 支路是单独计算的。导出后要实测合并前后 velocity 的差异，必要时改用 fp32 推理。
 - 另一种解释，本轮区分不了：训练用的 x-vector 来自句内的短参考段，噪声较大。冻结 DiT 后，LLM 可能会转而从 teacher-forced 的历史里携带音色，speaker_only 推理时没有历史，SIM 就会下降。如果两个实验都没有明显回升，下一步先做不需要训练的诊断：把冻结 DiT 模型里的 LLM 或 PatchEncoder 换回 release 版本，或者把微调权重和 release 权重做插值。
 
+### 结果
+
+两个实验都跑完 8,191 步（训练 ACP `pt-ek4oegqy` / `pt-wr8afipj`），step 3,500 和 8,191 都评测完成。SIM×100，越高越好：
+
+| 模型 | Seed only en / zh | Seed icl en / zh | CV3 only en / zh |
+| --- | --- | --- | --- |
+| Base（未微调 soar） | 72.7 / 77.2 | 76.4 / 81.0 | 76.0 / 79.2 |
+| 5ds 冻结 DiT · 3,500 | 67.4 / 71.4 | 74.1 / 77.6 | 70.9 / 74.4 |
+| 5ds 冻结 DiT · 8,191 | 65.7 / 70.3 | 73.6 / 77.3 | 69.5 / 73.6 |
+| LLM LoRA · 3,500 | 66.9 / 71.1 | 73.9 / 77.5 | 70.4 / 73.9 |
+| LLM LoRA · 8,191 | 66.0 / 70.8 | 73.7 / 77.7 | 69.6 / 73.7 |
+| LLM LoRA + 冻结 PatchEncoder · 3,500 | 66.1 / 70.7 | 74.4 / 77.7 | 69.8 / 73.6 |
+| LLM LoRA + 冻结 PatchEncoder · 8,191 | 65.6 / 70.9 | 73.9 / 77.9 | 69.5 / 73.6 |
+
+NV-Bench（8,191 步；zh_single / zh_multi / en_single / en_multi）：
+
+| 模型 | PCER（%）↓ | CER（%）↓ | SIM ↑ |
+| --- | --- | --- | --- |
+| 5ds 冻结 DiT | 20.3 / 32.5 / 42.7 / 40.3 | 2.86 / 2.83 / 5.88 / 5.74 | .786 / .794 / .760 / .794 |
+| LLM LoRA | 18.5 / 32.0 / 38.4 / 41.3 | 2.33 / 2.50 / 5.05 / 5.75 | .786 / .795 / .757 / .787 |
+| LLM LoRA + 冻结 PatchEncoder | 20.0 / 32.9 / 41.3 / 43.4 | 2.47 / 2.32 / 4.85 / 5.08 | .788 / .802 / .760 / .786 |
+
+- **SIM 没有回升。** speaker_only SIM 只比冻结 DiT 高 0–0.5 点，仍比 Base 低 6–7 点；冻结 PatchEncoder 也没有帮助。三组都是 step 3,500 略好于终点。
+- **PCER 和读字略好。** 主实验 NV-Bench PCER 四项中三项低于冻结 DiT，en_single 42.7 → 38.4；Seed-TTS 中文 CER 1.25 → 0.99。
+- **bf16 合并没有吞掉更新。** 合并后的 LoRA 目标层中，只有 1–2% 的元素与 Base 完全相同；原有 151,672 行 embedding 逐元素不变，只有 26 行标签变化。
+
+### 诊断：这组 LoRA 没有约束住更新
+
+按导出权重计算 LLM 各投影层的相对变化 ‖W − W_base‖ / ‖W_base‖（Frobenius 范数，按层类型汇总）：
+
+| 模型 | q / k / v / o | gate / up / down |
+| --- | --- | --- |
+| 5ds 冻结 DiT（全量，lr 1e-5） | 8.8% / 5.5% / 5.3% / 7.5% | 8.4% / 8.5% / 8.4% |
+| LLM LoRA r32（adapter_lr 1e-4） | 17.5% / 12.5% / 9.4% / 14.4% | 17.3% / 16.4% / 11.0% |
+
+LoRA 秩虽低，但 adapter_lr 1e-4、scale（alpha / rank）2 时，权重变化约为全量微调的 2 倍。所以本轮并没有真正检验"限制 LLM 更新能否保住 SIM"。另一方面，更新幅度差一倍、SIM 几乎相同，说明 SIM 下降和 LLM 改了多少关系不大，更符合上面"x-vector 噪声 / teacher-forced 历史"的解释。
+
+### 第五轮：约束住的 LoRA（2026-11-05）
+
+只改 LoRA 的幅度，其余与本节主实验相同：PatchEncoder 全量训练，只训练新加的 26 行标签。
+
+- rank 32 → 16，alpha 64 → 32（scale 仍为 2）；`adapter_lr` 1e-4 → 2e-5，26 行标签随之也用 2e-5。
+- 目标是把 LLM 投影层的相对变化压到全量微调的约 1/4（约 2%）。导出后先按上表方法测量；如果明显超出，再降 lr。
+- 配置：`configs/dots-tts-20261104-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-llmlora-r16-addedrows-bf16-8gpu-lr1e-5-adapterlr2e-5-ep2-wsd.yaml`。
+- 判读：如果 speaker_only SIM 明显回升，说明 LLM 更新幅度确实是主因，再在 SIM 和 PCER 之间找合适的 lr；如果 SIM 仍停在 66 / 71 左右，就基本排除"更新太多"这个原因，下一步转向训练数据：改用同一说话人其他句子的 x-vector，并配合权重插值、换回 release 模块等不需要训练的诊断。
+
 ## 8. 冻结 DiT 最终评测汇总（2026-11-04）
 
 本节只比较最终 checkpoint；5ds 为第 4 节的五个 NV 数据集，games 1:1 为第 5 节混入等时长游戏语音的版本。Base 指未微调的 `dots.tts-soar`。两组 frozenhead 都从原始 soar-nv26 组装权重开始，训练 2 epochs，冻结 `velocity_field_predictor`（DiT）和 `hidden_proj`、`latent_proj`、`coordinate_proj`、`xvec_proj`；LLM、PatchEncoder 和 EOS head 仍全量训练。其余训练设置沿用对应未冻结实验。
