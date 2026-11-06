@@ -1,0 +1,14 @@
+extends: dots-tts-20261103-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-bf16-8gpu-lr1e-5-ep2-wsd.yaml
+
+# ---- Single variable against the frozen-DiT 5ds run: reference spans of at least 3 s ----
+# The frozen-DiT run lost 7-8 speaker_only SIM points, all of it in the LLM, growing along the
+# utterance. One explanation: v1 reference spans (median 1.6-2.9 s, minimum 0.64 s) give noisy
+# x-vectors, so the frozen DiT cannot rely on them and the LLM learns to carry timbre from the
+# audio history instead. dots-reference-v2 spans are at least min(3 s, half the utterance).
+
+data:
+  config: ${paths.project}/configs/data-nv-canonical-dots-ref3s.yaml
+  build_id: dots-nv-canonical-v1-ref3s-20261106
+
+train:
+  run_name: dots-tts-20261106-soar-nv26-5ds-ref3s-noxvecdrop-frozenhead-bf16-8gpu-lr1e-5-ep2-wsd

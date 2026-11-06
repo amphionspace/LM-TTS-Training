@@ -83,6 +83,28 @@ def test_eos_weights_put_half_on_the_last_patch_and_sum_to_one():
     assert weights[5:7].tolist() == [0.0, 0.0] and weights[4].item() == 0.25
 
 
+def test_reference_rule_v2_matches_the_pipeline_and_keeps_coverage():
+    import hashlib
+
+    rule = "dots-reference-v2:min-3s-on-patches"
+    for patches in range(1, 400):
+        target = f"utt-{patches}"
+        interval, v1 = (
+            reference_interval(target, patches, rule),
+            reference_interval(target, patches),
+        )
+        assert (interval is None) == (v1 is None)
+        if interval is None:
+            continue
+        # tts-data-pipeline dots_vae REFERENCE_SPANS[rule], written out.
+        low, high = max(4, -(-patches // 10)), patches // 2
+        low = max(low, min(19, high))
+        h = hashlib.sha256(f"dots-reference-v2:{target}".encode()).digest()
+        length = low + int.from_bytes(h[:8], "big") % (high - low + 1)
+        start = int.from_bytes(h[8:16], "big") % (patches - length + 1)
+        assert interval == (start, start + length)
+
+
 def test_reference_span_follows_the_codec_policy_and_takes_no_loss():
     starts = set()
     for patches in range(1, 400):

@@ -28,18 +28,25 @@ SPECIAL_TOKENS = {
     "text_end": "<|text_cond_end|>",
 }
 PROMPTS = {"text": "[文本]", "audio": "[文本对应语音]", "interleave": "[流式语音合成]"}
-REFERENCE_RULE = "dots-reference-v1:codec-grid-v1-on-patches"
+# Reference rules the feature pipeline publishes, each with its minimum span in patches; v2 lifts
+# it to 3 s (capped at half the utterance) so the x-vector sees enough speech.
+REFERENCE_RULES = {
+    "dots-reference-v1:codec-grid-v1-on-patches": 4,
+    "dots-reference-v2:min-3s-on-patches": 19,
+}
 TAG = re.compile(r"\[[A-Za-z]+(?:-[A-Za-z]+)*\]")
 
 
-def reference_interval(target_id, patches):
+def reference_interval(target_id, patches, rule="dots-reference-v1:codec-grid-v1-on-patches"):
     """The half-open patch span whose audio alone yields the x-vector, or None. As in the codec
-    reference policy: a uniform length in [max(0.5 s, 10%), 50%], then a uniform start. Without
-    paired utterances the reference comes from the target itself, so its patches take no loss."""
+    reference policy: a uniform length in [max(0.5 s, 10%), 50%], then a uniform start; v2 also
+    requires min(3 s, 50%). Without paired utterances the reference comes from the target itself,
+    so its patches take no loss."""
     low, high = max(4, -(-patches // 10)), patches // 2
     if low > high:
         return None
-    h = hashlib.sha256(f"dots-reference-v1:{target_id}".encode()).digest()
+    low = max(low, min(REFERENCE_RULES[rule], high))
+    h = hashlib.sha256(f"{rule.partition(':')[0]}:{target_id}".encode()).digest()
     length = low + int.from_bytes(h[:8], "big") % (high - low + 1)
     start = int.from_bytes(h[8:16], "big") % (patches - length + 1)
     return start, start + length
@@ -188,8 +195,9 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
             or digest(manifest["profile"]) != manifest["profile_id"]
         ):
             raise ValueError("dots manifest identity or profile digest differs")
-        if manifest["profile"].get("reference_rule") != REFERENCE_RULE:
-            raise ValueError("dots features lack reference x-vectors under the expected rule")
+        rule = manifest["profile"].get("reference_rule")
+        if rule not in REFERENCE_RULES:
+            raise ValueError("dots features lack reference x-vectors under a known rule")
         # A pinned text_kind (e.g. nv-canonical-v1) guards against reading another text revision.
         text_kind = configured.get("text_kind")
         if text_kind and manifest.get("text", {}).get("text_kind") != text_kind:
@@ -255,9 +263,9 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                     )
                     published = row["reference_start_patch"], row["reference_end_patch"]
                     if row["status"] == "ok" and reference_interval(
-                        row["target_id"], frames // PATCH_SIZE
+                        row["target_id"], frames // PATCH_SIZE, rule
                     ) != (None if published[0] is None else published):
-                        raise ValueError(f"reference interval breaks {REFERENCE_RULE}: {dataset}")
+                        raise ValueError(f"reference interval breaks {rule}: {dataset}")
                     seconds = row["processed_frames"] / 48000 if reason is None else None
                     if reason is None and row["target_id"] in listed:
                         reason = "listed_duplicate"
