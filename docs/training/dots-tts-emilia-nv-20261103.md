@@ -408,6 +408,17 @@ ft 相对 release：en 依次 −4.8 / −6.3 / −6.0，zh 依次 −7.2 / −1
   2. 只在离标签有一段距离的普通位置上，把 hidden 向冻结的 release LLM 蒸馏，并配一个全位置约束的对照组。
   3. 诊断后再决定：把参考段最短长度提到约 3 s（需重算 x-vector），或者按说话人重新加权采样。
 
+### 第六轮：参考段至少 3 s（2026-11-06）
+
+- **为什么做：** v1 规则下参考段很短。各数据集的中位数为 1.9–2.9 s，一半以上不足 3 s，smiip_nv 达 82%。在 smiip_nv 抽查的 128 条里，参考段 x-vector 和整句 x-vector 的余弦平均只有 0.743；v1 参考段不足 1.5 s 的 60 条只有 0.658。x-vector 不准，冻结的 DiT 就拿不准音色，loss 可能推着 LLM 去从音频历史里补音色。这与前面看到的现象一致：SIM 损失全在 LLM，越往后越大，ICL 掉得少。
+- **改了什么：** 新规则 `dots-reference-v2:min-3s-on-patches`。最短长度 lo = max(lo, min(19 patch = 3.04 s, 半句))，其余与 v1 相同（长度均匀取、起点均匀取，参考段不计 loss）。不足 6 s 的句子取半句作参考，有参考段的行与 v1 完全相同。同样 128 条上，新参考段的余弦升到 0.885，不足 1.5 s 的那 60 条升到 0.882。整句 x-vector 与 v1 逐条一致；latent 的差异不超过 1.5e-5，属于 fp32 批次舍入级。代价是被 mask 的 patch 更多，短句一半不计 loss。
+- **数据：** tts-data-pipeline `2a7a4f5`、`650580c`。dots_vae profile 为 `dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s`，run id `<dataset>-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s-20261106T092453bjt-01`，selection 和文本与 v1 相同。提取任务 ACP `pt-i1xc8qih`。
+- **训练：** `configs/dots-tts-20261106-soar-nv26-5ds-ref3s-noxvecdrop-frozenhead-bf16-8gpu-lr1e-5-ep2-wsd.yaml`，build `dots-nv-canonical-v1-ref3s-20261106`。相对冻结 DiT 的 5ds 实验只改参考段规则。`ref3s_chain.py`（`/workspace/LM-TTS-Training-Runs/auto-chain/`）依次完成：等特征发布、建 build、提交训练，并在 step 3,500 和最终 checkpoint 自动评测。
+- **判读：**
+  - speaker_only SIM 明显回升，分段 SIM 里后段掉得少：说明 x-vector 噪声是主因。
+  - SIM 不变：排除这个原因，转向给历史 patch 加噪声，或者做按位置约束的正则。
+  - 无论哪种结果，都可以再和插值叠加。
+
 ## 8. 冻结 DiT 最终评测汇总（2026-11-04）
 
 本节只比较最终 checkpoint；5ds 为第 4 节的五个 NV 数据集，games 1:1 为第 5 节混入等时长游戏语音的版本。Base 指未微调的 `dots.tts-soar`。两组 frozenhead 都从原始 soar-nv26 组装权重开始，训练 2 epochs，冻结 `velocity_field_predictor`（DiT）和 `hidden_proj`、`latent_proj`、`coordinate_proj`、`xvec_proj`；LLM、PatchEncoder 和 EOS head 仍全量训练。其余训练设置沿用对应未冻结实验。
