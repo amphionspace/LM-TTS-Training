@@ -35,11 +35,15 @@ class FlowTask:
         self.collate = DotsCollator(layout)
         self.interleave_fraction = settings.get("interleave_fraction", 0.0)
 
+        # Share of instruction rows trained with the default instruction instead (flexivoice.py).
+        self.instruction_dropout = settings.get("instruction_dropout", 0.0)
+
         def dataset(path):
             return DotsFeatureDataset(
                 path,
                 layout,
                 interleave_fraction=self.interleave_fraction,
+                instruction_dropout=self.instruction_dropout,
                 verify_integrity=rank == 0,
             )
 
@@ -75,6 +79,7 @@ class FlowTask:
     def describe(self, model):
         return {
             "interleave_fraction": self.interleave_fraction,
+            "instruction_dropout": self.instruction_dropout,
             "xvector_dropout": model.xvec_drop_rate,
             "cfg_dropout": model.cfg_droprate,
             "frozen_modules": self.settings.get("frozen_modules", []),

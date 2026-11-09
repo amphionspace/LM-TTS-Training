@@ -157,6 +157,7 @@ def create_build(recipe_path, output, *, paths=None):
             "reuse_build",
             "mix_reference",
             "audio_dedup_threshold",
+            "instructions",
         ),
     )
     if "mix_reference" in recipe:

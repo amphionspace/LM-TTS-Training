@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -64,6 +65,12 @@ def split_build(build_path, fraction=0.001, seed=42):
                 cursors[role] += len(values)
         for role in outputs:
             outputs[role].flush()
+            # Cross-speaker reference indices are keyed by feature row, so both roles share them.
+            if "reference_index" in binding:
+                shutil.copy2(
+                    build_path.parent / binding["reference_index"],
+                    build_path.parent / role / binding["reference_index"],
+                )
             manifests[role]["bindings"].append(
                 {
                     **binding,

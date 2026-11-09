@@ -1,0 +1,20 @@
+extends: dots-tts-20261103-soar-nv26-5ds-refmask-noxvecdrop-frozenhead-bf16-8gpu-lr1e-5-ep2-wsd.yaml
+
+# ---- Style-instruction TTS: FlexiVoice-Instruct with cross-utterance references, plus the five NV corpora ----
+# Design: docs/design/dots-instruct-tts-20261108.md. Frozen DiT as in the NV runs. FlexiVoice rows
+# (1.66M, ~2,744 h) condition on the whole-utterance x-vector of another utterance by the same
+# speaker, drawn each time (labelled styles: 0.4 neutral / 0.4 conflicting / 0.2 any), with no loss
+# mask; the NV rows (~731 h) keep their ref3s in-utterance spans. Every text takes
+# "Instruction: …\nText: "; 10% of instruction rows train with the default instruction.
+
+data:
+  config: ${paths.project}/configs/data-flexivoice-nv-dots-ref3s.yaml
+  build_id: dots-flexivoice-crossref-nv-ref3s-20261109
+
+train:
+  run_name: dots-tts-20261109-soar-nv26-flexivoice-crossref-instr-frozenhead-bf16-8gpu-lr1e-5-ep1-wsd
+  instruction_dropout: 0.1
+  epochs: 1
+  # ~4.7x the NV data: about 19k steps in one epoch.
+  save_every: 1000
+  eval_every: 1000
