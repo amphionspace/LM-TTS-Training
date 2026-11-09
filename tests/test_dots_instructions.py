@@ -56,9 +56,9 @@ def test_collator_counts_spans_and_predictors_with_a_prefix():
 
 
 def test_instruction_prefix_defaults_when_missing():
-    assert instruction_prefix(None) == f"Instruction: {DEFAULT_INSTRUCTION}\nText: "
+    assert instruction_prefix(None) == f"Instruction: {DEFAULT_INSTRUCTION}\nText:\n"
     assert instruction_prefix("  ") == instruction_prefix(None)
-    assert instruction_prefix("用开心的语气") == "Instruction: 用开心的语气\nText: "
+    assert instruction_prefix("用开心的语气") == "Instruction: 用开心的语气\nText:\n"
 
 
 @pytest.mark.parametrize(

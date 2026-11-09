@@ -1,7 +1,7 @@
 extends: base.yaml
 
 # ---- FlexiVoice style instructions with cross-utterance references, plus the five NV corpora ----
-# Design: docs/design/dots-instruct-tts-20261108.md. Every text takes "Instruction: …\nText: "
+# Design: docs/design/dots-instruct-tts-20261108.md. Every text takes "Instruction: …\nText:\n"
 # (flexivoice-v1); NV rows use the default instruction. FlexiVoice features cover every base row
 # (all_samples); the binding keeps the subsets whose upstream path names a speaker, 1-30 s, >= 16 kHz,
 # and only rows with another same-speaker utterance (other text, >= 3 s) to serve as the reference.

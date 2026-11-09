@@ -64,7 +64,7 @@ class Layout:
     basic:      [文本] prefix text [文本对应语音] <start> S*N <end> <eos>
     interleave: [流式语音合成] t1 S t2 S ... tn S <text_end> S ... S <end> <eos>
 
-    `prefix` is empty unless the build carries instructions ("Instruction: …\\nText: ", see
+    `prefix` is empty unless the build carries instructions ("Instruction: …\\nText:\\n", see
     flexivoice.py); interleaved samples never take one.
     """
 
@@ -269,7 +269,7 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
     names = [b["dataset_id"] for b in bindings]
     if len(set(names)) != len(names):
         raise ValueError("Duplicate dots datasets would repeat training samples")
-    # Instruction builds prefix every text with "Instruction: …\nText: " (flexivoice.py); rows
+    # Instruction builds prefix every text with "Instruction: …\nText:\n" (flexivoice.py); rows
     # without an instruction take the default one.
     instructions = recipe.get("instructions")
     if instructions not in (None, "flexivoice-v1"):

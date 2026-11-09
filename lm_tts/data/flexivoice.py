@@ -7,7 +7,9 @@ emotion label list in `meta`. Nothing is inferred from the instruction text."""
 import re
 
 DEFAULT_INSTRUCTION = "Speak the following text."
-INSTRUCTION_TEMPLATE = "Instruction: {instruction}\nText: "
+# Ends in a newline: tokenizing prefix and text apart then equals tokenizing them together (the
+# runtime tokenizes "Instruction: …\nText:\n<text>" as one string); "Text: " would not.
+INSTRUCTION_TEMPLATE = "Instruction: {instruction}\nText:\n"
 
 STYLES = (
     "neutral", "happy", "sad", "angry", "fear", "surprise", "disgust",
