@@ -1,5 +1,7 @@
 # dots.tts 风格指令 TTS：FlexiVoice 数据微调（2026-11-08）
 
+> 执行记录与当前进度见 [dots-instruct-flexivoice-20261109](../training/dots-instruct-flexivoice-20261109.md)；两者不一致时以执行记录为准。
+
 目标：在 `dots.tts-soar` 上训练"参考音色 + 风格指令"的 TTS。音色只来自参考音频，说话风格（情感、语速、音量、耳语、语气等）由自然语言指令决定。不做 voice design，也就是不支持"不给参考、靠文字描述生成音色"。
 
 做法：照 FlexiVoice（[arXiv 2601.04656](https://arxiv.org/abs/2601.04656)，ICLR 2026）的第一阶段，用 FlexiVoice-Instruct 数据做监督微调。和原文的区别：
