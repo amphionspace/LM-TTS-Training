@@ -1,0 +1,11 @@
+extends: dots-tts-20261111-flexivoice-interleave-feistel-48k-packeddit-lr5e-5.yaml
+
+# Same recipe as the 48k / lr 5e-5 packed-DiT run, on the selection-flexivoice-v2 build without the
+# KeSpeech embedded-CAF-header records, for two epochs (WSD over the whole run).
+data:
+  config: ${paths.project}/configs/data-flexivoice-nocaf-nv-dots-ref3s.yaml
+  build_id: dots-flexivoice-nocaf-selection-nv-ref3s-20261111
+
+train:
+  run_name: dots-tts-20261111-flexivoice-nocaf-interleave-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr5e-5-ep2-wsd
+  epochs: 2

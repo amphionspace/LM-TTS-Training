@@ -1,0 +1,42 @@
+extends: base.yaml
+
+# ---- FlexiVoice style instructions with cross-utterance references, plus the five NV corpora ----
+# Design: docs/design/dots-instruct-tts-20261108.md. Every text takes "Instruction: …\nText:\n"
+# (flexivoice-v1); NV rows use the default instruction. FlexiVoice binding: selection-flexivoice-v2
+# (tts-selection-supervised-tts-20261111T162703bjt-01), which drops 326,006 KeSpeech WAVs whose data
+# chunk embeds a CAF header (full-scale click at t=0; docs/training/dots-flexivoice-onset-click-investigation-20261111.md).
+# FlexiVoice features contain only the
+# published selection targets and their canonical text. Build performs no corpus filtering.
+# The NV bindings are those of data-nv-canonical-dots-ref3s.yaml (in-utterance ref3s spans).
+paths:
+  assembled_model: ${paths.project}/assets/assembled/dots-tts-soar-nv26
+
+root: ${paths.features}
+tokenizer: ${paths.assembled_model}
+evaluation: no_holdout  # The source build is partitioned into train / validation below.
+validation_fraction: 0.01  # FlexiVoice: speaker fraction; NV bindings: row fraction.
+split_seed: 42
+instructions: flexivoice-v1
+
+bindings:
+  - dataset_id: flexivoice
+    dots_manifest: datasets/flexivoice/v0.1/features/dots_vae/flexivoice-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s-20261111T164240bjt-01/manifest.json
+    metadata: flexivoice
+    reference: cross_speaker
+    text_kind: flexivoice-text-v1
+    # Selection owns text revision, subsets, duration/rate, held-out speakers and pairing.
+  - dataset_id: emilia_nv
+    dots_manifest: datasets/emilia_nv/v0.1/features/dots_vae/emilia_nv-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s-20261106T092453bjt-01/manifest.json
+    text_kind: nv-canonical-v1
+  - dataset_id: nonverbalspeech38k
+    dots_manifest: datasets/nonverbalspeech38k/v0.1/features/dots_vae/nonverbalspeech38k-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s-20261106T092453bjt-01/manifest.json
+    text_kind: nv-canonical-v1
+  - dataset_id: smiip_nv
+    dots_manifest: datasets/smiip_nv/v0.1/features/dots_vae/smiip_nv-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s-20261106T092453bjt-01/manifest.json
+    text_kind: nv-canonical-v1
+  - dataset_id: disfluencyspeech
+    dots_manifest: datasets/disfluencyspeech/v0.1/features/dots_vae/disfluencyspeech-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s-20261106T092453bjt-01/manifest.json
+    text_kind: nv-canonical-v1
+  - dataset_id: nonverbaltts
+    dots_manifest: datasets/nonverbaltts/v0.1/features/dots_vae/nonverbaltts-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s-20261106T092453bjt-01/manifest.json
+    text_kind: nv-canonical-v1
