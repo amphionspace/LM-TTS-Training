@@ -20,8 +20,7 @@ from ..assembly.common import load_prefix
 from ..embedding import AddedRowsEmbedding
 from ..lora import LoRASpec, apply_lora, lora_parameters, merge_lora
 from .modules import DiT, PatchEncoder
-
-CHUNK = 5  # One hidden state followed by the 4 latent frames of its patch.
+from .packed import CHUNK, packed_dit_mask
 
 
 class DotsLLM(nn.Module):
@@ -77,6 +76,7 @@ class DotsTTSModel(nn.Module):
             gradient_checkpointing_kwargs={"use_reentrant": False}
         )
         self.checkpointing = True
+        self.patch_encoder.encoder.checkpointing = True
 
     def adapt(self, settings):
         """Swap in the parameter-efficient layers a run trains. Exports repeat this before loading
@@ -150,42 +150,29 @@ class DotsTTSModel(nn.Module):
         return hidden[batch["predictor_positions"]]
 
     def velocity(self, hidden, clean, noisy, t, condition, patch_lengths):
-        """Predicted velocity for every noisy patch, packed (sum N, 4, D).
-
-        Per utterance the DiT sees a causal prefix [h_k, clean_k] for k = 1..N and, for each
-        patch, a generation chunk [h_k, noisy_k] that attends to itself and to the prefix chunks
-        before k. Prefix and generation chunks of patch k share rotary positions. Utterances are
-        right-padded; padded queries attend only to themselves."""
-        p, n = self.patch_size, int(patch_lengths.max())
-        valid = torch.arange(n, device=hidden.device) < patch_lengths[:, None]
+        """Denoise packed utterances with isolated prefix/history/own-chunk attention."""
+        lengths = patch_lengths.tolist()
+        p = self.patch_size
 
         def chunks(latents, projection):
-            frames = latents.new_zeros(len(patch_lengths), n, p, latents.shape[-1])
-            frames[valid] = latents.view(-1, p, latents.shape[-1])
-            values = hidden.new_zeros(len(patch_lengths), n, 1, hidden.shape[-1])
-            values[valid] = hidden[:, None]
-            return torch.cat([values, projection(frames.to(hidden.dtype))], dim=2).flatten(1, 2)
+            frames = projection(latents.to(hidden.dtype)).view(-1, p, hidden.shape[-1])
+            return torch.cat((hidden[:, None], frames), dim=1).flatten(0, 1)
 
-        sequence = torch.cat(
-            [chunks(clean, self.latent_proj), chunks(noisy, self.coordinate_proj)], dim=1
-        )
-        index = torch.arange(2 * CHUNK * n, device=hidden.device)
-        generation, local = index >= CHUNK * n, index % (CHUNK * n)
-        chunk = local // CHUNK
-        prefix_causal = ~generation[:, None] & ~generation[None] & (local[None] <= local[:, None])
-        history = generation[:, None] & ~generation[None] & (local[None] < CHUNK * chunk[:, None])
-        own = generation[:, None] & generation[None] & (chunk[None] == chunk[:, None])
-        allowed = valid[:, chunk]
-        mask = (prefix_causal | history | own)[None] & allowed[:, None, :] & allowed[:, :, None]
-        mask = mask | (
-            ~allowed[:, :, None] & torch.eye(len(index), dtype=torch.bool, device=index.device)
-        )
+        clean_chunks = chunks(clean, self.latent_proj).split([CHUNK * n for n in lengths])
+        noisy_chunks = chunks(noisy, self.coordinate_proj).split([CHUNK * n for n in lengths])
+        sequence = torch.cat([part for pair in zip(clean_chunks, noisy_chunks) for part in pair])
+        mask, positions, sample_ids = packed_dit_mask(lengths, hidden.device)
         predictor = self.velocity_field_predictor
         c = predictor.time_embedder(t) + condition
-        x = predictor.input_layer(sequence)
-        x = self._layers(predictor.blocks, x, c, mask, local.expand(len(patch_lengths), -1))
-        out = predictor.output_layer(x, c)[:, CHUNK * n :].unflatten(1, (n, CHUNK))
-        return out[:, :, 1:][valid]
+        x = predictor.input_layer(sequence[None])
+        x = self._layers(predictor.blocks, x, c, mask, positions[None], sample_ids)
+        out = predictor.output_layer(x, c, sample_ids)[0]
+        return torch.cat(
+            [
+                part[CHUNK * n :].view(n, CHUNK, -1)[:, 1:]
+                for part, n in zip(out.split([2 * CHUNK * n for n in lengths]), lengths)
+            ]
+        )
 
     def forward(self, batch):
         """Returns packed predictions and their flow-matching targets (sum N, 4, D) and EOS logits

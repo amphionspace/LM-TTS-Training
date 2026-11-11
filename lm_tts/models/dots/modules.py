@@ -8,6 +8,10 @@ import math
 import torch
 from torch import nn
 from torch.nn import functional as F
+from torch.nn.attention.flex_attention import BlockMask, flex_attention
+from torch.utils.checkpoint import checkpoint
+
+compiled_flex_attention = torch.compile(flex_attention, dynamic=True)
 
 
 def rotate_half(x):
@@ -43,7 +47,7 @@ class Attention(nn.Module):
         self.rotary = None if rotary_theta is None else RotaryEmbedding(head_dim, rotary_theta)
 
     def forward(self, x, mask, positions=None):
-        """mask: (B, L, L) bool, True where the query may attend to the key."""
+        """mask: a packed BlockMask or (B, L, L) bool, True for allowed attention."""
         b, length, _ = x.shape
         q, k, v = (
             proj(x).view(b, length, self.num_heads, -1).transpose(1, 2)
@@ -54,7 +58,10 @@ class Attention(nn.Module):
             angles = self.rotary(positions).unsqueeze(1)
             cos, sin = angles.cos(), angles.sin()
             q, k = ((t * cos + rotate_half(t) * sin).to(t.dtype) for t in (q, k))
-        out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask.unsqueeze(1))
+        if isinstance(mask, BlockMask):
+            out = compiled_flex_attention(q, k, v, block_mask=mask)
+        else:
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=mask.unsqueeze(1))
         return self.o_proj(out.transpose(1, 2).reshape(b, length, -1))
 
 
@@ -86,6 +93,7 @@ class EncoderLayer(nn.Module):
 class Encoder(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.checkpointing = False
         self.layers = nn.ModuleList(
             EncoderLayer(config["hidden_size"], config["num_heads"], config["ffn_hidden_size"])
             for _ in range(config["num_layers"])
@@ -95,7 +103,10 @@ class Encoder(nn.Module):
         length = x.shape[1]
         mask = torch.ones(length, length, dtype=torch.bool, device=x.device).tril()[None]
         for layer in self.layers:
-            x = layer(x, mask)
+            if self.checkpointing and self.training:
+                x = checkpoint(layer, x, mask, use_reentrant=False)
+            else:
+                x = layer(x, mask)
         return x
 
 
@@ -118,8 +129,12 @@ class PatchEncoder(nn.Module):
         return self.out_proj(x.reshape(b, length // self.merge, self.merge * width))
 
 
-def modulate(x, shift, scale):
-    return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
+def broadcast_condition(value, sample_ids):
+    return value.unsqueeze(1) if sample_ids is None else value[sample_ids][None]
+
+
+def modulate(x, shift, scale, sample_ids=None):
+    return x * (1 + broadcast_condition(scale, sample_ids)) + broadcast_condition(shift, sample_ids)
 
 
 class TimestepEmbedder(nn.Module):
@@ -155,14 +170,16 @@ class DiTBlock(nn.Module):
         self.ffn = Mlp(width, config["ffn_hidden_size"], nn.GELU(approximate="tanh"))
         self.adaLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(width, 6 * width))
 
-    def forward(self, x, condition, mask, positions):
+    def forward(self, x, condition, mask, positions, sample_ids=None):
         shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = self.adaLN_modulation(condition).chunk(
             6, dim=1
         )
-        x = x + gate_a.unsqueeze(1) * self.attn(
-            modulate(self.norm1(x), shift_a, scale_a), mask, positions
+        x = x + broadcast_condition(gate_a, sample_ids) * self.attn(
+            modulate(self.norm1(x), shift_a, scale_a, sample_ids), mask, positions
         )
-        return x + gate_f.unsqueeze(1) * self.ffn(modulate(self.norm2(x), shift_f, scale_f))
+        return x + broadcast_condition(gate_f, sample_ids) * self.ffn(
+            modulate(self.norm2(x), shift_f, scale_f, sample_ids)
+        )
 
 
 class FinalLayer(nn.Module):
@@ -172,9 +189,9 @@ class FinalLayer(nn.Module):
         self.norm = nn.LayerNorm(hidden_size, elementwise_affine=False)
         self.linear = nn.Linear(hidden_size, output_size)
 
-    def forward(self, x, condition):
+    def forward(self, x, condition, sample_ids=None):
         shift, scale = self.adaLN_modulation(condition).chunk(2, dim=1)
-        return self.linear(modulate(self.norm(x), shift, scale))
+        return self.linear(modulate(self.norm(x), shift, scale, sample_ids))
 
 
 class DiT(nn.Module):
