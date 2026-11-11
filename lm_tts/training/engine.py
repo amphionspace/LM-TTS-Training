@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+import os
 import random
+import sys
 import time
 from pathlib import Path
 
@@ -403,6 +405,15 @@ def run(config, resume=None, eval_only=False):
             run_validation(task, model, val_data, device, output, progress["step"], writer)
         if rank == 0:
             (output / "completion.json").write_text(json.dumps(progress, indent=2))
+    except BaseException:
+        # A failed rank must let torchrun terminate peers, rather than wait for
+        # collectives in destroy_process_group while peers are still in forward.
+        import traceback
+
+        traceback.print_exc()
+        sys.stderr.flush()
+        sys.stdout.flush()
+        os._exit(1)
     finally:
         stop_gpu_logging(gpu_monitor)
         # Stop spawned prefetch workers before tearing down the process group.
