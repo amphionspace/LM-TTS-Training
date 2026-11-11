@@ -1,0 +1,15 @@
+extends: dots-tts-20261110-flexivoice-allinterleave-instrdrop0.yaml
+
+# Packed DiT; patch encoder and LLM activation checkpointing remain enabled.
+train:
+  run_name: dots-tts-20261111-flexivoice-interleave-instrdrop0-feistel-32k-packeddit-bf16-8gpu-lr1e-5-ep1-wsd
+  sampler: feistel_uniform_token_budget_v3
+  interleave_fraction: 1.0
+  instruction_dropout: 0.0
+  max_batch_frames: 20000
+  max_batch_tokens: 32000
+  accumulation: 1
+  first_check_step: 5
+  log_every: 1
+  save_every: 25
+  eval_every: 25

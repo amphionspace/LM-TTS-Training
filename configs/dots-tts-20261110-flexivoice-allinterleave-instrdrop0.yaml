@@ -1,0 +1,8 @@
+extends: dots-tts-20261109-soar-nv26-flexivoice-crossref-instr-frozenhead-bf16-8gpu-lr1e-5-ep1-wsd.yaml
+
+# Independent run from the same assembled release and published build.
+# Keep the full instruction prefix before the interleaved body on every sample.
+train:
+  run_name: dots-tts-20261110-flexivoice-allinterleave-instrdrop0-frozenhead-bf16-8gpu-lr1e-5-ep1-wsd
+  interleave_fraction: 1.0
+  instruction_dropout: 0.0

@@ -43,11 +43,13 @@ def official_interleave(text, patches):
         if a < len(audio):
             full.append(audio[a])
             a += 1
+    if not placed:
+        full.append(TEXT_END)
     return full + [EOS]
 
 
-def test_interleave_matches_release_whenever_text_fits():
-    for text_length, patches in [(1, 1), (3, 3), (2, 5), (4, 9)]:
+def test_interleave_matches_release_including_text_longer_than_audio():
+    for text_length, patches in [(1, 1), (3, 3), (2, 5), (4, 9), (5, 2), (3, 2)]:
         text = list(range(20, 20 + text_length))
         assert Layout().sequence(text, patches, True) == official_interleave(text, patches)
 
@@ -302,3 +304,30 @@ def test_duplicates_match_text_and_length_not_tags_or_punctuation():
     # A lone tag leaves no text to compare.
     seen.setdefault(utterance_key("[Cough]"), []).append(1.41)
     assert not is_duplicate(seen, "[Breathing]", 1.41)
+
+
+def test_checkpointing_recomputes_patch_encoder_and_preserves_gradients():
+    import copy
+
+    plain = tiny_model().train()
+    checked = copy.deepcopy(plain)
+    checked.enable_activation_checkpointing()
+    calls = []
+    hook = checked.patch_encoder.encoder.layers[0].register_forward_pre_hook(
+        lambda *_: calls.append(1)
+    )
+    batch = batch_of([row(2, 1), row(5, 2)])
+    results = []
+    for model in (plain, checked):
+        torch.manual_seed(123)
+        output = model(batch)
+        loss = output["velocity"].square().mean() + output["eos_logits"].square().mean()
+        loss.backward()
+        results.append(output)
+    hook.remove()
+    assert len(calls) >= 2
+    for key in ("velocity", "eos_logits"):
+        torch.testing.assert_close(results[0][key], results[1][key])
+    for (_, a), (_, b) in zip(plain.named_parameters(), checked.named_parameters(), strict=True):
+        if a.grad is not None:
+            torch.testing.assert_close(a.grad, b.grad, atol=1e-5, rtol=1e-4)

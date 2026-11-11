@@ -1,0 +1,14 @@
+extends: dots-tts-20261110-flexivoice-allinterleave-instrdrop0.yaml
+
+# Restart from the assembled release; globally mix all sources from the first batch.
+train:
+  run_name: dots-tts-20261110-flexivoice-interleave-instrdrop0-feistel-batch8x-bf16-8gpu-lr1e-5-ep1-wsd
+  sampler: feistel_uniform_token_budget_v3
+  interleave_fraction: 1.0
+  instruction_dropout: 0.0
+  max_batch_frames: 2400
+  max_batch_tokens: 4000
+  accumulation: 2
+  # Preserve approximately the earlier sample cadence with 8x larger updates.
+  save_every: 125
+  eval_every: 125

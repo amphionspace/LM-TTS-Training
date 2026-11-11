@@ -1,8 +1,7 @@
-"""Deterministic sample-level holdout over an immutable training build."""
+"""Deterministic holdout: whole speakers for cross-reference bindings, rows otherwise."""
 
 import hashlib
 import json
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -20,7 +19,11 @@ def split_build(build_path, fraction=0.001, seed=42):
         "source_build_sha256": file_hash(build_path),
         "fraction": fraction,
         "seed": seed,
-        "method": "fixed_snapshot_uniform_rows_per_dataset_v1",
+        "method": (
+            "cross_reference_speakers_otherwise_uniform_rows_v2"
+            if any("reference_index" in b for b in source["bindings"])
+            else "fixed_snapshot_uniform_rows_per_dataset_v1"
+        ),
     }
     manifests = {}
     for role, policy in (("train", "train_isolated"), ("validation", "heldout")):
@@ -45,7 +48,21 @@ def split_build(build_path, fraction=0.001, seed=42):
             hashlib.sha256(binding["dataset_id"].encode()).digest()[:8], "little"
         )
         rng = np.random.default_rng(np.random.SeedSequence([seed, dataset_seed]))
-        chosen = np.sort(rng.choice(count, size=heldout, replace=False))
+        references = None
+        if "reference_index" in binding:
+            with np.load(build_path.parent / binding["reference_index"]) as arrays:
+                references = {k: arrays[k] for k in arrays.files}
+            positions = np.searchsorted(references["rows"], original["row"])
+            groups = references["group"][positions]
+            speakers = np.unique(groups)
+            n = max(1, round(len(speakers) * fraction))
+            if n >= len(speakers):
+                raise ValueError(f"Dataset {binding['dataset_id']} needs at least two speakers")
+            heldout_speakers = rng.choice(speakers, size=n, replace=False)
+            chosen = np.flatnonzero(np.isin(groups, heldout_speakers))
+            heldout = len(chosen)
+        else:
+            chosen = np.sort(rng.choice(count, size=heldout, replace=False))
         outputs, cursors = {}, {"train": 0, "validation": 0}
         name = f"sampling-{binding['binding_slot']:03d}.npy"
         for role, length in (("train", count - heldout), ("validation", heldout)):
@@ -65,15 +82,22 @@ def split_build(build_path, fraction=0.001, seed=42):
                 cursors[role] += len(values)
         for role in outputs:
             outputs[role].flush()
-            # Cross-speaker reference indices are keyed by feature row, so both roles share them.
-            if "reference_index" in binding:
-                shutil.copy2(
-                    build_path.parent / binding["reference_index"],
-                    build_path.parent / role / binding["reference_index"],
-                )
+            extra = {}
+            if references is not None:
+                selected = np.isin(references["group"], heldout_speakers)
+                if role == "train":
+                    selected = ~selected
+                ref = {k: references[k][selected] for k in ("rows", "text", "long", "style")}
+                _, group = np.unique(references["group"][selected], return_inverse=True)
+                order = np.argsort(group, kind="stable")
+                starts = np.searchsorted(group[order], np.arange(group.max() + 2))
+                path = build_path.parent / role / binding["reference_index"]
+                np.savez(path, **ref, group=group.astype(np.int32), order=order, starts=starts)
+                extra = {"reference_sha256": file_hash(path), "speakers": len(starts) - 1}
             manifests[role]["bindings"].append(
                 {
                     **binding,
+                    **extra,
                     "sampling_index": name,
                     "sampling_sha256": file_hash(build_path.parent / role / name),
                     "ready_rows": cursors[role],

@@ -1,7 +1,12 @@
+import json
+
+import lance
 import numpy as np
+import pyarrow as pa
 import pytest
 import torch
 
+from lm_tts.artifacts import digest, file_hash
 from lm_tts.data.dots import (
     REFERENCE_MIX,
     DotsCollator,
@@ -16,6 +21,7 @@ from lm_tts.data.flexivoice import (
     speaker_key,
     style_class,
 )
+from lm_tts.data.split import split_build
 
 
 class FakeLayout:
@@ -30,19 +36,21 @@ class FakeLayout:
         return Layout.sequence(self, text, patches, interleave, prefix)
 
 
-def test_prefix_sits_between_the_text_prompt_and_the_text_and_never_interleaves():
+def test_prefix_precedes_body_in_both_layouts():
     layout = FakeLayout()
     assert layout.sequence([20, 21], 2, False, [30, 31]) == [1, 30, 31, 20, 21, 2, 7, 9, 9, 8, 0]
     assert layout.sequence([20, 21], 2, False) == [1, 20, 21, 2, 7, 9, 9, 8, 0]
-    with pytest.raises(ValueError):
-        layout.sequence([20], 2, True, [30])
+    assert layout.sequence([20], 2, True, [30]) == [3, 30, 20, 9, 6, 9, 8, 0]
+    assert layout.sequence([20, 21, 22], 1, True, [30]) == [3, 30, 20, 9, 21, 8, 22, 6, 0]
 
 
-def test_collator_counts_spans_and_predictors_with_a_prefix():
+@pytest.mark.parametrize("interleave", [False, True])
+@pytest.mark.parametrize("text", [[20, 21], [20, 21, 22, 23, 24]])
+def test_collator_counts_spans_and_predictors_with_a_prefix(interleave, text):
     row = {
-        "text_ids": [20, 21],
+        "text_ids": text,
         "prefix": [30, 31, 32],
-        "interleave": False,
+        "interleave": interleave,
         "vae_mean": torch.zeros(8, 128),
         "vae_logstd": torch.zeros(8, 128),
         "reference": (0, 0),
@@ -51,7 +59,8 @@ def test_collator_counts_spans_and_predictors_with_a_prefix():
     }
     batch = DotsCollator(FakeLayout())([row])
     assert len(batch["span_positions"]) == len(batch["predictor_positions"]) == 2
-    assert batch["input_ids"][:6].tolist() == [1, 30, 31, 32, 20, 21]
+    expected = [3, 30, 31, 32, 20, 9] if interleave else [1, 30, 31, 32, 20, 21]
+    assert batch["input_ids"][:6].tolist() == expected
     assert batch["reference_intervals"].tolist() == [[0, 0]]
 
 
@@ -148,3 +157,209 @@ def test_unlabelled_targets_draw_any_reference_of_their_speaker():
     ds = fake_dataset([-1, -1, -1, -1], [1, 2, 3, 4], [True, True, False, True], [0, 0, 0, 1])
     draws = {ds.draw_reference(0, 0) for _ in range(2000)}
     assert draws == {1}  # row 2 is too short, row 3 is another speaker
+
+
+def test_metadata_comes_only_from_the_pinned_selection_branch(tmp_path):
+    from lm_tts.data.dots import flexivoice_rows
+
+    release = tmp_path / "datasets/flexivoice/v0.1"
+    release.mkdir(parents=True)
+    table = lance.write_dataset(
+        pa.table(
+            {
+                "sample_id": ["kept", "excluded"],
+                "source_config": ["ears", "ears"],
+                "sample_rate": [48000, 48000],
+                "metadata_json": [
+                    json.dumps(
+                        {
+                            "instruction": "happy",
+                            "upstream": {
+                                "wav_path": f"audio/instruction_data/ears/p00{i}/sentences_regular.wav"
+                            },
+                        }
+                    )
+                    for i in (1, 2)
+                ],
+            }
+        ),
+        release / "samples.lance",
+    )
+    (release / "manifest.json").write_text("{}")
+    branch = table.create_branch("selected", table.version)
+    branch.add_columns(pa.table({"selection_reason": pa.array([0, 7001], pa.uint16())}))
+    selection_path = tmp_path / "selection.json"
+    selection_path.write_text(
+        json.dumps(
+            {
+                "status": "complete",
+                "outputs": [
+                    {
+                        "dataset_id": "flexivoice",
+                        "branch": "selected",
+                        "lance_version": branch.version,
+                        "selected_rows": 1,
+                    }
+                ],
+            }
+        )
+    )
+    manifest = {
+        "rows": 1,
+        "inputs": [
+            {
+                "artifact_kind": "base",
+                "dataset_id": "flexivoice",
+                "release_id": "v0.1",
+                "table_path": "samples.lance",
+                "base_version": table.version,
+                "branch": "selected",
+                "lance_version": branch.version,
+                "manifest_sha256": file_hash(release / "manifest.json"),
+            }
+        ],
+        "selection": {
+            "mode": "selection_branch",
+            "selection_id": "selected",
+            "manifest_path": "selection.json",
+            "manifest_sha256": file_hash(selection_path),
+        },
+    }
+    result = flexivoice_rows(tmp_path, manifest)
+    assert set(result) == {"kept"}
+    assert result["kept"][1] == "ears:p001"
+    manifest["inputs"][0]["lance_version"] += 1
+    with pytest.raises(ValueError, match="differs"):
+        flexivoice_rows(tmp_path, manifest)
+
+
+def test_build_and_split_use_selected_text_and_isolate_speakers(tmp_path, monkeypatch):
+    from lm_tts.data import dots
+
+    class Tokenizer:
+        eos_token_id = 0
+
+        def __call__(self, texts, **kwargs):
+            def encode(text):
+                return [ord(c) for c in text]
+
+            return {
+                "input_ids": encode(texts) if isinstance(texts, str) else [encode(t) for t in texts]
+            }
+
+        def get_added_vocab(self):
+            return {"[Laughter]": 1000, "[Breathing]": 1001}
+
+        def convert_tokens_to_ids(self, token):
+            return list(dots.SPECIAL_TOKENS.values()).index(token) + 1
+
+    # Selected instruction variants share a closed pool of different-text long recordings.
+    records, metadata = [], {}
+    rule = "dots-reference-v2:min-3s-on-patches"
+    for speaker in range(4):
+        for variant, patches in enumerate((25, 25, 30)):
+            target = f"{speaker}-{variant}"
+            start, end = dots.reference_interval(target, patches, rule)
+            records.append(
+                {
+                    "target_id": target,
+                    "status": "ok",
+                    "text": "short[Laughter][Breathing]" if variant < 2 else "long",
+                    "text_kind": "raw",
+                    "language": "en",
+                    "num_latent_frames": patches * 4,
+                    "processed_frames": patches * 7680,
+                    "reference_start_patch": start,
+                    "reference_end_patch": end,
+                    "vae_mean": np.zeros((patches * 4, 128), dtype=np.float32).tolist(),
+                    "vae_logstd": np.zeros((patches * 4, 128), dtype=np.float32).tolist(),
+                    "xvector": [float(speaker + 1)] * 512,
+                }
+            )
+            metadata[target] = ("ears", f"ears:{speaker}", -1, f"instruction {variant}", 48000)
+    table = pa.Table.from_pylist(records)
+    for field in ("vae_mean", "vae_logstd"):
+        table = table.set_column(
+            table.schema.get_field_index(field),
+            field,
+            pa.array([r[field] for r in records], type=pa.list_(pa.list_(pa.float32(), 128))),
+        )
+    table = table.set_column(
+        table.schema.get_field_index("xvector"),
+        "xvector",
+        pa.array([r["xvector"] for r in records], type=pa.list_(pa.float32(), 512)),
+    )
+    source = lance.write_dataset(table, tmp_path / "features.lance")
+    profile = {"reference_rule": rule}
+    manifest = {
+        "dataset_id": "flexivoice",
+        "release_id": "v0.1",
+        "rows": len(records),
+        "profile": profile,
+        "profile_id": digest(profile),
+    }
+    source_path = tmp_path / "feature-manifest.json"
+    source_path.write_text(json.dumps(manifest))
+    reference = {
+        "table_path": str(tmp_path / "features.lance"),
+        "lance_version": source.version,
+        "manifest_path": str(source_path),
+        "manifest_sha256": file_hash(source_path),
+    }
+    monkeypatch.setattr(dots, "feature_reference", lambda *args: (manifest, reference, source))
+    monkeypatch.setattr(dots, "flexivoice_rows", lambda *args: metadata)
+    recipe = {
+        "root": str(tmp_path),
+        "evaluation": "no_holdout",
+        "instructions": "flexivoice-v1",
+        "bindings": [
+            {
+                "dataset_id": "flexivoice",
+                "dots_manifest": "unused",
+                "metadata": "flexivoice",
+                "reference": "cross_speaker",
+            }
+        ],
+    }
+    tokenizer = Tokenizer()
+    output = tmp_path / "build"
+    dots.bind_dots(recipe, output, {}, tokenizer)
+    ds = DotsFeatureDataset(output / "manifest.json", dots.Layout(tokenizer))
+    assert len(ds) == 12
+    for i in range(len(ds)):
+        row = ds[i]
+        assert row["reference"] == (0, 0)
+        assert row["text_ids"] == [
+            ord(c) for c in ("short[Laughter][Breathing]" if i % 3 < 2 else "long")
+        ]
+        assert row["xvector"][0] == i // 3 + 1
+    split_build(ds.path, fraction=0.25, seed=42)
+    speakers, pools = {}, {}
+    for role in ("train", "validation"):
+        split = DotsFeatureDataset(output / role / "manifest.json", dots.Layout(tokenizer))
+        speakers[role] = {int(split[i]["id"].split("-")[0]) for i in range(len(split))}
+        pools[role] = set(split.references[0]["rows"].tolist())
+        assert len(split) == len(speakers[role]) * 3
+        for i in range(len(split)):
+            row = split[i]
+            assert row["xvector"][0] == int(row["id"].split("-")[0]) + 1
+    assert speakers["train"].isdisjoint(speakers["validation"])
+    assert pools["train"].isdisjoint(pools["validation"])
+    assert pools["train"] | pools["validation"] == set(range(12))
+    from transformers import AutoTokenizer
+
+    from scripts.acp.after_features import validate_build
+
+    monkeypatch.setattr(AutoTokenizer, "from_pretrained", lambda *a, **kw: tokenizer)
+    report = validate_build(
+        {
+            "model": {"assembled_model": str(tmp_path)},
+            "data": {
+                "build": str(output / "train/manifest.json"),
+                "val_build": str(output / "validation/manifest.json"),
+            },
+            "train": {"max_batch_frames": 600, "max_batch_tokens": 1000},
+        }
+    )
+    assert report["train"][0]["rows"] == 9
+    assert report["validation"][0]["rows"] == 3

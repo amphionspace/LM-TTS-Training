@@ -2,9 +2,8 @@ extends: base.yaml
 
 # ---- FlexiVoice style instructions with cross-utterance references, plus the five NV corpora ----
 # Design: docs/design/dots-instruct-tts-20261108.md. Every text takes "Instruction: …\nText:\n"
-# (flexivoice-v1); NV rows use the default instruction. FlexiVoice features cover every base row
-# (all_samples); the binding keeps the subsets whose upstream path names a speaker, 1-30 s, >= 16 kHz,
-# and only rows with another same-speaker utterance (other text, >= 3 s) to serve as the reference.
+# (flexivoice-v1); NV rows use the default instruction. FlexiVoice features contain only the
+# published selection targets and their canonical text. Build performs no corpus filtering.
 # The NV bindings are those of data-nv-canonical-dots-ref3s.yaml (in-utterance ref3s spans).
 paths:
   assembled_model: ${paths.project}/assets/assembled/dots-tts-soar-nv26
@@ -12,88 +11,17 @@ paths:
 root: ${paths.features}
 tokenizer: ${paths.assembled_model}
 evaluation: no_holdout  # The source build is partitioned into train / validation below.
-validation_fraction: 0.01
+validation_fraction: 0.01  # FlexiVoice: speaker fraction; NV bindings: row fraction.
 split_seed: 42
 instructions: flexivoice-v1
 
 bindings:
   - dataset_id: flexivoice
-    dots_manifest: datasets/flexivoice/v0.1/features/dots_vae/flexivoice-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s-20261109T160744bjt-01/manifest.json
+    dots_manifest: datasets/flexivoice/v0.1/features/dots_vae/flexivoice-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s-20261110T093409bjt-01/manifest.json
     metadata: flexivoice
     reference: cross_speaker
-    # emilia_* and nvspeech are left out (nvspeech is emilia_nv, bound below); emotion keeps only
-    # corpora with a speaker in the path (MSP-PODCAST, MELD, m3ed drop as no_speaker).
-    source_configs: [WHSP, childmandarin, debatts, ears, emotion, expresso, genshin, kespeech, l2, starrail, voxceleb]
-    duration_seconds: {min: 1.0, max: 30.0}
-    min_sample_rate: 16000
-    # Evaluation speakers (seeded pick, docs/design §5.2): game characters in all four languages.
-    holdout_speakers:
-      - "genshin:ZH:早柚"
-      - "genshin:EN:早柚"
-      - "genshin:JA:早柚"
-      - "genshin:KO:早柚"
-      - "genshin:ZH:莫娜"
-      - "genshin:EN:莫娜"
-      - "genshin:JA:莫娜"
-      - "genshin:KO:莫娜"
-      - "genshin:ZH:莱欧斯利"
-      - "genshin:EN:莱欧斯利"
-      - "genshin:JA:莱欧斯利"
-      - "genshin:KO:莱欧斯利"
-      - "genshin:ZH:流浪者"
-      - "genshin:EN:流浪者"
-      - "genshin:JA:流浪者"
-      - "genshin:KO:流浪者"
-      - "genshin:ZH:珐露珊"
-      - "genshin:EN:珐露珊"
-      - "genshin:JA:珐露珊"
-      - "genshin:KO:珐露珊"
-      - "genshin:ZH:可莉"
-      - "genshin:EN:可莉"
-      - "genshin:JA:可莉"
-      - "genshin:KO:可莉"
-      - "genshin:ZH:克洛琳德"
-      - "genshin:EN:克洛琳德"
-      - "genshin:JA:克洛琳德"
-      - "genshin:KO:克洛琳德"
-      - "genshin:ZH:行秋"
-      - "genshin:EN:行秋"
-      - "genshin:JA:行秋"
-      - "genshin:KO:行秋"
-      - "starrail:ZH:玲可"
-      - "starrail:EN:玲可"
-      - "starrail:JA:玲可"
-      - "starrail:KO:玲可"
-      - "starrail:ZH:真理医生"
-      - "starrail:EN:真理医生"
-      - "starrail:JA:真理医生"
-      - "starrail:KO:真理医生"
-      - "starrail:ZH:银枝"
-      - "starrail:EN:银枝"
-      - "starrail:JA:银枝"
-      - "starrail:KO:银枝"
-      - "starrail:ZH:帕姆"
-      - "starrail:EN:帕姆"
-      - "starrail:JA:帕姆"
-      - "starrail:KO:帕姆"
-      - "starrail:ZH:阮•梅"
-      - "starrail:EN:阮•梅"
-      - "starrail:JA:阮•梅"
-      - "starrail:KO:阮•梅"
-      - "starrail:ZH:驭空"
-      - "starrail:EN:驭空"
-      - "starrail:JA:驭空"
-      - "starrail:KO:驭空"
-      - "ears:p007"
-      - "ears:p106"
-      - "ears:p096"
-      - "ears:p003"
-      - "ears:p066"
-      - "ears:p013"
-      - "ears:p088"
-      - "RAVDESS:Actor_12"
-      - "RAVDESS:Actor_17"
-      - "RAVDESS:Actor_10"
+    text_kind: flexivoice-text-v1
+    # Selection owns text revision, subsets, duration/rate, held-out speakers and pairing.
   - dataset_id: emilia_nv
     dots_manifest: datasets/emilia_nv/v0.1/features/dots_vae/emilia_nv-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-ref3s-20261106T092453bjt-01/manifest.json
     text_kind: nv-canonical-v1

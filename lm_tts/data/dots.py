@@ -62,10 +62,10 @@ class Layout:
     the position whose next token is a span predicts that patch.
 
     basic:      [文本] prefix text [文本对应语音] <start> S*N <end> <eos>
-    interleave: [流式语音合成] t1 S t2 S ... tn S <text_end> S ... S <end> <eos>
+    interleave: [流式语音合成] prefix t1 S t2 S ... tn S <text_end> S ... S <end> <eos>
 
     `prefix` is empty unless the build carries instructions ("Instruction: …\\nText:\\n", see
-    flexivoice.py); interleaved samples never take one.
+    flexivoice.py); it precedes the body in both layouts.
     """
 
     def __init__(self, tokenizer):
@@ -93,13 +93,22 @@ class Layout:
                 end,
                 self.eos,
             ]
-        if prefix:
-            raise ValueError("Interleaved samples carry no instruction prefix")
-        sequence = list(self.prompts["interleave"])
-        for token in text:
-            sequence += [token, span]
-        sequence += [self.ids["text_end"], *[span] * (patches - len(text)), end, self.eos]
-        return sequence
+        sequence = [*self.prompts["interleave"], *prefix]
+        # Match the release's interleaving loop even when text outlasts audio.
+        text_end_placed = False
+        for i in range(max(len(text), patches + 1)):
+            if i < len(text):
+                sequence.append(text[i])
+            elif not text_end_placed:
+                sequence.append(self.ids["text_end"])
+                text_end_placed = True
+            if i < patches:
+                sequence.append(span)
+            elif i == patches:
+                sequence.append(end)
+        if not text_end_placed:
+            sequence.append(self.ids["text_end"])
+        return [*sequence, self.eos]
 
     def to_dict(self):
         return {"ids": self.ids, "prompts": self.prompts, "eos": self.eos}
@@ -163,21 +172,37 @@ def hours_subset(targets, durations, max_hours):
     return np.sort(np.asarray(order[: int(np.searchsorted(total, max_hours, side="right"))]))
 
 
-def flexivoice_rows(root, manifest, configs):
+def flexivoice_rows(root, manifest):
     """sample_id -> (source_config, speaker_key, style_id, instruction, native sample rate) for the
-    base rows of the listed source configs, read from the base snapshot the features pinned."""
+    selected rows, read from the immutable selection branch the features pinned."""
     from .flexivoice import speaker_key, style_class
 
     (base,) = [i for i in manifest["inputs"] if i.get("artifact_kind") == "base"]
     release = Path(root) / "datasets" / base["dataset_id"] / base["release_id"]
     if file_hash(release / "manifest.json") != base["manifest_sha256"]:
         raise ValueError("Base manifest changed since the features were extracted")
-    table = lance.dataset(release / base["table_path"], version=base["lance_version"])
-    quoted = ", ".join("'" + c.replace("'", "''") + "'" for c in configs)
+    selection = manifest.get("selection", {})
+    if selection.get("mode") != "selection_branch" or base.get("branch") != selection.get(
+        "selection_id"
+    ):
+        raise ValueError("FlexiVoice features must bind a published selection branch")
+    selection_path = Path(root) / selection["manifest_path"]
+    if file_hash(selection_path) != selection["manifest_sha256"]:
+        raise ValueError("Selection manifest changed")
+    selected = read_complete(selection_path)
+    (output,) = [o for o in selected["outputs"] if o["dataset_id"] == base["dataset_id"]]
+    if (output["branch"], output["lance_version"], output["selected_rows"]) != (
+        base["branch"],
+        base["lance_version"],
+        manifest["rows"],
+    ):
+        raise ValueError("Feature input differs from its selection output")
+    table = lance.dataset(release / base["table_path"], version=base["base_version"])
+    table = table.checkout_version((base["branch"], base["lance_version"]))
     rows = {}
     for batch in table.scanner(
         columns=["sample_id", "source_config", "metadata_json", "sample_rate"],
-        filter=f"source_config IN ({quoted})",
+        filter="selection_reason = 0",
         batch_size=65536,
     ).to_batches():
         d = batch.to_pydict()
@@ -232,31 +257,20 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
             "exclude_list",
             "metadata",
             "reference",
-            "source_configs",
-            "duration_seconds",
-            "min_sample_rate",
-            "holdout_speakers",
         }
         for b in bindings
     ):
         raise ValueError(
             "dots bindings take dataset_id, dots_manifest and optionally text_kind, max_hours,"
-            " dedup_against, exclude_list, metadata, reference, source_configs, duration_seconds,"
-            " min_sample_rate, holdout_speakers"
+            " dedup_against, exclude_list, metadata, reference"
         )
     for b in bindings:
         if b.get("reference", "self") not in ("self", "cross_speaker"):
             raise ValueError("binding reference must be self or cross_speaker")
         if b.get("metadata") not in (None, "flexivoice"):
             raise ValueError("binding metadata must be flexivoice when given")
-        if (b.get("reference") == "cross_speaker" or "source_configs" in b) and not b.get(
-            "metadata"
-        ):
-            raise ValueError(
-                "cross_speaker references and source_configs need metadata: flexivoice"
-            )
-        if b.get("metadata") and "source_configs" not in b:
-            raise ValueError("metadata: flexivoice bindings must list their source_configs")
+        if b.get("reference") == "cross_speaker" and not b.get("metadata"):
+            raise ValueError("cross_speaker references need metadata: flexivoice")
         # References are drawn among the final ready rows; later removals could orphan a target.
         if b.get("reference") == "cross_speaker" and {
             "max_hours",
@@ -315,10 +329,7 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
         cross = configured.get("reference", "self") == "cross_speaker"
         meta_rows = None
         if configured.get("metadata") == "flexivoice":
-            meta_rows = flexivoice_rows(root, manifest, configured["source_configs"])
-        bounds = configured.get("duration_seconds", {})
-        min_rate = configured.get("min_sample_rate", 0)
-        holdout = set(configured.get("holdout_speakers", []))
+            meta_rows = flexivoice_rows(root, manifest)
         fields = [("text_ids", pa.list_(pa.int32())), ("num_text_tokens", pa.int32())]
         if meta_rows is not None:
             fields.append(("instruction_ids", pa.list_(pa.int32())))
@@ -376,12 +387,6 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                     if row["status"] == "ok":
                         if text_kind and row["text_kind"] != text_kind:
                             raise ValueError(f"Row text_kind {row['text_kind']!r}: {dataset}")
-                        # A tag the tokenizer does not hold would be read aloud as subwords.
-                        unknown = set(TAG.findall(row["text"])) - tags
-                        if unknown:
-                            raise ValueError(
-                                f"Tags outside the tokenizer {sorted(unknown)}: {dataset}"
-                            )
                     reason = (
                         "status"
                         if row["status"] != "ok"
@@ -392,22 +397,20 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                         else None
                     )
                     seconds = row["processed_frames"] / 48000
-                    if reason is None and meta_rows is not None:
-                        reason = (
-                            "source_config"
-                            if meta is None
-                            else "sample_rate"
-                            if meta[4] < min_rate
-                            else "duration"
-                            if not bounds.get("min", 0) <= seconds <= bounds.get("max", np.inf)
-                            else "no_speaker"
-                            if cross and meta[1] is None
-                            else "held_out"
-                            if meta[1] in holdout
-                            else None
+                    if meta_rows is not None and (meta is None or (cross and meta[1] is None)):
+                        raise ValueError(
+                            "Feature row is absent from the selection or lacks a speaker"
                         )
                     if reason is None and not cross and row["reference_start_patch"] is None:
                         reason = "no_reference"
+                    if reason is None:
+                        # Only selected targets/references enter training. Excluded corpora may
+                        # have unrelated annotation vocabularies and must not block this build.
+                        unknown = set(TAG.findall(row["text"])) - tags
+                        if unknown:
+                            raise ValueError(
+                                f"Tags outside the tokenizer {sorted(unknown)}: {dataset}"
+                            )
                     published = row["reference_start_patch"], row["reference_end_patch"]
                     if row["status"] == "ok" and reference_interval(
                         row["target_id"], frames // PATCH_SIZE, rule
@@ -482,15 +485,15 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
             raise ValueError(f"dots build coverage changed or empty: {dataset}")
         kept = np.arange(ready)
         if cross:
+            # A row can be a valid reference even when it has no reference of its own.
+            reference_rows = np.array(index["row"][:ready], dtype=np.int64)
             speaker_ids = np.asarray(speaker_ids, dtype=np.int64)
             text_keys = np.asarray(text_keys, dtype=np.uint64)
             ref_seconds = np.asarray(ref_seconds, dtype=np.float32)
             styles = np.asarray(styles, dtype=np.int8)
             paired = pairable(speaker_ids, text_keys, ref_seconds >= CROSS_REFERENCE_SECONDS)
-            excluded["no_pair"] += int((~paired).sum())
-            kept = kept[paired]
-            if not len(kept):
-                raise ValueError(f"No row of a cross_speaker binding has a reference: {dataset}")
+            if not paired.all():
+                raise ValueError(f"Selection contains targets without usable references: {dataset}")
         if audio_threshold is not None:
             prints = np.stack(prints).astype(np.float16)
             seconds = index["duration"][:ready].astype(np.float32)
@@ -513,7 +516,6 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
             ready = len(kept)
         if audio_threshold is not None:
             fingerprints[dataset] = (prints[kept], index["duration"][:ready].astype(np.float32))
-        feature_rows = np.array(index["row"][:ready], dtype=np.int64)  # increasing table rows
         index.flush()
         index = None
         extra = {}
@@ -521,19 +523,19 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
             # Sidecar keyed by feature-table row, so the train / validation split (which renumbers
             # the sampling index) leaves it valid: the trainer draws each sample's reference among
             # same-speaker rows with other text and >= 3 s (CROSS_REFERENCE_SECONDS).
-            _, group = np.unique(speaker_ids[kept], return_inverse=True)
+            _, group = np.unique(speaker_ids, return_inverse=True)
             order = np.argsort(group, kind="stable")
             starts = np.searchsorted(group[order], np.arange(group.max() + 2))
             reference_path = output / f"references-{slot:03d}.npz"
             np.savez(
                 reference_path,
-                rows=feature_rows,
+                rows=reference_rows,
                 group=group.astype(np.int32),
                 order=order.astype(np.int64),
                 starts=starts.astype(np.int64),
-                text=text_keys[kept],
-                long=ref_seconds[kept] >= CROSS_REFERENCE_SECONDS,
-                style=styles[kept],
+                text=text_keys,
+                long=ref_seconds >= CROSS_REFERENCE_SECONDS,
+                style=styles,
             )
             extra = {
                 "reference": "cross_speaker",
@@ -756,13 +758,11 @@ class DotsFeatureDataset:
                     prefix = rows["instruction_ids"][i].as_py()
                 digest_ = hashlib.sha256(f"interleave-v1:{target}".encode()).digest()
                 chosen = int.from_bytes(digest_[:8], "little") < self.interleave_fraction * 2**64
-                # Interleaving needs every text token placed before the speech runs out, and an
-                # instruction rides only in the basic layout.
-                interleave = chosen and len(text) <= patches and prefix == self.default_prefix
+                interleave = chosen
                 result[position] = {
                     "id": target,
                     "text_ids": text,
-                    "prefix": [] if interleave else prefix,
+                    "prefix": prefix,
                     "interleave": interleave,
                     "vae_mean": means[i],
                     "vae_logstd": log_stds[i],

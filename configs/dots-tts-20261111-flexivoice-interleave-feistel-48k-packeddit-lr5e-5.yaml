@@ -1,0 +1,10 @@
+extends: dots-tts-20261111-flexivoice-interleave-feistel-32k-packeddit.yaml
+
+train:
+  run_name: dots-tts-20261111-flexivoice-interleave-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr5e-5-ep1-wsd
+  max_batch_frames: 30000
+  max_batch_tokens: 48000
+  lr: 5.0e-5
+  first_check_step: null
+  save_every: 200
+  eval_every: 200
