@@ -1,0 +1,8 @@
+extends: dots-tts-20261111-flexivoice-nocaf-interleave-feistel-48k-packeddit-lr5e-5-ep2.yaml
+
+# Same as the nocaf 48k / lr 5e-5 / two-epoch run, with half of the rows (seeded per target) in the
+# interleave layout and half in the basic text-then-audio layout; the full instruction prefix stays
+# in both. Same build.
+train:
+  run_name: dots-tts-20261112-flexivoice-nocaf-interleave50-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr5e-5-ep2-wsd
+  interleave_fraction: 0.5

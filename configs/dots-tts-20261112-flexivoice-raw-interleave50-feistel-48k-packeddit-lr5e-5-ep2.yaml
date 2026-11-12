@@ -1,0 +1,11 @@
+extends: dots-tts-20261112-flexivoice-nocaf-interleave50-feistel-48k-packeddit-lr5e-5-ep2.yaml
+
+# Same recipe (48k / lr 5e-5 / packed DiT / Feistel / two epochs, 50% interleave, instruction
+# dropout 0) on features without 250 ms edge silence normalization, with the KeSpeech embedded CAF
+# headers repaired instead of excluded (profile v3-ref3s, selection-flexivoice-v3).
+data:
+  config: ${paths.project}/configs/data-flexivoice-raw-nv-dots-ref3s.yaml
+  build_id: dots-flexivoice-raw-selection-nv-ref3s-20261112
+
+train:
+  run_name: dots-tts-20261112-flexivoice-raw-interleave50-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr5e-5-ep2-wsd
