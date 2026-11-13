@@ -1,0 +1,13 @@
+extends: dots-tts-20261113-flexivoice-v4-interleave50-feistel-48k-packeddit-lr5e-5-ep2.yaml
+
+# v4 (style-led FlexiVoice + NV) plus ~500 h of HiFiTTS-2 (4,970 English readers, at most 40 utterances
+# each, default instruction, in-utterance ref3s reference). v4 had 202 h of English from 170 mostly
+# game speakers, and English speaker-only quality lagged Chinese (Seed-TTS en SIM 58.7 vs zh 73.0).
+# Three epochs.
+data:
+  config: ${paths.project}/configs/data-flexivoice-v5-hifitts2-nv-dots-ref3s.yaml
+  build_id: dots-flexivoice-v5-hifitts2-nv-ref3s-20261113
+
+train:
+  run_name: dots-tts-20261113-flexivoice-v5-hifitts2-interleave50-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr5e-5-ep3-wsd
+  epochs: 3
