@@ -1,0 +1,11 @@
+extends: dots-tts-20261112-flexivoice-raw-interleave50-feistel-48k-packeddit-lr5e-5-ep2.yaml
+
+# Same recipe as the raw 50% interleave lr 5e-5 run (pt-x7s1wo9c, step 932), on selection-flexivoice-v4:
+# style-led FlexiVoice subsets only. That run lost English speaker-only quality (Seed-TTS en SIM
+# 62.7 -> 52.0) while ~69% of its FlexiVoice rows had instructions describing the voice itself.
+data:
+  config: ${paths.project}/configs/data-flexivoice-v4-nv-dots-ref3s.yaml
+  build_id: dots-flexivoice-v4-selection-nv-ref3s-20261113
+
+train:
+  run_name: dots-tts-20261113-flexivoice-v4-interleave50-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr5e-5-ep2-wsd

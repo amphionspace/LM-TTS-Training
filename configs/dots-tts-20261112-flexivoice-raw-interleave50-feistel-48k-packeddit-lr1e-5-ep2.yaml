@@ -1,0 +1,9 @@
+extends: dots-tts-20261112-flexivoice-raw-interleave50-feistel-48k-packeddit-lr5e-5-ep2.yaml
+
+# Learning-rate sweep against the lr 5e-5 run (pt-x7s1wo9c, step 932): same build, recipe and frozen
+# modules, only the learning rate. At 5e-5 English speaker-only quality fell well below the
+# lr 1e-5 NV runs (Seed-TTS en SIM 69.4 -> 52.0, WER 2.4 -> 7.5; CV3 en SIM 72.6 -> 62.4), Chinese
+# barely moved; earlier NV ablations placed the similarity loss in the LLM, not the patch encoder.
+train:
+  run_name: dots-tts-20261112-flexivoice-raw-interleave50-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr1e-5-ep2-wsd
+  lr: 1.0e-5
