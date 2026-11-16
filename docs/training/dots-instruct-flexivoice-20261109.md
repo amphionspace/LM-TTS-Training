@@ -4,14 +4,14 @@
 
 设计取舍见 [设计文档](../design/dots-instruct-tts-20261108.md)；本页记录实际做法、全部实验、评测结果和分析。两者不一致时以本页为准。
 
-## 0. 现状（2026-11-13）
+## 0. 现状（2026-11-15）
 
 | 项目 | 状态 |
 | --- | --- |
 | 当前数据 | **v5**：selection-flexivoice-v4（只保留以风格为主的子集，§1.4）+ NV 五个数据集 + HiFiTTS-2 约 500 h（§1.6）；dots_vae profile v3-ref3s（不做 250 ms 边缘归一化，修复 KeSpeech 内嵌 CAF 头） |
-| 当前实验 | v5 · lr 5e-5 · 3 epoch：HiFiTTS-2 特征在 ACP 提取（`pt-snz9ubvd`），发布后自动 build、校验并提交训练 |
-| 已完成训练 | step794（nocaf）、step932（raw v3）、lr 2e-5（v3，step 932）、v4（step 376） |
-| 评测 | 已完成：step794、step932、release 噪声底的 StyleBench + 回归 suite；v4 的 NV-Bench、Seed-TTS。进行中 / 排队：v4 StyleBench、v4 CV3、lr 2e-5 的 StyleBench 与 suite（§5.3） |
+| 已完成训练 | step794（nocaf）、step932（raw v3）、lr 2e-5（v3，step 932）、v4（step 376）、**v5**（step 723，`pt-n7jo9ftr`） |
+| 评测 | 已完成：release 噪声底、step794、step932、lr 2e-5、v4 的 StyleBench + 回归 suite（§6）。进行中：v5 StyleBench `pt-s8sp0tbp`、suite `pt-a35redy5` |
+| 主要结论 | v4 删掉"音色描述"子集后英文音色回升，但**语速、音高等说话方式控制大幅下降**（这类描述几乎只在被删子集里，§7 future work）；lr 2e-5 在 v3 数据上英文音色与 v4 相当，且保住了说话方式控制 |
 | 主要问题 | 英文 speaker_only 音色相似度低于中文（英文说话人太少，§6.5）、韩语 / 日语发音退化、ICL 下没有风格控制、中文耳语几乎无效（参考全是耳语，§2）、NV 标签准确率下降（§6） |
 
 ## 1. 数据
@@ -84,7 +84,7 @@ FlexiVoice 论文说明：KeSpeech 的指令由年龄 / 性别 / 方言三元组
 | profile | FlexiVoice | NV | 说明 |
 | --- | --- | --- | --- |
 | v2-ref3s（250 ms 边缘归一化） | 全量 `…20261109T160744`；v1 `…20261110T093409`；v2 `…20261111T164240` | `…20261106T092453` | 早期实验 |
-| v3-ref3s（raw-caf-repair-v1） | v3 `…20261112T121538`（本机 GPU 0–4 重新提取）；v4 `…20261113T100902`（由 v3 复用） | `…20261112T121520` | profile_id `a6d56e2c…`，build 要求所有 binding 同一 profile；HiFiTTS-2 `…20261113T144202`（ACP 提取中）同一 profile |
+| v3-ref3s（raw-caf-repair-v1） | v3 `…20261112T121538`（本机 GPU 0–4 重新提取）；v4 `…20261113T100902`（由 v3 复用） | `…20261112T121520` | profile_id `a6d56e2c…`，build 要求所有 binding 同一 profile；HiFiTTS-2 `…20261113T144202`（ACP `pt-snz9ubvd` 提取）同一 profile |
 
 ### 1.6 v5：补英文说话人（HiFiTTS-2）
 
@@ -164,10 +164,10 @@ basic：     [文本]Instruction: {instruction}\nText:\n{正文}[文本对应语
 | **nocaf**（step794） | `pt-ii8bqdpg` | v2 | 100% interleave，lr 5e-5，2 epoch | 完成，评测见 §5 |
 | nocaf 50% interleave | `pt-0xu9i6xh` | v2 | interleave 0.5 | 数据重做后停止删除 |
 | **raw v3**（step932） | `pt-x7s1wo9c` | v3 | 50% interleave，lr 5e-5，2 epoch | 完成，评测见 §5 |
-| lr 扫描 2e-5 | `pt-fg1ai7mx` | v3 | 只改 lr | 完成（step 932）；验证 loss 与 lr 5e-5 几乎相同（§6.2）；评测排队中 |
+| lr 扫描 2e-5 | `pt-fg1ai7mx` | v3 | 只改 lr | 完成（step 932）；验证 loss 与 lr 5e-5 几乎相同；评测见 §6 |
 | lr 扫描 1e-5 | `pt-p6j3rydu` | v3 | 只改 lr | v4 提交后停止删除（训练到约 step 690），让出 GPU |
 | **v4** | `pt-r8wymqby` | v4 | 同 step932，换 v4 数据 | 完成（step 376）；build `dots-flexivoice-v4-selection-nv-ref3s-20261113`；评测见 §6 |
-| **v5** | 待提交 | v4 + HiFiTTS-2 | 同 v4，加 500 h 英文多说话人，3 epoch | HiFiTTS-2 特征提取中（`pt-snz9ubvd`），发布后自动 build 并提交 |
+| **v5** | `pt-n7jo9ftr` | v4 + HiFiTTS-2 | 同 v4，加 500 h 英文多说话人，3 epoch，ACP 优先级 HIGHEST | 完成（step 723）；build `dots-flexivoice-v5-hifitts2-nv-ref3s-20261113`；评测进行中 |
 
 run 目录：`/workspace/LM-TTS-Training-Runs/<run_name>/`；评测结果：`UltraEval-Audio/res/<run>/`。
 
@@ -191,6 +191,42 @@ FlexiVoice 的测试集和测试指令没有公开，按论文的 TR-easy / TR-h
 
 - 自由描述的局限：真实录音只是一种演绎；emotion2vec 只抓情绪，"困倦""痞气"之类不一定体现；参考是同角色另一句，本身带语气，会压小指令版和默认版的差别。胜率在 50% 附近不能证明模型完全没听指令，更可靠的做法是音频大模型裁判（类似 InstructTTSEval）或人工试听。
 
+#### 指标怎么算
+
+生成（`scripts/style_bench_infer.py`）：模板 `[流式语音合成]Instruction: {instruction}\nText:\n{interleave}`，10 步、CFG 1.2、`speaker_scale` 1.0，随机种子 = sha256(条目 key) 十六进制前 8 位转整数 mod 2³¹（每条固定，可复现）。打分 `scripts/style_bench_score.py` 对每条生成音频算下列全部量，汇总 `scripts/style_bench_summary.py`。
+
+逐条的量：
+
+| 量 | 计算 |
+| --- | --- |
+| 情感分数 | emotion2vec_plus_large（utterance 级）输出 9 类概率，同时取 1024 维 utterance embedding |
+| 预测情感 | 只在"该子集的测试情感 + neutral"里取概率最大的一类（en：angry、happy、sad、fearful、surprised、disgusted + neutral；zh：angry、happy、sad、surprised + neutral），其余类忽略 |
+| SIM | WavLM-large 说话人验证模型（与 Seed-TTS 的 SIM 同一个），生成音频与**它所用的参考音频**的余弦 |
+| 识别文本 | 中文 Paraformer（seaco large），英 / 日 / 韩 Whisper-large-v3（指定语言） |
+| 文本归一化 | NFKC、转小写、繁转简、标点和符号换成空格；英文按词切分，中日韩按字切分 |
+| 有声段 | 重采样到 16 kHz，`librosa.effects.split(top_db=40)` 取非静音段拼接 |
+| 响度 `level_db` | 有声段 RMS 的 20·log10（dBFS） |
+| 基频 `f0` | 有声段上 `librosa.pyin`（60–600 Hz，帧长 1024，跳 160），浊音帧 F0 的中位数（Hz） |
+| 浊音比例 `voiced_ratio` | pyin 判为浊音的帧 / 有声段总帧（耳语时明显下降） |
+| 语速 `rate` | 归一化正文单位数（英文词、中日韩字）/ 有声段秒数 |
+
+汇总指标：
+
+| 指标 | 计算 |
+| --- | --- |
+| **ACC-I** | 预测情感 = 指令情感的比例（%） |
+| **ACC-R** | 只在 hard（冲突情感参考）上算：预测情感 = 参考句情感的比例（%），越低越说明没有照搬参考的情绪 |
+| **P-I** | 指令情感的概率在候选类里重新归一化后取平均（%），比 ACC-I 连续 |
+| 真实录音上限 | 同一分类器、同样候选类，对各情感真人录音（`gt_emotion_*`）算准确率 |
+| **WER / CER** | 编辑距离整体汇总：Σ编辑数 / Σ参考长度 × 100（不是逐条平均） |
+| **SIM** | 逐条 SIM 取平均 |
+| 说话方式**成功率** | 同正文、同参考的"风格指令版"对比"默认指令版"：响度、浊音比例取差值，语速、F0 取比值；大声 Δ响度 ≥ +3 dB，耳语 Δ浊音比例 ≤ −0.20，快 语速比 ≥ 1.15，慢 ≤ 0.87，高 F0 比 ≥ 1.10，低 ≤ 0.91 算成功；同时报变化量的中位数 |
+| 自由描述 **E-SIM** | 生成音频与该行真人录音的 emotion2vec embedding 余弦，指令版和默认版分别取平均 |
+| 自由描述**胜率** | 指令版 E-SIM > 默认版 E-SIM 的比例（%）；50% 相当于指令没起作用 |
+| F0 / 语速 / 响度距离 | 与真人录音比：\|log2(f0 / f0_真人)\|（倍频程）、\|log2(rate / rate_真人)\|、\|level_db − level_db_真人\|（dB），各自平均，指令版 / 默认版分开报 |
+
+真人录音（情感上限与自由描述锚点）用 `--reference` 单独打分一次，结果在 `raw_data/style_bench_v1/reference/`，各模型共用。
+
 ### 5.2 回归 suite
 
 `scripts/run_dots_suite.py --instruction "Speak the following text."`：NV-Bench（ICL）、Seed-TTS、CV3（speaker_only 与 ICL），模板为 interleave + 默认指令，`speaker_scale` 用 runtime 默认 1.5（与以往 NV 实验一致）。CV3 ICL 有长样本超过每进程 8 GiB 显存上限，现用 `--gpu-memory-gib 16`（每卡仍 4 个进程，保持分片一致以便续跑）。
@@ -199,44 +235,58 @@ FlexiVoice 的测试集和测试指令没有公开，按论文的 TR-easy / TR-h
 
 本机 GPU 0–4 常被其他用户的 vLLM 服务占用（推理进程等显存超时会退出），评测改为提交到 ACP（UltraEval-Audio `scripts/acp/submit.py`，StyleBench 与 suite 各一个任务、各一节点）；各评测都支持断点续跑，中途删除重提不丢已完成部分。
 
+注意事项：
+
+- **ACP 节点无外网**：emotion2vec 模型目录带 `requirements.txt`，funasr 加载时会 `pip install`，在 ACP 上会永久挂起。`style_bench_score.py` 已跳过这一步。
+- **跨机器续跑 Seed-TTS / CV3**：样本按 `inference_shards`（默认 GPU 数 × 每卡进程数）固定分片，并写入 run identity。在本机 5 卡（20 片）开始、到 ACP 8 卡（默认 32 片）续跑会被拒绝，需加 `run_dots_suite.py --inference-shards 20` 与原值一致。
+- StyleBench 结果必须用 `--speaker-scale 1.0` 的 run（journal 记录 `speaker_scale`）；step794 以 `res/dots-flexivoice-nocaf-48k-ep2-step794-stylebench-v1` 为准，同名 `…-default-instruction` 下的 style_bench 是早期未固定 scale 的结果，不要使用。
+
 ## 6. 结果与分析
 
 ### 6.1 StyleBench（speaker_only，v1 数据，scale 1.0）
 
-| | release（无指令，噪声底） | step794 | step932 |
-| --- | ---: | ---: | ---: |
-| 英文情感 ACC-I easy / hard | 6.2 / 8.8 | 46.0 / 45.6 | **53.1 / 53.8** |
-| 英文 ACC-R（hard，↓） | 26.0 | 14.8 | **10.2** |
-| 中文情感 ACC-I easy / hard | 0.8 / 6.7 | 56.9 / 57.5 | 57.5 / 55.0 |
-| 中文 ACC-R（↓） | 29.4 | **21.7** | 23.1 |
-| 情感组 SIM 英 / 中 | **0.777 / 0.780** | 0.580 / 0.623 | 0.563 / 0.622 |
-| 英文 耳语 / 大声 / 快 / 慢 / 高 / 低（成功率 %） | 0 / 17 / 10 / 7 / 2 / 12 | 93 / 41 / 48 / 86 / 31 / 64 | 81 / 14 / 55 / 79 / 52 / 55 |
-| 中文 耳语 / 大声 / 快 / 慢 / 高 / 低 | 0 / 28 / 3 / 3 / 8 / 8 | 18 / 30 / 23 / 43 / 73 / 75 | 8 / 43 / 45 / 58 / 80 / 63 |
-| 自由描述胜率 中 / 英 / 日 / 韩 | 48.5 / 50.0 / 54.5 / 46.0 | 50.5 / 52.5 / 48.5 / 53.0 | 58.5 / 49.5 / 54.5 / 52.0 |
-| 自由描述 CER 中 / 英 / 日 / 韩 | 4.1 / 2.5 / 7.6 / **8.3** | 4.6 / 2.7 / 15.8 / **51.0** | 6.7 / 6.5 / 11.5 / **62.5** |
+| | release（无指令，噪声底） | step794 | step932 | lr 2e-5 | v4 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 英文情感 ACC-I easy / hard | 6.2 / 8.8 | 46.0 / 45.6 | **53.1 / 53.8** | 53.5 / 50.0 | 46.5 / 42.5 |
+| 英文 ACC-R（hard，↓） | 26.0 | 14.8 | **10.2** | 13.5 | 15.6 |
+| 中文情感 ACC-I easy / hard | 0.8 / 6.7 | 56.9 / **57.5** | **57.5** / 55.0 | 56.9 / 54.8 | 55.2 / 52.9 |
+| 中文 ACC-R（↓） | 29.4 | **21.7** | 23.1 | 23.3 | 27.1 |
+| 情感组 SIM 英 / 中 | **0.777 / 0.780** | 0.580 / 0.623 | 0.563 / 0.622 | 0.550 / 0.621 | 0.575 / 0.616 |
+| 英文 耳语 / 大声 / 快 / 慢 / 高 / 低（成功率 %） | 0 / 17 / 10 / 7 / 2 / 12 | 93 / 41 / 48 / 86 / 31 / 64 | 81 / 14 / 55 / 79 / 52 / 55 | 60 / 12 / 79 / 91 / 31 / 81 | 24 / 5 / 12 / 33 / 52 / 17 |
+| 中文 耳语 / 大声 / 快 / 慢 / 高 / 低 | 0 / 28 / 3 / 3 / 8 / 8 | 18 / 30 / 23 / 43 / 73 / 75 | 8 / 43 / 45 / 58 / 80 / 63 | 8 / 15 / 68 / 63 / 73 / 63 | 10 / 18 / 33 / 50 / 53 / 28 |
+| 自由描述胜率 中 / 英 / 日 / 韩 | 48.5 / 50.0 / 54.5 / 46.0 | 50.5 / 52.5 / 48.5 / 53.0 | 58.5 / 49.5 / 54.5 / 52.0 | 53.5 / 53.0 / 46.5 / 60.0 | 56.5 / 47.0 / 53.5 / 56.0 |
+| 自由描述 CER 中 / 英 / 日 / 韩 | 4.1 / 2.5 / 7.6 / **8.3** | 4.6 / 2.7 / 15.8 / **51.0** | 6.7 / 6.5 / 11.5 / **62.5** | 6.2 / 5.8 / 10.5 / **56.2** | 6.0 / 4.7 / 10.5 / **51.1** |
 
 - 风格控制学到了：情感、说话方式都远高于噪声底，参考情感泄漏下降。
-- **ICL 模式下没有风格控制**：两个模型 ACC-I 只有 3–15%，与 release 相同。
+- **ICL 模式下没有风格控制**：所有模型 ACC-I 只有 3–15%，与 release 相同。
 - 自由描述的指令几乎没有作用（胜率在 50% 附近）。
-- 英文"大声"在 step932 失效：生成响度反而低于默认指令；训练数据里 EARS 大声比中性高 6.7 dB，问题不在数据本身。
-- 中文耳语两个模型都很弱。
+- **v4 说话方式控制大幅下降**：英文耳语 93/81 → 24，快 / 低 / 大声只剩 5–17%，中文高 / 低降 20–45 个点；情感与 step794 接近。语速、音高描述几乎只存在于 v4 删掉的子集里（§7 future work）。
+- **lr 2e-5 与 lr 5e-5（同为 v3 数据）**：情感几乎相同；说话方式各项互有高低（语速、低音高更好，耳语、高音高、中文大声更差），每格约 40 条，看不出整体优劣。
+- 英文"大声"在 step932 之后的模型都失效：生成响度反而低于默认指令；训练数据里 EARS 大声比中性高 6.7 dB，问题不在数据本身。
+- 中文耳语所有模型都很弱。
 
 ### 6.2 回归 suite
 
-| | NV-ref3s（lr 1e-5，无指令训练） | step794 | step932 | **v4** |
-| --- | --- | --- | --- | --- |
-| Seed-TTS en speaker_only WER / SIM | 2.44 / 69.4 | 2.95 / 62.7 | 7.53 / 52.0 | 6.31 / 58.7 |
-| Seed-TTS zh speaker_only | 1.17 / 73.4 | 1.57 / 73.6 | 1.52 / 73.0 | 1.58 / 73.0 |
-| Seed-TTS en / zh ICL WER | 2.09 / 1.22 | 2.40 / 1.41 | 3.16 / 1.25 | **2.19** / 1.46 |
-| Seed-TTS en / zh ICL SIM | 74.0 / 77.6 | 74.5 / 78.1 | 72.1 / 78.2 | 72.1 / 78.0 |
-| CV3 en speaker_only WER / SIM | 4.88 / 72.6 | 5.39 / 67.9 | 8.22 / 62.4 | 排队中 |
-| CV3 zh speaker_only | 4.03 / 76.1 | 3.72 / 76.0 | 4.43 / 75.6 | 排队中 |
-| NV-Bench CER / PCER zh_single | 2.74 / 22.6 | 3.24 / 21.4 | 5.02 / 28.5 | 3.76 / 30.9 |
-| NV-Bench CER / PCER zh_multi | 3.01 / 33.9 | 3.81 / 35.5 | 3.69 / 39.3 | 4.09 / 43.7 |
-| NV-Bench CER / PCER en_multi | 6.86 / 39.4 | 10.76 / 48.2 | 15.38 / 55.8 | 14.96 / 54.0 |
+| | NV-ref3s（lr 1e-5，无指令训练） | step794 | step932 | lr 2e-5 | **v4** |
+| --- | --- | --- | --- | --- | --- |
+| Seed-TTS en speaker_only WER / SIM | 2.44 / 69.4 | 2.95 / 62.7 | 7.53 / 52.0 | 6.02 / 59.5 | 6.31 / 58.7 |
+| Seed-TTS zh speaker_only | 1.17 / 73.4 | 1.57 / 73.6 | 1.52 / 73.0 | 1.28 / 72.9 | 1.58 / 73.0 |
+| Seed-TTS en / zh ICL WER | 2.09 / 1.22 | 2.40 / 1.41 | 3.16 / 1.25 | **2.02** / 1.35 | 2.19 / 1.46 |
+| Seed-TTS en / zh ICL SIM | 74.0 / 77.6 | 74.5 / 78.1 | 72.1 / 78.2 | 73.3 / 78.6 | 72.1 / 78.0 |
+| CV3 en speaker_only WER / SIM | 4.88 / 72.6 | 5.39 / 67.9 | 8.22 / 62.4 | 7.12 / 66.4 | 7.46 / 66.1 |
+| CV3 zh speaker_only | 4.03 / 76.1 | 3.72 / 76.0 | 4.43 / 75.6 | 3.92 / 75.2 | 4.07 / 75.4 |
+| CV3 hard en / zh speaker_only | — | 7.53 / 11.28 | 11.15 / 11.92 | 6.31 / 12.50 | 7.32 / 14.62 |
+| CV3 en / zh ICL WER / SIM | — | 5.37 / 73.4，4.20 / 77.8 | 7.15 / 72.5，4.14 / 77.8 | 6.59 / 73.2，3.83 / 77.6 | 5.21 / 73.8，4.18 / 77.8 |
+| NV-Bench CER / PCER zh_single | 2.74 / 22.6 | 3.24 / 21.4 | 5.02 / 28.5 | 3.62 / 33.5 | 3.76 / 30.9 |
+| NV-Bench CER / PCER zh_multi | 3.01 / 33.9 | 3.81 / 35.5 | 3.69 / 39.3 | 5.16 / 42.5 | 4.09 / 43.7 |
+| NV-Bench CER / PCER en_single | — | 7.41 / 44.1 | 9.06 / 51.3 | 9.53 / 53.9 | 9.04 / 52.4 |
+| NV-Bench CER / PCER en_multi | 6.86 / 39.4 | 10.76 / 48.2 | 15.38 / 55.8 | 16.57 / 56.3 | 14.96 / 54.0 |
 
 - v4 删掉"音色描述"数据后，英文 speaker_only SIM 回升 6.7（52.0 → 58.7），ICL 英文 WER 恢复到 2.19；但仍低于 step794，中文基本不变。
-- NV 标签准确率（PCER）没有恢复，中文反而更差：可能与 50% interleave 或风格数据与 NV 数据相互干扰有关。
+- **lr 2e-5（v3 数据）英文音色与 v4 相当**（Seed-TTS en 59.5，CV3 en 66.4，比 lr 5e-5 高 4–7 个点），同时保住了说话方式控制（§6.1）。学习率是英文 SIM 下降的原因之一。
+- step794 仍是英文音色和 NV 标签最好的模型。
+- NV 标签准确率（PCER）没有恢复，降 lr 也没有帮助：可能与 50% interleave 或风格数据与 NV 数据相互干扰有关。
+- CV3 hard 每个模型只有 55–63 条有效样本，几个点的差别不可靠。
 
 **EOS（验证 eos_loss）**：
 
@@ -251,7 +301,7 @@ FlexiVoice 的测试集和测试指令没有公开，按论文的 TR-easy / TR-h
 
 ### 6.3 speaker_only 音色相似度下降的原因
 
-1. **学习率**：lr 1e-5 的 NV-ref3s 英文 SIM 69.4；lr 5e-5 的 step794 62.7、step932 52.0。lr 扫描在跑。
+1. **学习率**：lr 1e-5 的 NV-ref3s 英文 SIM 69.4；lr 5e-5 的 step794 62.7、step932 52.0；同为 v3 数据的 lr 2e-5 为 59.5（+7.5）。
 2. **指令在描述音色**：v3 中约 69% 的 FlexiVoice 行指令描述性别、年龄、口音、嗓音（§1.4），教模型"音色听指令"，削弱对 x-vector 的依赖；step932 加回 KeSpeech 后英文掉得更多。v4 已删掉这些子集。
 3. **训练用 x-vector 与目标句对不上**：同说话人另一句的 CAM++ 余弦，按子集中位：debatts 0.84、l2 0.74、ears 0.73、WHSP 0.70、starrail 0.69、genshin 0.68、kespeech 0.67、voxceleb 0.62、childmandarin 0.59、ESD 0.56、expresso 0.47、IEMOCAP 0.43、CREMA-D 0.40；不同说话人 0.13（>0.5 仅 0.4%）。NV 的句内 ref3s 参考与整句约 0.86。
    - 与 WavLM 在同 240 对上相关 0.91，**不是 CAM++ 的问题**，是音频本身差别大。
@@ -270,12 +320,27 @@ speaker_only 只靠 x-vector 还原陌生说话人的音色，需要训练中见
 
 ## 7. 下一步
 
-1. v5（+HiFiTTS-2，3 epoch）训练后评测，看英文 speaker_only SIM / WER 能否回到 step794 或 NV-ref3s 水平。
-2. 完成 v4 的 StyleBench / CV3 和 lr 2e-5 的评测，确认学习率对英文 SIM 的影响。
+1. v5（+HiFiTTS-2，3 epoch）评测进行中，看英文 speaker_only SIM / WER 能否回到 step794 或 NV-ref3s 水平；v5 基于 v4 数据，预计同样缺少语速 / 音高控制。
+2. 说话方式控制：按下面的 future work 重新标注被删子集；或在 v4 / v5 基础上以较低 lr（2e-5）加回去掉音色描述后的 kespeech 等数据。
 3. 中文耳语：WHSP 只有耳语，可查原始语料有无同说话人正常发音作参考；游戏、debatts 的参考可按 emotion2vec 中性概率优先选。
 4. NV 标签退化：区分 50% interleave 与数据配比的影响。
 5. 游戏数据：排除文本与音频差异 >30% 的行及舞台说明；低音色相似度样本先试听再定是否过滤。
 6. 日韩发音、ICL 下的风格控制，视 v5 结果再定。
+
+### Future work：重新标注 v4 删掉的子集
+
+v4 的 StyleBench 说话方式成功率大幅下降（speaker_only en 耳语 81–93% → 24%，快 / 低 / 大声 5–17%；zh 高 / 低降 20–45 个点），情感与 step794 接近。原因是语速、音高描述几乎只在 v4 删掉的子集里：
+
+| | 语速 | 音量 | 音高 | 音色 | 参考-目标相似度（中位，<0.5 占比） |
+| --- | ---: | ---: | ---: | ---: | --- |
+| v4 保留（45.3 万条） | 2% | 4% | 0.3% | 14% | 0.675（8.9%） |
+| v4 删掉（120.3 万条） | 92% | 6% | 50% | 99% | 0.658（7.6%） |
+| 其中 kespeech（97.5 万条） | 99% | 2% | 49% | 100% | 0.665（4.8%） |
+
+- 指令类别按关键词统计；参考-目标相似度按训练时的抽取规则（同说话人、≥ 3 s、不同文本）每条抽 8 次，取 CAM++ x-vector 余弦的平均。跨句参考整体只有约 0.67（NV 句内参考约 0.86），删掉的子集并不比保留的更差，只有 expresso、IEMOCAP、CREMA-D（0.39–0.47，61–89% 低于 0.5）明显偏低；保留的 ESD、RAVDESS 也有约 30% 低于 0.5。
+- 所以 v3 的音色相似度下降主要来自指令里的音色描述（性别、年龄、口音），而不是 kespeech 等子集的音频本身。
+- kespeech 的指令是"属性前缀 + 音色句"（如 `慢速语速，低音调。请用普通话，表现一位壮年男性的声音特点。`），但属性很单一：语速几乎只有"慢速"，音高只有高 / 低，与实际音频是否相符未核对。
+- 方案：对 kespeech、voxceleb、ears、expresso、l2 **重新标注**风格（语速、音量、音高、情感，可用声学测量 + 音频大模型），指令只描述风格、不描述音色，再按说话人抽样加回训练；expresso、IEMOCAP、CREMA-D 先按参考相似度过滤或不用。
 
 ## 8. 复现
 

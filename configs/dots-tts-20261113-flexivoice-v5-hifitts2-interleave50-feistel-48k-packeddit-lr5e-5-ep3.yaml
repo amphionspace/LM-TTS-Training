@@ -11,3 +11,7 @@ data:
 train:
   run_name: dots-tts-20261113-flexivoice-v5-hifitts2-interleave50-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr5e-5-ep3-wsd
   epochs: 3
+
+# Run ahead of the queued evals.
+acp:
+  priority: HIGHEST
