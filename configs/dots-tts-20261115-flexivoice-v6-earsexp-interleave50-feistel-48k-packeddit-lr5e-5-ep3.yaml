@@ -1,0 +1,12 @@
+extends: dots-tts-20261113-flexivoice-v5-hifitts2-interleave50-feistel-48k-packeddit-lr5e-5-ep3.yaml
+
+# SC-v6-earsexp: SC-v5-hifi data plus EARS and Expresso with style-only instructions from the recording
+# protocol (selection-flexivoice-v6). Everything else as SC-v5-hifi (lr 5e-5, 3 epochs) so the comparison
+# isolates the data. SC-v4 / SC-v5-hifi lost English whisper / loud / fast control: those came from EARS,
+# Expresso and VoxCeleb, removed in v4 because their captions also described the voice.
+data:
+  config: ${paths.project}/configs/data-flexivoice-v6-earsexp-hifitts2-nv-dots-ref3s.yaml
+  build_id: dots-flexivoice-v6-earsexp-hifitts2-nv-ref3s-20261115
+
+train:
+  run_name: dots-tts-20261115-flexivoice-v6-earsexp-interleave50-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr5e-5-ep3-wsd

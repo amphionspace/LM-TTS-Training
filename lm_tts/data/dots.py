@@ -199,15 +199,27 @@ def flexivoice_rows(root, manifest):
         raise ValueError("Feature input differs from its selection output")
     table = lance.dataset(release / base["table_path"], version=base["base_version"])
     table = table.checkout_version((base["branch"], base["lance_version"]))
+    # A selection with instruction_inputs publishes selected_instruction: the pinned style-only
+    # revision for its target subsets, null where the base instruction stays.
+    revised = "selected_instruction" in table.schema.names
+    if revised != bool(selected.get("instruction_inputs")):
+        raise ValueError("selected_instruction column and instruction_inputs disagree")
     rows = {}
     for batch in table.scanner(
-        columns=["sample_id", "source_config", "metadata_json", "sample_rate"],
+        columns=["sample_id", "source_config", "metadata_json", "sample_rate"]
+        + (["selected_instruction"] if revised else []),
         filter="selection_reason = 0",
         batch_size=65536,
     ).to_batches():
         d = batch.to_pydict()
-        for sid, config, meta, rate in zip(
-            d["sample_id"], d["source_config"], d["metadata_json"], d["sample_rate"], strict=True
+        instructions = d.get("selected_instruction") or [None] * len(d["sample_id"])
+        for sid, config, meta, rate, instruction in zip(
+            d["sample_id"],
+            d["source_config"],
+            d["metadata_json"],
+            d["sample_rate"],
+            instructions,
+            strict=True,
         ):
             meta = json.loads(meta)
             up = meta["upstream"]
@@ -215,7 +227,7 @@ def flexivoice_rows(root, manifest):
                 config,
                 speaker_key(config, up["wav_path"]),
                 style_class(config, up["wav_path"], up.get("meta")),
-                meta.get("instruction"),
+                instruction if instruction is not None else meta.get("instruction"),
                 rate,
             )
     return rows
