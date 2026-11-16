@@ -1,0 +1,8 @@
+extends: dots-tts-20261115-flexivoice-v6-earsexp-interleave50-feistel-48k-packeddit-lr5e-5-ep3.yaml
+
+# SC-v6-earsexp learning-rate sweep: same build and recipe as the lr 5e-5 run (pt-z8rctx9i,
+# step 780), only the learning rate. On v3 data lr 2e-5 recovered 4-7 points of English SIM over
+# 5e-5 with the same emotion control; NV-ref3s used 1e-5.
+train:
+  run_name: dots-tts-20261116-flexivoice-v6-earsexp-interleave50-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr1e-5-ep3-wsd
+  lr: 1.0e-5
