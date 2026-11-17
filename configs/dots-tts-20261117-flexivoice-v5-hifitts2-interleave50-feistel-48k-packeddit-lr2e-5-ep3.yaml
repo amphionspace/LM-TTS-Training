@@ -1,0 +1,8 @@
+extends: dots-tts-20261113-flexivoice-v5-hifitts2-interleave50-feistel-48k-packeddit-lr5e-5-ep3.yaml
+
+# SC-v5-hifi learning-rate sweep: same build and recipe as the lr 5e-5 run (pt-n7jo9ftr, step 723),
+# only the learning rate. On v6 data lower lr cut WER by 0.3-0.7 points but weakened emotion control,
+# with English SIM unchanged; this checks the same on v5 data.
+train:
+  run_name: dots-tts-20261117-flexivoice-v5-hifitts2-interleave50-instrdrop0-feistel-48k-packeddit-bf16-8gpu-lr2e-5-ep3-wsd
+  lr: 2.0e-5
