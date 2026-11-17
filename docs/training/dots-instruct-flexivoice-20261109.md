@@ -6,7 +6,7 @@
 - **风格**（情感、语速、音量、耳语、语气）由自然语言指令决定。
 - **不做 voice design**：不根据文字描述生成音色。
 
-设计取舍见 [设计文档](../design/dots-instruct-tts-20261108.md)。本页记录实际做法、全部实验、评测结果和分析；两者不一致时以本页为准。最后更新：2026-11-16。
+设计取舍见 [设计文档](../design/dots-instruct-tts-20261108.md)。本页记录实际做法、全部实验、评测结果和分析；两者不一致时以本页为准。最后更新：2026-11-17 09:20 UTC（补齐 v5 两组低学习率的全量评测）。
 
 ## 1. 结论速览
 
@@ -19,7 +19,9 @@
 | 学习率 | lr 2e-5 比 5e-5 英文 SIM 高 4–7 个点，情感不变 | §3 |
 | 外部参照 | CosyVoice3 在 StyleBench 情感上 ACC-I 比 SC-v5-hifi 低 25–45 个点（只看它官方支持的开心 / 伤心 / 生气也一样），但音色相似度更高；ICL 下同样没有风格控制 | §3.6 |
 | 学习率 | v6 数据上降到 2e-5 / 1e-5：WER 低 0.3–0.7、SIM 不变、情感控制弱 5–11 个点；风格控制仍以 5e-5 为好 | §3.1 |
-| 进行中 | SC-v5-hifi 的 lr 扫描：lr 2e-5 `pt-467lbrpk`、lr 1e-5 `pt-fv681fpm`（训练结束自动导出并提交评测） | §2 |
+| v5 学习率 | 两组低 lr 全套评测均完成。1e-5 的 Seed 四组错误率都最低，CV3 普通测试也多数改善，SIM 基本持平；但两组情感和慢速控制弱于原版，NV PCER 退步，不能全面替换 5e-5 | §3.1–3.4、§4.8 |
+| Vccm | 原版 SC-v5-hifi、CosyVoice3、真人各 2,606 条全部完成；CV3 情感 / 独立音高 / WER 三组均更好，v5 SIM 三组均更高。v5 常规 WER 受一条 ASR 重复解码异常明显影响 | §3.7、§4.7 |
+| 情感排名反转 | 交叉使用两套分类器后，StyleBench 英文 easy 仍是 v5 更高、Vccm 仍是 CV3 更高；分类器差异与类别比例都不足以单独解释反转 | §4.6 |
 | 未解决 | ICL 下没有风格控制；中文耳语无效；韩语 / 日语退化；FlexiVoice 指令整体不可靠（LLM 从元数据生成） | §4.3–4.5 |
 
 ## 2. 实验
@@ -38,8 +40,8 @@
 | **SC-v6-earsexp** | — | v6 + NV + HiFiTTS-2 | 3 epoch；EARS / Expresso 用按录音协议重写的风格指令 | `pt-z8rctx9i` | 780 |
 | SC-v6-earsexp-lr2e-5 | — | 同 SC-v6-earsexp | lr 2e-5 | `pt-d3dxabeo` | 780 |
 | SC-v6-earsexp-lr1e-5 | — | 同 SC-v6-earsexp | lr 1e-5 | `pt-gmkxj6lw` | 780 |
-| SC-v5-hifi-lr2e-5 | v5 | 同 SC-v5-hifi | lr 2e-5 | `pt-467lbrpk` | 训练中 |
-| SC-v5-hifi-lr1e-5 | v5 | 同 SC-v5-hifi | lr 1e-5 | `pt-fv681fpm` | 训练中 |
+| SC-v5-hifi-lr2e-5 | v5 | 同 SC-v5-hifi | lr 2e-5 | `pt-467lbrpk` | 723 |
+| SC-v5-hifi-lr1e-5 | v5 | 同 SC-v5-hifi | lr 1e-5 | `pt-fv681fpm` | 723 |
 
 - 比较时注意：SC-v2-il100 → SC-v3 同时变了数据（+32.6 万条 KeSpeech）、特征、interleave 三项；SC-v3-lr5e-5 → SC-v3-lr2e-5 只变 lr；SC-v3-lr5e-5 → SC-v4 只变 FlexiVoice 子集；SC-v4 → SC-v5-hifi 加 HiFiTTS-2 并多训 1 个 epoch。
 - NV 五个数据集在所有 SC 实验里相同，特征版本随 FlexiVoice 一起换。
@@ -80,6 +82,8 @@
 | SC-v6-earsexp-lr2e-5 | 35.8 | 36.7 | 16.0 | 52.1 | 53.5 | 24.8 | 0.588 / 0.616 |
 | SC-v6-earsexp-lr1e-5 | 37.1 | 37.1 | 14.6 | 48.1 | 46.5 | 27.3 | 0.579 / 0.635 |
 | CosyVoice3（外部参照，§3.6） | 27.9 | 27.7 | 18.3 | 15.6 | 29.4 | **17.7** | 0.605 / 0.762 |
+| SC-v5-hifi-lr2e-5 | 44.8 | 46.0 | 16.5 | 54.6 | 49.4 | 27.9 | 0.570 / 0.639 |
+| SC-v5-hifi-lr1e-5 | 47.3 | 41.7 | 17.5 | 49.4 | 47.7 | 26.9 | 0.591 / 0.649 |
 
 **说话方式**（相对默认指令的成功率 %）
 
@@ -94,6 +98,8 @@
 | SC-v6-earsexp | **100** | 0 | 7 | **100** | **100** | 69 | 10 | 20 | 58 | 55 | 48 | 48 |
 | SC-v6-earsexp-lr2e-5 | 98 | 2 | 7 | 98 | 93 | 79 | 15 | 18 | 48 | 53 | 53 | 43 |
 | SC-v6-earsexp-lr1e-5 | 93 | 5 | 5 | **100** | 95 | 71 | 18 | 25 | 43 | 43 | 53 | 60 |
+| SC-v5-hifi-lr2e-5 | 4.8 | 0.0 | 7.1 | 47.6 | 42.9 | 21.4 | 5.0 | 37.5 | 30.0 | 47.5 | 47.5 | 47.5 |
+| SC-v5-hifi-lr1e-5 | 16.7 | 9.5 | 9.5 | 45.2 | 47.6 | 14.3 | 5.0 | 22.5 | 37.5 | 30.0 | 52.5 | 37.5 |
 
 **自由描述**（胜率：指令版比默认版更接近真人录音的比例，50% 即无作用；CER 为指令版）
 
@@ -108,6 +114,8 @@
 | SC-v6-earsexp | **60.5 / 60.5** / 50.0 / 53.5 | 5.8 / 6.1 / 10.1 / 55.4 |
 | SC-v6-earsexp-lr2e-5 | 61.0 / **66.5** / 49.5 / 55.5 | 6.4 / 5.1 / 10.0 / 52.2 |
 | SC-v6-earsexp-lr1e-5 | **61.5** / 58.0 / 54.5 / 49.5 | 5.7 / 4.9 / 9.4 / 56.4 |
+| SC-v5-hifi-lr2e-5 | 58.0 / 62.5 / 54.0 / 55.0 | 6.7 / 5.5 / 11.0 / 55.0 |
+| SC-v5-hifi-lr1e-5 | 61.5 / 61.5 / 53.0 / 51.0 | 6.5 / 6.1 / 9.5 / 65.1 |
 
 - 风格控制学到了：情感、说话方式都远高于噪声底，参考情感泄漏下降。
 - **ICL 下没有风格控制**：所有模型 ACC-I 只有 3–15%，与 base 相同。
@@ -132,6 +140,10 @@
 | SC-v6-earsexp | 2.57 / **69.6** | 1.65 / 72.9 | 2.31 / **75.7** | 1.62 / 78.5 |
 | SC-v6-earsexp-lr2e-5 | 2.23 / 69.4 | 1.24 / 72.8 | 1.87 / **76.0** | **1.13** / 78.4 |
 | SC-v6-earsexp-lr1e-5 | **2.10** / 69.3 | **1.17** / 73.1 | **1.72** / 75.9 | 1.18 / **78.6** |
+| SC-v5-hifi-lr2e-5 | 2.25 / 69.3 | 1.27 / 72.9 | 1.98 / 75.7 | 1.31 / 78.4 |
+| SC-v5-hifi-lr1e-5 | 2.05 / 69.2 | 1.19 / 73.1 | 1.84 / 75.7 | 1.07 / 78.8 |
+
+2026-11-17 08:20 UTC 快照：2e-5、1e-5 的 Seed-TTS 四组均完成全量生成和评分（英文每模式 1,088 条，中文 2,020 条）。1e-5 于 08:13:49 UTC 完成，四组错误率均低于 2e-5；SIM 基本持平。
 
 ### 3.3 CV3（WER/CER % ↓ / SIM ×100 ↑）
 
@@ -147,8 +159,10 @@
 | SC-v6-earsexp | 4.51 / 72.9 | 4.47 / 75.1 | 73.0 / 73.9 | 4.94 / 74.8 | 4.08 / 77.7 |
 | SC-v6-earsexp-lr2e-5 | **3.82 / 73.2** | 3.86 / 75.4 | 73.7 / 73.9 | 4.56 / 74.9 | **3.55** / 78.2 |
 | SC-v6-earsexp-lr1e-5 | 3.88 / 72.8 | **3.56 / 75.5** | 74.1 / 73.6 | **4.35** / 74.8 | 3.60 / 77.9 |
+| SC-v5-hifi-lr2e-5 | 4.80 / 72.9 | 3.97 / 75.2 | 73.5 / 73.4 | 4.67 / 74.9 | 3.68 / 77.9 |
+| SC-v5-hifi-lr1e-5 | 4.16 / 72.9 | 3.74 / 75.4 | 73.7 / 73.1 | 4.31 / 74.6 | 3.69 / 78.2 |
 
-CV3 hard 每个模型只有 55–64 条有效样本，几个点的差别不可靠。
+CV3 hard 每个模型只有 55–64 条有效样本，几个点的差别不可靠。SC-v5-hifi-lr2e-5 的 CV3 全量评分已于 2026-11-17 07:55:47 UTC 完成；其 hard 英文 / 中文 speaker_only WER/CER 为 11.31 / 11.52，原版为 9.54 / 12.62；有效条目分别为 64 / 55 与 63 / 56，不能直接当成逐条配对比较。
 
 ### 3.4 NV-Bench（ICL，CER / PCER %，↓）
 
@@ -163,6 +177,10 @@ CV3 hard 每个模型只有 55–64 条有效样本，几个点的差别不可�
 | SC-v6-earsexp | 2.98 / 26.0 | 4.48 / 39.1 | 7.74 / 53.3 | 13.83 / 57.6 |
 | SC-v6-earsexp-lr2e-5 | 3.45 / 24.5 | 3.59 / 36.5 | 7.98 / 55.0 | 14.03 / 56.0 |
 | SC-v6-earsexp-lr1e-5 | 3.18 / 33.9 | 3.87 / 42.3 | 6.96 / 55.3 | 15.21 / 59.4 |
+| SC-v5-hifi-lr2e-5 | 3.08 / 26.0 | 3.70 / 37.6 | 7.11 / 49.3 | 13.38 / 51.9 |
+| SC-v5-hifi-lr1e-5 | 2.97 / 31.1 | 3.25 / 43.2 | 7.36 / 51.9 | 12.59 / 55.5 |
+
+两组新增 v5 的四个分组均已完成。CER 比较文字字符，PCER 比较 `[Tag]` 副语言事件标签序列，OCER 同时计入二者；具体取舍见 §4.8。
 
 ### 3.5 EOS（验证 eos_loss）
 
@@ -190,11 +208,47 @@ CV3 hard 每个模型只有 55–64 条有效样本，几个点的差别不可�
 | CosyVoice3：开心 / 伤心 / 生气平均 | 45.0 | 39.6 | 18.1 | 30.5 |
 | SC-v5-hifi：开心 / 伤心 / 生气平均 | **76.6** | **65.4** | **62.8** | **61.4** |
 
-- **情感控制我们明显更强**：即使只看 CosyVoice3 官方列出的三种情感，speaker_only 也高 25–45 个点；它的中文 easy 只有 15.6（中性参考下指令几乎带不动情感），fearful / disgusted 接近 0。
+- **在这套 StyleBench 上情感控制我们明显更强**：即使只看 CosyVoice3 官方列出的三种情感，speaker_only 也高 25–45 个点；它的中文 easy 只有 15.6（中性参考下指令几乎带不动情感），fearful / disgusted 接近 0。
 - **音色相似度 CosyVoice3 更高**（SIM en / zh 0.605 / 0.762 vs 0.556 / 0.617），WER / CER 也略低；它的指令模式把参考同时送进 flow 作条件，保留的音色信息多于我们只用 x-vector。
 - ACC-R（hard）CosyVoice3 en 18.3 / zh 17.7，与我们相当（15.4 / 23.3）。
 - **ICL 下两者都几乎没有风格控制**（CosyVoice3 ACC-I 0.4–10.8），不是我们独有的问题。
 - 结果：UltraEval-Audio `res/cosyvoice3-latest-style_bench-emotion/style_bench/results.md`；生成脚本 `scripts/cosyvoice3_style_bench_infer.py`。环境按官方 requirements 只装推理依赖（去掉 tensorrt / deepspeed / gradio 等，经清华源），torch 2.3.1；onnxruntime 缺 CUDA 11 库，语音 tokenizer 走 CPU。
+
+### 3.7 Vccm / ControlSpeech：SC-v5-hifi、CosyVoice3 与真人
+
+使用 ControlSpeech 的 VccmDataset 与官方情感分类头、音高/能量函数。CV3 指 Fun-CosyVoice3-0.5B-2512。共覆盖原始 2,686 条中的 2,606 条：常规 1,432/1,500，域外风格 91/100，域外音色 1,083/1,086；缺失来源见 [prepare.json](../../../UltraEval-Audio/raw_data/vccm_v1/prepare.json)。全部可用样本评分完成、失败数为 0。
+
+#### 常规
+
+| 音频 | n | 情感 n | 情感 ACC % ↑ | 独立音高 ACC % ↑ | 能量 ACC % ↑ | 官方音高 ACC % ↑ | WER % ↓ | SIM ↑ |
+|---|---|---|---|---|---|---|---|---|
+| 真人 | 1432 | 133 | 82.71 | 88.97 | 29.26 | 26.26 | 2.44 | 未计算 |
+| CV3 | 1432 | 133 | 54.14 | 76.19 | 24.72 | 17.60 | 1.92 | 0.8983 |
+| SC-v5-hifi | 1432 | 133 | 40.60 | 66.48 | 37.50 | 24.93 | 6.58 | 0.9210 |
+
+#### 域外风格
+
+| 音频 | n | 情感 n | 情感 ACC % ↑ | 独立音高 ACC % ↑ | 能量 ACC % ↑ | 官方音高 ACC % ↑ | WER % ↓ | SIM ↑ |
+|---|---|---|---|---|---|---|---|---|
+| 真人 | 91 | 15 | 80.00 | 74.73 | 45.05 | 35.16 | 1.80 | 未计算 |
+| CV3 | 91 | 15 | 33.33 | 63.74 | 40.66 | 25.27 | 1.80 | 0.8994 |
+| SC-v5-hifi | 91 | 15 | 13.33 | 50.55 | 32.97 | 17.58 | 7.77 | 0.9114 |
+
+#### 域外音色
+
+| 音频 | n | 情感 n | 情感 ACC % ↑ | 独立音高 ACC % ↑ | 能量 ACC % ↑ | 官方音高 ACC % ↑ | WER % ↓ | SIM ↑ |
+|---|---|---|---|---|---|---|---|---|
+| 真人 | 1083 | 58 | 100.00 | 92.61 | 22.53 | 21.33 | 1.85 | 未计算 |
+| CV3 | 1083 | 58 | 44.83 | 82.83 | 14.50 | 12.65 | 1.31 | 0.9149 |
+| SC-v5-hifi | 1083 | 58 | 25.86 | 77.29 | 35.36 | 27.79 | 4.45 | 0.9345 |
+
+情感准确率只计算有标签样本。官方音高指标要求能量也判断正确，独立音高准确率则单独统计。真人的能量准确率也低，说明绝对阈值与当前音频/标签的一致性需要检查；v5 超过真人的某个指标不能解释为听感超过真人。WER 用 Whisper-large-v3 与其英文归一化，SIM 为 WavLM base-plus-sv x-vector 余弦。语速准确率依赖 MFA，本次未计算。
+
+原版 v5 音色相似度三组均更高；CV3 的情感、独立音高和 WER 三组均更好。能量与官方联合音高结果随分组变化。
+
+- [dots-flexivoice-v5-hifitts2-interleave50-ep3-step723-default-instruction/vccm/speaker_only/summary.json](../../../UltraEval-Audio/res/dots-flexivoice-v5-hifitts2-interleave50-ep3-step723-default-instruction/vccm/speaker_only/summary.json)
+- [cosyvoice3-latest-vccm/vccm/speaker_only/summary.json](../../../UltraEval-Audio/res/cosyvoice3-latest-vccm/vccm/speaker_only/summary.json)
+- [真人基线](../../../UltraEval-Audio/raw_data/vccm_v1/reference/summary-reference.json)
 
 ## 4. 分析
 
@@ -253,6 +307,70 @@ EARS、Expresso 当初被删，是因为 FlexiVoice 给它们的指令是 ParaSp
 ### 4.5 日语 / 韩语
 
 韩语 CER 从 base 的 8.3 升到 51–68，ICL 下约 25% 的输出几乎为空（立即输出 EOS），SC-v5-hifi 有 3 条生成超过 30 s 不停；日语 7.6 → 10–16。日韩在训练里只有游戏数据。
+
+### 4.6 情感排名反转：双向分类器交叉复测
+
+对同一份已有生成音频换分类器，没有重新生成。StyleBench 选英文 speaker_only/easy：每模型 480 条；Vccm 选常规集有情感标签的 133 条。Plus-large 取英文六类情感与 neutral 的最大分，ControlSpeech 取八类最大分。
+
+| 数据集 | 模型 | n | Plus-large ACC % | ControlSpeech ACC % |
+|---|---|---|---|---|
+| style_easy | v5 | 480 | 53.75 | 49.58 |
+| style_easy | cv3 | 480 | 27.92 | 34.79 |
+| vccm | v5 | 133 | 33.83 | 40.60 |
+| vccm | cv3 | 133 | 40.60 | 54.14 |
+
+两个分类器下，排名均随数据集反转。Vccm 六种非中性情感等权平均后，Plus-large 为 CV3 33.88% / v5 26.98%，ControlSpeech 为 CV3 51.17% / v5 38.12%；类别比例也不是唯一解释。
+
+已检查两套 CV3 speaker_only 均调用 inference_instruct2，外层提示模板相同；v5 的模板和主要推理默认参数也相同。仍未拆开的因素包括：单一情感命令与复合属性描述、文本、语料来源、参考音频/说话人、训练数据覆盖。当前证据不能指定其中某项为主因。
+
+下一步若要定位原因，应在同一文本、参考音频和随机种子下，只替换单一情感指令/复合指令，并补少量盲听；训练数据重合也需要独立核查。
+
+- [逐条情感交叉评分](../../../UltraEval-Audio/artifacts/vccm-diagnostics-20261117/emotion-cross.jsonl)
+- [情感交叉统计](../../../UltraEval-Audio/artifacts/vccm-diagnostics-20261117/emotion-summary.json)
+
+### 4.7 Vccm WER 异常诊断
+
+原版 v5 常规集为 1,585 次词编辑 / 24,070 个参考词 = 6.58496%。
+
+1. 一条 7.68 秒音频 `test|856c5b731fd75c84` 在原始 Whisper 解码下产生大量 be/ever 重复，计入 430 次编辑；StyleBench 的 ASR pipeline 也复现了同一错误。对同一音频改为 num_beams=5，只剩 1 次编辑。这是该条主要受 ASR 解码异常影响的有力证据。
+2. 仅排除该条进行敏感性分析，WER 从 6.58% 降到 4.80%；这是诊断结果，不替代官方分数。其他几个所选严重错误在束搜索下仍存在。
+3. Whisper English normalizer 会删掉括号中的文本；常规集 7 条文本含括号/方括号。保留括号正文后，v5 WER 为 6.39%，CV3 为 1.75%，真人为 2.26%。影响较小，不能解释大部分差距。
+4. 常规集 v5 音频最长 24.16 秒；全量也无超过 30 秒的 v5 音频，未发现 30 秒 ASR 窗口截断是原因。
+5. 常规集按文本长度分组，v5 WER：不超过 10 词为 8.86%，11–30 词为 7.97%，超过 30 词为 3.50%。本次不能把高 WER 主要归因于长句。
+
+上面是六条选例的解码复核，未对两模型全量统一改用束搜索。其余错误需独立听辨或第二个 ASR 验证，才能区分真实漏读/发音问题与识别器误差。正式分数仍使用原始设置。
+
+- [六条 ASR 复核](../../../UltraEval-Audio/artifacts/vccm-diagnostics-20261117/wer-retranscribe.jsonl)
+- [归一化敏感性统计](../../../UltraEval-Audio/artifacts/vccm-diagnostics-20261117/wer-normalization.json)：其中 all/CV3 为当时 2,380 条快照，只有 test 三方是完整配对。
+
+### 4.8 SC-v5-hifi 学习率扫描（2026-11-17 09:20 UTC，两组全量完成）
+
+三个模型使用同一 v5 build、3 epoch、step723；新增配置继承 lr5e-5 原版，只覆盖学习率与运行名称。两组训练和导出均完成，目前的评测结论是：
+
+- **文字准确性改善**：NVBench 四组 CER 都低于原版。1e-5 在中文两组与英文 multi 更低，2e-5 在英文 single 更低；2e-5 的 Seed-TTS 四组错误率也均降低，speaker_only 英文 2.692 → 2.253、中文 1.582 → 1.274，SIM 变化很小。
+- **副语言标签存在取舍**：NVBench 四组 PCER 均高于原版，且 1e-5 四组都比 2e-5 更差。不能仅凭 CER 改善认定整体风格控制更好。
+- **2e-5 情感控制变弱**：StyleBench speaker_only 英文 easy / hard 从 53.8 / 46.7 降为 44.8 / 46.0；中文从 57.3 / 56.7 降为 54.6 / 49.4。easy / hard 每格 480 条，英文 hard 的小差异不宜过度解释。ICL 仍只有 4.2–13.3% 的 ACC-I。
+- **2e-5 慢速控制下降**：英文成功率 59.5% → 47.6%，中文 80.0% → 47.5%；耳语仍为英文 4.8%、中文 5.0%，英文大声 0%、快 7.1%。未解决 v5 原有短板。
+- **2e-5 CV3 并非全面改善**：普通英文 speaker_only WER 从 4.634% 升至 4.801%，中文 CER 从 4.429% 降至 3.970%；英文 / 中文 ICL 从 5.346 / 4.214 降至 4.673 / 3.680。SIM 变化小，DNSMOS 无一致提升。
+- 自由描述有升有降：speaker_only 胜率中 / 英为 58.0 / 62.5（原版 55.0 / 57.0），日 / 韩为 54.0 / 55.0；单个语言仅 200 条，不能仅凭几个点认定可靠提升。
+- **1e-5 全量结果**：NVBench、Seed-TTS、CV3、StyleBench 均已完成（CV3 状态 complete 于 08:48:50 UTC）。Seed 英文 / 中文 speaker_only 错误率 2.048 / 1.192%，ICL 为 1.836 / 1.073%，四组均低于 2e-5。CV3 普通英文 / 中文 speaker_only 为 4.164 / 3.743%，ICL 为 4.307 / 3.691%；除中文 ICL 与 2e-5 的 3.680% 接近外，其余普通分组均更低。SIM 变化小，DNSMOS 无一致提升。
+- **1e-5 风格取舍**：speaker_only 情感 en easy / hard 为 47.3 / 41.7%，zh 为 49.4 / 47.7%，四项都低于原版；ICL ACC-I 为 2.7–14.4%。慢速成功率英文 45.2%、中文 30.0%（原版 59.5 / 80.0%）；耳语英文 16.7%、中文 5.0%，仍未普遍解决风格控制。相比 2e-5，1e-5 仅英文 easy 情感更高，其他三项情感更低。
+- **当前判断**：普通朗读准确性优先可选 1e-5；情感与慢速控制优先仍保留原版 5e-5，两个低 lr 都不能全面替代。2e-5 保住的部分情感与慢速控制多于 1e-5，但朗读错误率多数不及 1e-5。没有多训练随机种子的显著性检验。
+- Vccm 本轮只评了原版 lr5e-5，不能将 §3.7 的结果归到两个新学习率。
+
+NVBench 的 OCER / SIM 补充（CER / PCER 已合入 §3.4；SIM 越高越好）：
+
+| 模型 | zh_single | zh_multi | en_single | en_multi |
+| --- | --- | --- | --- | --- |
+| SC-v5-hifi | 3.90 / 0.7845 | 5.23 / 0.7950 | 8.40 / 0.7500 | 14.17 / 0.7558 |
+| SC-v5-hifi-lr2e-5 | 3.63 / 0.7840 | 4.94 / 0.7934 | 7.40 / 0.7485 | 13.83 / 0.7665 |
+| SC-v5-hifi-lr1e-5 | 3.65 / 0.7866 | 4.80 / 0.7965 | 7.74 / 0.7475 | 13.10 / 0.7619 |
+
+历史状态（2026-11-17 07:27 UTC）：四个 ACP 评测作业当时均为 RUNNING：2e-5 StyleBench `pt-0bwbc2t8`、suite `pt-eh7rqls9`；1e-5 StyleBench `pt-q6krwuoy`、suite `pt-48zumz01`。
+
+来源：UltraEval-Audio `res/dots-flexivoice-v5-hifitts2-lr{2e-5,1e-5}-interleave50-ep3-step723-default-instruction/{nv_bench,seed_tts/full,cv3/full,style_bench}/`；[作业状态快照](../../../UltraEval-Audio/artifacts/vccm-diagnostics-20261117/v5-lr-job-status.json)。
+
+2e-5 已完成报告：[StyleBench](../../../UltraEval-Audio/res/dots-flexivoice-v5-hifitts2-lr2e-5-interleave50-ep3-step723-default-instruction/style_bench/results.md)、[CV3](../../../UltraEval-Audio/res/dots-flexivoice-v5-hifitts2-lr2e-5-interleave50-ep3-step723-default-instruction/cv3/full/results_table.md)。
 
 ## 5. 数据
 
@@ -433,10 +551,26 @@ FlexiVoice 的测试集未公开，按论文 TR-easy / TR-hard 思路用**训练
 - **跨机器续跑 Seed-TTS / CV3**：样本按 `inference_shards`（GPU 数 × 每卡进程数）固定分片并写入 run identity；本机 5 卡（20 片）开始、ACP 8 卡续跑需加 `--inference-shards 20`。
 - StyleBench 必须用 `--speaker-scale 1.0` 的结果；SC-v2-il100 以 `…-step794-stylebench-v1` 为准，`…-default-instruction` 下的 style_bench 是早期未固定 scale 的结果。
 
+### 7.4 Vccm / ControlSpeech
+
+数据准备 `scripts/prepare_vccm_bench.py`，清单 `raw_data/vccm_v1/`；原始 ControlSpeech CSV 的文本、风格指令与标签沿用，音频缺失导致只覆盖 2,606 / 2,686 条。固定选同说话人的另一句参考，情感语料优先中性参考；LibriTTS 参考长 3–12 秒且文本不同。与 StyleBench 的训练留出机制不同，Vccm 与训练数据的交集尚未核查。
+
+生成：`scripts/vccm_infer.py` 与 `scripts/cosyvoice3_vccm_infer.py`；v5 使用 interleave 指令模板、10 步、CFG 1.2、speaker_scale 1.0；CV3 使用 inference_instruct2 与同一外层指令模板。两者均为 speaker_only。
+
+评分 `scripts/vccm_score.py`：
+
+- 情感：emotion2vec_base v2.0.4 帧特征 → ControlSpeech 原始微调八分类头（step180000），argmax 与目标比较；仅统计有情感标签的行。
+- 音高 / 能量：直接导入 vendored `energy_pitch_acc.py` 的 get_pitch_energy / judge_pitch / judge_energy；旧版 librosa 位置参数通过适配层映射为关键字，阈值与计算公式不变。
+- WER：Whisper-large-v3，指定英文，Whisper English normalizer，Σ词编辑 / Σ参考词；GPU float16 与原脚本 CPU 运行并非逐位一致。归一化和解码异常见 §4.7。
+- SIM：microsoft/wavlm-base-plus-sv 的归一化 x-vector 余弦；与 StyleBench / Seed 的 WavLM-large 口径不同，不能跨测试直接比较绝对数值。真人 SIM 本轮未算。
+- 语速准确率需要 MFA 对齐，本轮未接入。失败条数单独报告；本轮两模型与真人均为 0。
+
+评分输出：各模型 `vccm/speaker_only/scores-*.jsonl`、`summary.json`；真人为 `raw_data/vccm_v1/reference/`。交叉诊断证据保存在 [artifacts/vccm-diagnostics-20261117](../../../UltraEval-Audio/artifacts/vccm-diagnostics-20261117/)。诊断实验没有改写原始 benchmark 分数。
+
 ## 8. 下一步
 
-1. **下一版**：v5 数据 + lr 2e-5 + 重新标注的风格数据。
-2. **EARS / Expresso**：已做，见 SC-v6-earsexp（annotation `flexivoice_instruction`：Qwen3.8-27B 按录音协议风格 + 原描述重写，只写风格；selection-flexivoice-v6）。结果：英文耳语、慢、高补回，大声反向、快无效（§3.1），需查 EARS 大声 / 快样本在训练特征中的实际响度与语速，以及指令是否对上。v6 的 lr 2e-5 / 1e-5 已完成（§3.1），大声 / 快仍失效；v5 的 lr 扫描进行中。
+1. **下一版候选**：v5 数据 + 重新标注的风格数据；lr 扫描已完成，1e-5 偏普通朗读准确性、5e-5 偏情感与慢速控制，后续按目标选择（§4.8）。
+2. **EARS / Expresso**：已做，见 SC-v6-earsexp（annotation `flexivoice_instruction`：Qwen3.8-27B 按录音协议风格 + 原描述重写，只写风格；selection-flexivoice-v6）。结果：英文耳语、慢、高补回，大声反向、快无效（§3.1），需查 EARS 大声 / 快样本在训练特征中的实际响度与语速，以及指令是否对上。v6 的 lr 2e-5 / 1e-5 已完成（§3.1），大声 / 快仍失效；v5 的 lr 扫描训练已完成，2e-5 的 NV / Seed / CV3 / StyleBench 全部已出结果，1e-5 的 NV / Seed / CV3 / StyleBench 也全部完成（§4.8）。
 3. **重新标注**（对着音频，而不是从元数据推断）：kespeech、voxceleb、游戏等。
    - 语速、音高、音量用声学测量，**相对说话人自己的基线**分档（不按全数据集分档，否则会把音色标成风格）。
    - 情感用 emotion2vec + 音频大模型交叉判断；语气用音频大模型描述，提示词禁止写性别、年龄、口音、嗓音。
@@ -446,7 +580,8 @@ FlexiVoice 的测试集未公开，按论文 TR-easy / TR-hard 思路用**训练
 5. **中文耳语**：WHSP 需要同说话人的正常发音作参考；游戏、debatts 的参考可按 emotion2vec 中性概率优先选。
 6. **未分清的因素**：50% vs 100% interleave 对英文 SIM 和 NV 标签的影响（`pt-0xu9i6xh` 中途停掉）。
 7. **ICL + 风格**：需要"ICL 参考 + 不同风格指令"的训练样本。
-8. **游戏数据**：排除文本与音频差异 >30% 的行及舞台说明；低音色相似度样本先试听再定。
+8. **Vccm 排名反转与 WER**：按 §4.6 的同输入指令消融拆分输入因素；ASR 解码策略若要调整，应对两模型统一全量重评，并另报诊断口径。
+9. **游戏数据**：排除文本与音频差异 >30% 的行及舞台说明；低音色相似度样本先试听再定。
 
 公开的风格数据（都需要拆出风格部分才能用）：ParaSpeechCaps（situational 标签与 intrinsic 分开标，人工 282 h + 自动 2,427 h，最干净）、SpeechCraft（约 2,000 h，中英，描述混有音色）、LibriTTS-P（语速 / 响度可用，音高按全数据集分档）、CapSpeech（主要是自动标注）。本地都没有。
 
@@ -477,4 +612,8 @@ python scripts/run_dots_suite.py --model-path init_model/<export> --run-dir res/
 | 数据配置 | `configs/data-flexivoice-{nocaf,raw,v4}-nv-dots-ref3s.yaml`、`data-flexivoice-v5-hifitts2-nv-dots-ref3s.yaml` |
 | 训练配置 | `configs/dots-tts-2026111*-flexivoice-*.yaml` |
 | 评测代码 | UltraEval-Audio `scripts/{prepare_style_bench,style_bench_infer,style_bench_score,style_bench_summary,run_style_bench,run_dots_suite}.py` |
+| Vccm 评测代码 | UltraEval-Audio `scripts/{prepare_vccm_bench,vccm_infer,cosyvoice3_vccm_infer,vccm_score,vccm_finish}.py` |
+| 交叉诊断证据 | [UltraEval-Audio/artifacts/vccm-diagnostics-20261117](../../../UltraEval-Audio/artifacts/vccm-diagnostics-20261117/) |
 | 设计文档 / 副语言实验 | `docs/design/dots-instruct-tts-20261108.md`；`docs/training/dots-tts-emilia-nv-20261103.md` |
+
+最终新增报告：SC-v5-hifi-lr1e-5 的 [StyleBench](../../../UltraEval-Audio/res/dots-flexivoice-v5-hifitts2-lr1e-5-interleave50-ep3-step723-default-instruction/style_bench/results.md)、[CV3](../../../UltraEval-Audio/res/dots-flexivoice-v5-hifitts2-lr1e-5-interleave50-ep3-step723-default-instruction/cv3/full/results_table.md)。
