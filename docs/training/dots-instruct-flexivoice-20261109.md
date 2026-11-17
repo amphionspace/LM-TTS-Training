@@ -18,7 +18,8 @@
 | 说话方式控制 | 语速、音高、耳语、大声的描述**几乎只在 v4 删掉的子集里**；删掉后这类控制大幅下降。问题在 FlexiVoice 的指令，不在音频 | §4.2 |
 | 学习率 | lr 2e-5 比 5e-5 英文 SIM 高 4–7 个点，情感不变 | §3 |
 | 外部参照 | CosyVoice3 在 StyleBench 情感上 ACC-I 比 SC-v5-hifi 低 25–45 个点（只看它官方支持的开心 / 伤心 / 生气也一样），但音色相似度更高；ICL 下同样没有风格控制 | §3.6 |
-| 进行中 | SC-v6-earsexp 的 lr 扫描：lr 2e-5 `pt-d3dxabeo`、lr 1e-5 `pt-gmkxj6lw`（训练结束自动导出并提交评测） | §2 |
+| 学习率 | v6 数据上降到 2e-5 / 1e-5：WER 低 0.3–0.7、SIM 不变、情感控制弱 5–11 个点；风格控制仍以 5e-5 为好 | §3.1 |
+| 进行中 | SC-v5-hifi 的 lr 扫描：lr 2e-5 `pt-467lbrpk`、lr 1e-5 `pt-fv681fpm`（训练结束自动导出并提交评测） | §2 |
 | 未解决 | ICL 下没有风格控制；中文耳语无效；韩语 / 日语退化；FlexiVoice 指令整体不可靠（LLM 从元数据生成） | §4.3–4.5 |
 
 ## 2. 实验
@@ -35,8 +36,10 @@
 | SC-v4 | v4 | v4 + NV | — | `pt-r8wymqby` | 376 |
 | **SC-v5-hifi** | v5 | v4 + NV + HiFiTTS-2 | 3 epoch | `pt-n7jo9ftr` | 723 |
 | **SC-v6-earsexp** | — | v6 + NV + HiFiTTS-2 | 3 epoch；EARS / Expresso 用按录音协议重写的风格指令 | `pt-z8rctx9i` | 780 |
-| SC-v6-earsexp-lr2e-5 | — | 同 SC-v6-earsexp | lr 2e-5 | `pt-d3dxabeo` | 训练中 |
-| SC-v6-earsexp-lr1e-5 | — | 同 SC-v6-earsexp | lr 1e-5 | `pt-gmkxj6lw` | 训练中 |
+| SC-v6-earsexp-lr2e-5 | — | 同 SC-v6-earsexp | lr 2e-5 | `pt-d3dxabeo` | 780 |
+| SC-v6-earsexp-lr1e-5 | — | 同 SC-v6-earsexp | lr 1e-5 | `pt-gmkxj6lw` | 780 |
+| SC-v5-hifi-lr2e-5 | v5 | 同 SC-v5-hifi | lr 2e-5 | `pt-467lbrpk` | 训练中 |
+| SC-v5-hifi-lr1e-5 | v5 | 同 SC-v5-hifi | lr 1e-5 | `pt-fv681fpm` | 训练中 |
 
 - 比较时注意：SC-v2-il100 → SC-v3 同时变了数据（+32.6 万条 KeSpeech）、特征、interleave 三项；SC-v3-lr5e-5 → SC-v3-lr2e-5 只变 lr；SC-v3-lr5e-5 → SC-v4 只变 FlexiVoice 子集；SC-v4 → SC-v5-hifi 加 HiFiTTS-2 并多训 1 个 epoch。
 - NV 五个数据集在所有 SC 实验里相同，特征版本随 FlexiVoice 一起换。
@@ -55,6 +58,7 @@
 | SC-v5-hifi | `20261113-flexivoice-v5-hifitts2-interleave50-…-lr5e-5-ep3` | `dots-flexivoice-v5-hifitts2-interleave50-ep3-step-00000723` | `dots-flexivoice-v5-hifitts2-interleave50-ep3-step723-default-instruction` |
 | SC-v6-earsexp | `20261115-flexivoice-v6-earsexp-interleave50-…-lr5e-5-ep3` | `dots-flexivoice-v6-earsexp-interleave50-ep3-step-00000780` | `dots-flexivoice-v6-earsexp-interleave50-ep3-step780-default-instruction` |
 | SC-v6-earsexp-lr2e-5 / lr1e-5 | `20261116-flexivoice-v6-earsexp-interleave50-…-lr{2e-5,1e-5}-ep3` | `dots-flexivoice-v6-earsexp-lr{2e-5,1e-5}-interleave50-ep3-step-*` | `dots-flexivoice-v6-earsexp-lr{2e-5,1e-5}-interleave50-ep3-step*-default-instruction` |
+| SC-v5-hifi-lr2e-5 / lr1e-5 | `20261117-flexivoice-v5-hifitts2-interleave50-…-lr{2e-5,1e-5}-ep3` | `dots-flexivoice-v5-hifitts2-lr{2e-5,1e-5}-interleave50-ep3-step-*` | `dots-flexivoice-v5-hifitts2-lr{2e-5,1e-5}-interleave50-ep3-step*-default-instruction` |
 
 ## 3. 结果
 
@@ -73,6 +77,8 @@
 | SC-v4 | 46.5 | 42.5 | 15.6 | 55.2 | 52.9 | 27.1 | 0.575 / 0.616 |
 | SC-v5-hifi | **53.8** | 46.7 | 15.4 | 57.3 | 56.7 | 23.3 | 0.556 / 0.617 |
 | SC-v6-earsexp | 45.0 | 41.7 | 13.5 | **59.0** | 57.3 | 22.1 | 0.564 / 0.596 |
+| SC-v6-earsexp-lr2e-5 | 35.8 | 36.7 | 16.0 | 52.1 | 53.5 | 24.8 | 0.588 / 0.616 |
+| SC-v6-earsexp-lr1e-5 | 37.1 | 37.1 | 14.6 | 48.1 | 46.5 | 27.3 | 0.579 / 0.635 |
 | CosyVoice3（外部参照，§3.6） | 27.9 | 27.7 | 18.3 | 15.6 | 29.4 | **17.7** | 0.605 / 0.762 |
 
 **说话方式**（相对默认指令的成功率 %）
@@ -86,6 +92,8 @@
 | SC-v4 | 24 | 5 | 12 | 33 | 52 | 17 | 10 | 18 | 33 | 50 | 53 | 28 |
 | SC-v5-hifi | 5 | 2 | 10 | 60 | 41 | 21 | 5 | 35 | 28 | **80** | 55 | 55 |
 | SC-v6-earsexp | **100** | 0 | 7 | **100** | **100** | 69 | 10 | 20 | 58 | 55 | 48 | 48 |
+| SC-v6-earsexp-lr2e-5 | 98 | 2 | 7 | 98 | 93 | 79 | 15 | 18 | 48 | 53 | 53 | 43 |
+| SC-v6-earsexp-lr1e-5 | 93 | 5 | 5 | **100** | 95 | 71 | 18 | 25 | 43 | 43 | 53 | 60 |
 
 **自由描述**（胜率：指令版比默认版更接近真人录音的比例，50% 即无作用；CER 为指令版）
 
@@ -98,11 +106,14 @@
 | SC-v4 | 56.5 / 47.0 / 53.5 / 56.0 | 6.0 / 4.7 / 10.5 / 51.1 |
 | SC-v5-hifi | 55.0 / 57.0 / 49.5 / 55.5 | 6.3 / 6.0 / 10.7 / 68.1 |
 | SC-v6-earsexp | **60.5 / 60.5** / 50.0 / 53.5 | 5.8 / 6.1 / 10.1 / 55.4 |
+| SC-v6-earsexp-lr2e-5 | 61.0 / **66.5** / 49.5 / 55.5 | 6.4 / 5.1 / 10.0 / 52.2 |
+| SC-v6-earsexp-lr1e-5 | **61.5** / 58.0 / 54.5 / 49.5 | 5.7 / 4.9 / 9.4 / 56.4 |
 
 - 风格控制学到了：情感、说话方式都远高于噪声底，参考情感泄漏下降。
 - **ICL 下没有风格控制**：所有模型 ACC-I 只有 3–15%，与 base 相同。
 - **SC-v4 说话方式大幅下降**，SC-v5-hifi 中文慢 / 高 / 低回升，但**英文耳语、大声、快几乎失效（2–10%）**（原因见 §4.2）。
 - **SC-v6-earsexp**（+ EARS / Expresso，协议风格指令）：英文耳语、慢、高音 100%，低音 69%，v5 丢掉的英文说话方式大部分回来了；但**英文大声 0% 且方向相反**（中位响度比默认指令低 7.2 dB），英文快 7%（语速比 0.99），待查。英文情感比 SC-v5-hifi 低 5–9 个点（angry 86→73、sad 73→60，可能被 EARS 的 22 类细分情感冲淡），中文略升。自由描述胜率中 / 英 60.5%，为所有版本最高。
+- **SC-v6 学习率扫描**：lr 2e-5 / 1e-5 的 SIM 与 5e-5 几乎相同（Seed en 69.3–69.6），WER / CER 低 0.3–0.7 个点，但情感控制明显变弱（en 低 5–9、zh 低 5–11 个点），英文说话方式基本不变。与 v3 数据上"降 lr 救英文 SIM"不同：HiFiTTS-2 已稳住英文音色，lr 不再是 SIM 的主因。英文大声 / 快在所有 lr 下都失效（0–7%），与 lr 无关。风格控制仍以 lr 5e-5 为主，2e-5 为偏 WER 的折中。
 - **SC-v3-lr2e-5 与 SC-v3-lr5e-5**：情感几乎相同；说话方式互有高低，每格约 40 条，看不出整体优劣。
 - 英文"大声"从 SC-v3 起都失效（生成响度反而低于默认指令）；训练数据里 EARS 大声比中性高 6.7 dB，问题不在数据本身。
 - 自由描述胜率都在 50% 附近，这个测法区分不出模型差别（§7.1）。
@@ -119,6 +130,8 @@
 | SC-v4 | 6.31 / 58.7 | 1.58 / 73.0 | 2.19 / 72.1 | 1.46 / 78.0 |
 | **SC-v5-hifi** | 2.69 / 69.5 | 1.58 / 72.7 | 2.49 / 75.3 | 1.33 / 78.3 |
 | SC-v6-earsexp | 2.57 / **69.6** | 1.65 / 72.9 | 2.31 / **75.7** | 1.62 / 78.5 |
+| SC-v6-earsexp-lr2e-5 | 2.23 / 69.4 | 1.24 / 72.8 | 1.87 / **76.0** | **1.13** / 78.4 |
+| SC-v6-earsexp-lr1e-5 | **2.10** / 69.3 | **1.17** / 73.1 | **1.72** / 75.9 | 1.18 / **78.6** |
 
 ### 3.3 CV3（WER/CER % ↓ / SIM ×100 ↑）
 
@@ -131,7 +144,9 @@
 | SC-v3-lr2e-5 | 7.12 / 66.4 | 3.92 / 75.2 | 68.9 / 73.4 | 6.59 / 73.2 | **3.83** / 77.6 |
 | SC-v4 | 7.46 / 66.1 | 4.07 / 75.4 | 67.2 / 74.1 | 5.21 / 73.8 | 4.18 / 77.8 |
 | **SC-v5-hifi** | 4.63 / 72.8 | 4.43 / 75.2 | 73.7 / 73.7 | 5.35 / **75.1** | 4.21 / **78.0** |
-| SC-v6-earsexp | **4.51 / 72.9** | 4.47 / 75.1 | 73.0 / 73.9 | 4.94 / 74.8 | 4.08 / 77.7 |
+| SC-v6-earsexp | 4.51 / 72.9 | 4.47 / 75.1 | 73.0 / 73.9 | 4.94 / 74.8 | 4.08 / 77.7 |
+| SC-v6-earsexp-lr2e-5 | **3.82 / 73.2** | 3.86 / 75.4 | 73.7 / 73.9 | 4.56 / 74.9 | **3.55** / 78.2 |
+| SC-v6-earsexp-lr1e-5 | 3.88 / 72.8 | **3.56 / 75.5** | 74.1 / 73.6 | **4.35** / 74.8 | 3.60 / 77.9 |
 
 CV3 hard 每个模型只有 55–64 条有效样本，几个点的差别不可靠。
 
@@ -146,6 +161,8 @@ CV3 hard 每个模型只有 55–64 条有效样本，几个点的差别不可�
 | SC-v4 | 3.76 / 30.9 | 4.09 / 43.7 | 9.04 / 52.4 | 14.96 / 54.0 |
 | SC-v5-hifi | 3.40 / 24.6 | 3.98 / 36.9 | 8.12 / 47.6 | 13.73 / 50.7 |
 | SC-v6-earsexp | 2.98 / 26.0 | 4.48 / 39.1 | 7.74 / 53.3 | 13.83 / 57.6 |
+| SC-v6-earsexp-lr2e-5 | 3.45 / 24.5 | 3.59 / 36.5 | 7.98 / 55.0 | 14.03 / 56.0 |
+| SC-v6-earsexp-lr1e-5 | 3.18 / 33.9 | 3.87 / 42.3 | 6.96 / 55.3 | 15.21 / 59.4 |
 
 ### 3.5 EOS（验证 eos_loss）
 
@@ -419,7 +436,7 @@ FlexiVoice 的测试集未公开，按论文 TR-easy / TR-hard 思路用**训练
 ## 8. 下一步
 
 1. **下一版**：v5 数据 + lr 2e-5 + 重新标注的风格数据。
-2. **EARS / Expresso**：已做，见 SC-v6-earsexp（annotation `flexivoice_instruction`：Qwen3.8-27B 按录音协议风格 + 原描述重写，只写风格；selection-flexivoice-v6）。结果：英文耳语、慢、高补回，大声反向、快无效（§3.1），需查 EARS 大声 / 快样本在训练特征中的实际响度与语速，以及指令是否对上。lr 2e-5 / 1e-5 扫描进行中。
+2. **EARS / Expresso**：已做，见 SC-v6-earsexp（annotation `flexivoice_instruction`：Qwen3.8-27B 按录音协议风格 + 原描述重写，只写风格；selection-flexivoice-v6）。结果：英文耳语、慢、高补回，大声反向、快无效（§3.1），需查 EARS 大声 / 快样本在训练特征中的实际响度与语速，以及指令是否对上。v6 的 lr 2e-5 / 1e-5 已完成（§3.1），大声 / 快仍失效；v5 的 lr 扫描进行中。
 3. **重新标注**（对着音频，而不是从元数据推断）：kespeech、voxceleb、游戏等。
    - 语速、音高、音量用声学测量，**相对说话人自己的基线**分档（不按全数据集分档，否则会把音色标成风格）。
    - 情感用 emotion2vec + 音频大模型交叉判断；语气用音频大模型描述，提示词禁止写性别、年龄、口音、嗓音。
