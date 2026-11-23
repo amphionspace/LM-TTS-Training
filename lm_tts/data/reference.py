@@ -12,6 +12,7 @@ REFERENCE_COLUMNS = [
 # Merged speaker modes and the reference timing policy each one requires.
 REFERENCE_POLICIES = {
     "codec_grid_reference": "codec-grid-reference-v1",
+    "codec_grid_strict3s_reference": "codec-grid-strict3s-reference-v1",
     "codec_grid_prefix_reference": "codec-grid-prefix-reference-v1",
 }
 
@@ -20,7 +21,7 @@ def is_reference(binding):
     return binding.get("merged_profile", {}).get("speaker_mode") in REFERENCE_POLICIES
 
 
-def validate_reference(row, prefix=False):
+def validate_reference(row, prefix=False, strict3s=False):
     rate = row["codec_native_sample_rate"]
     total = row["codec_end_frame"]
     a, b = (row[f"speaker_reference_codec_{key}"] for key in ("start", "end"))
@@ -35,6 +36,7 @@ def validate_reference(row, prefix=False):
         or row["speaker_native_sample_rate"] != rate
         or not 0 <= a < b <= total * 25 // (2 * rate)
         or (prefix and a != 0)
+        or (strict3s and (b - a < 38 or end - start < (76 * rate + 24) // 25))
         or b > row["codec_num_codec_frames"]
         or (start, end) != ((a * 2 * rate + 24) // 25, (b * 2 * rate + 24) // 25)
         or not max((rate + 1) // 2, (total + 9) // 10) <= end - start <= total // 2

@@ -1,0 +1,9 @@
+extends: supervised-tts-20261101-emilia-v4-emilia2-refmask-cbinit-langid-textbase-nearid-interleaved5x10-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd.yaml
+
+# Repeat the textbase-nearid experiment on the strict3s build.
+data:
+  config: /workspace/workspace/yanglin/tts-data-pipeline/artifacts/strict3s-reference-20261117/data-recipe.json
+  build_id: supervised-tts-20261117-emilia-v4-emilia2-strict3s-reference
+
+train:
+  run_name: supervised-tts-20261121-emilia-v4-emilia2-strict3s-refmask-cbinit-langid-textbase-nearid-interleaved5x10-bf16-16gpu-acc1-lr3e-4-bblr1e-4-ep3-wsd

@@ -55,7 +55,11 @@ def validate_row(row, binding):
         raise ValueError("Invalid merged native audio range")
     profile = binding["merged_profile"]
     if is_reference(binding):
-        validate_reference(row, prefix=profile["speaker_mode"] == "codec_grid_prefix_reference")
+        validate_reference(
+            row,
+            prefix=profile["speaker_mode"] == "codec_grid_prefix_reference",
+            strict3s=profile["speaker_mode"] == "codec_grid_strict3s_reference",
+        )
     # Published runs pin either the original two-frame tolerance or the later 20 ms policy.
     tolerance = (
         max(2, math.ceil(rate * profile["native_duration_tolerance_seconds"]))

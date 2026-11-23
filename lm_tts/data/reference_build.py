@@ -83,10 +83,11 @@ def build_dataset(arguments):
         raise ValueError("Reference dataset identity differs from token cache")
     filtering = manifest.get("reference_filtering", {})
     if (
-        manifest["profile"].get("speaker_mode") != "codec_grid_reference"
+        manifest["profile"].get("speaker_mode")
+        not in ("codec_grid_reference", "codec_grid_strict3s_reference")
         or digest(manifest["profile"]) != manifest["profile_id"]
         or manifest["selection"]["manifest_sha256"] != selection_sha
-        or filtering.get("input_rows") != old_binding["ready_rows"]
+        or filtering.get("input_rows", 0) < old_binding["ready_rows"]
         or filtering.get("retained") != manifest["rows"]
         or filtering["input_rows"] - sum(filtering["excluded_reasons"].values()) != manifest["rows"]
         or manifest["coverage"]["ok"] != manifest["rows"]
@@ -120,10 +121,12 @@ def build_dataset(arguments):
         sources[kind], profiles[kind] = source, m["profile"]
     policy = profiles["speaker"].get("reference", {})
     if (
-        policy.get("version"),
         policy.get("codec_sample_rate"),
         policy.get("codec_hop_samples"),
-    ) != ("codec-grid-reference-v1", 24000, 1920):
+    ) != (24000, 1920) or policy.get("version") not in (
+        "codec-grid-reference-v1",
+        "codec-grid-strict3s-reference-v1",
+    ):
         raise ValueError("Unsupported reference timing profile")
     for b, parent in ((old_binding, old_root), (val_binding, val_root)):
         if file_hash(parent / b["sampling_index"]) != b["sampling_sha256"]:
@@ -267,7 +270,7 @@ def create_reference_build(recipe, output, tokenizer_info, selection_sha):
             baseline_path.parent,
             heldout[b["dataset_id"]],
             val_path.parent,
-            selection_sha,
+            old[b["dataset_id"]].get("selection_sha256", selection_sha),
             output / b["dataset_id"],
         )
         for slot, b in enumerate(configured)
