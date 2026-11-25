@@ -30,6 +30,7 @@ class TokenBatchSampler:
         length_bucket_size=0,
         pad_to_longest=False,
         order="window",
+        max_samples=None,
     ):
         if len(frames) != len(tokens) or len(frames) < world_size:
             raise ValueError("Sampling metadata must have at least one sample per rank")
@@ -47,6 +48,11 @@ class TokenBatchSampler:
         if order not in ORDERS or (order == "feistel" and length_bucket_size):
             raise ValueError("Sampler order must be window, or feistel without length buckets")
         self.order_kind = order
+        # Optional cap on samples per global batch (all ranks together), e.g. a fixed batch
+        # size for tiny single-speaker sets; the frame/token budgets still apply.
+        if max_samples is not None and (type(max_samples) is not int or max_samples < world_size):
+            raise ValueError("max_samples must be an integer of at least world_size")
+        self.max_samples = max_samples
         self.pad_to_longest = pad_to_longest
         self.window = shuffle_window
         self.epoch, self.start_batch, self.start_sample, self.max_batches = 0, 0, None, None
@@ -106,7 +112,9 @@ class TokenBatchSampler:
                 group.append([pending])
                 loads.append([f, t, t])
                 pending = next(order, None)
-            while pending is not None:
+            while pending is not None and (
+                self.max_samples is None or sum(map(len, group)) < self.max_samples
+            ):
                 f, t = int(self.frames[pending]), int(self.tokens[pending])
                 if not 0 < f <= self.max_frames or not 0 < t <= self.max_tokens:
                     raise ValueError(f"Sample {pending} exceeds frame/token budgets: {f}/{t}")

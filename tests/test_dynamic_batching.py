@@ -129,3 +129,35 @@ class UniformOrderTests(unittest.TestCase):
                 length_bucket_size=8,
                 order="feistel",
             )
+
+    def test_sample_cap_fixes_the_global_batch_size_and_keeps_resume(self):
+        # Mixed long and short utterances; the frame budget alone would pack many short ones.
+        frames = [120, 20, 110, 15, 25, 130] * 20
+        tokens = [f + 30 for f in frames]
+        for order in ("window", "feistel"):
+            samplers = [
+                TokenBatchSampler(
+                    frames,
+                    tokens,
+                    2000,
+                    4000,
+                    world_size=2,
+                    rank=r,
+                    seed=7,
+                    order=order,
+                    max_samples=10,
+                )
+                for r in range(2)
+            ]
+            plans = [list(s) for s in samplers]
+            steps = list(zip(*plans))
+            self.assertEqual({sum(map(len, step)) for step in steps}, {10})
+            seen = [i for plan in plans for batch in plan for i in batch]
+            self.assertEqual(sorted(seen), list(range(len(frames))))
+            consumed = sum(map(len, steps[0])) + sum(map(len, steps[1]))
+            samplers[0].set_epoch(0, start_batch=2, start_sample=consumed)
+            self.assertEqual(list(samplers[0]), plans[0][2:])
+        with self.assertRaises(ValueError):
+            TokenBatchSampler(
+                frames, tokens, 2000, 4000, world_size=2, rank=0, seed=7, max_samples=1
+            )

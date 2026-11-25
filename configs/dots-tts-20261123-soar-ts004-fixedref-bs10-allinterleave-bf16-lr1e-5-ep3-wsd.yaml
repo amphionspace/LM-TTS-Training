@@ -1,0 +1,49 @@
+extends: dots-soar.yaml
+
+# ---- Single-voice fine-tuning of dots.tts-soar on TS-004 with one fixed reference x-vector ----
+# Full model as in the earlier dots runs (lr 1e-5, WSD, no x-vector dropout); the differences are the
+# data, the fixed reference, a global batch of exactly 10 utterances and only the interleaved layout.
+
+data:
+  config: ${paths.project}/configs/data-ts004-dots.yaml
+  build_id: dots-ts004-fixedref-20261123
+
+train:
+  run_name: dots-tts-20261123-soar-ts004-fixedref-bs10-allinterleave-bf16-lr1e-5-ep3-wsd
+  precision: bf16
+  sampler: feistel_uniform_token_budget_v3
+  interleave_fraction: 1.0
+  xvector_dropout: 0.0
+
+  epochs: 3
+  max_steps: null
+  schedule_steps: null
+  warmup_steps: null
+  lr: 1.0e-5
+  backbone_lr: 1.0e-5
+  scheduler:
+    name: wsd
+    warmup_ratio: 0.02
+    decay_ratio: 0.2
+    min_lr_ratio: 0.1
+
+  # Two GPUs (5 utterances each), exactly 10 per optimizer step; ~350 rows give ~35 steps per epoch.
+  # One GPU is not usable: FSDP2 at world size 1 leaves eos_proj.2.bias's gradient uninitialized
+  # (NaN under deterministic mode) while every other gradient is finite; world size 2 is clean.
+  # The longest utterance is ~30 s (~186 patches, ~300 tokens), so ten of them fit both budgets
+  # and only the sample cap ends a batch.
+  max_batch_samples: 10
+  max_batch_frames: 2000
+  max_batch_tokens: 3500
+  accumulation: 1
+  num_workers: 2
+  prefetch_factor: 2
+
+  log_every: 1
+  first_check_step: 5
+  keep_checkpoints: null
+  save_every: 35
+  eval_every: 35
+
+eval:
+  batch_size: 4

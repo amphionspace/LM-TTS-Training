@@ -50,7 +50,10 @@ def assemble(source, output, tag_tokens, dtype=torch.float32):
     added = {tag: tokenizer.convert_tokens_to_ids(tag) for tag in tag_tokens}
     if sorted(added.values()) != list(range(len(embedding), len(tokenizer))):
         raise ValueError("Tag tokens did not receive consecutive new IDs")
-    rows = torch.stack([embedding[spellings[tag]].mean(0) for tag in tag_tokens])
+    # Without tags the assembly is the release itself in the training layout.
+    rows = embedding[:0]
+    if tag_tokens:
+        rows = torch.stack([embedding[spellings[tag]].mean(0) for tag in tag_tokens])
     state = {key: value.to(dtype) for key, value in state.items()}
     state[EMBEDDING] = torch.cat([embedding, rows]).to(dtype)
     llm_config = json.loads((source / "llm_config.json").read_text())

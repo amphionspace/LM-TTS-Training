@@ -28,8 +28,9 @@ def assembly_recipe(config):
             raise ValueError("dots assembly only accepts family, release, dtype and tag_tokens")
         recipe.update(overrides)
         tags = recipe["tag_tokens"]
-        if not isinstance(tags, list) or not tags or not all(isinstance(t, str) for t in tags):
-            raise ValueError("assembly.tag_tokens must be a non-empty list of strings")
+        # An empty list assembles the release unchanged (no inline tags).
+        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+            raise ValueError("assembly.tag_tokens must be a list of strings")
         if recipe["dtype"] not in {"float32", "bfloat16"}:
             raise ValueError("Invalid assembly dtype")
         return recipe

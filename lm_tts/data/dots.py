@@ -269,16 +269,21 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
             "exclude_list",
             "metadata",
             "reference",
+            "reference_target",
         }
         for b in bindings
     ):
         raise ValueError(
             "dots bindings take dataset_id, dots_manifest and optionally text_kind, max_hours,"
-            " dedup_against, exclude_list, metadata, reference"
+            " dedup_against, exclude_list, metadata, reference, reference_target"
         )
     for b in bindings:
-        if b.get("reference", "self") not in ("self", "cross_speaker"):
-            raise ValueError("binding reference must be self or cross_speaker")
+        if b.get("reference", "self") not in ("self", "cross_speaker", "fixed"):
+            raise ValueError("binding reference must be self, cross_speaker or fixed")
+        # fixed: every target takes the whole-utterance x-vector of one reference row
+        # (single-speaker fine-tuning), which itself is not a target.
+        if (b.get("reference") == "fixed") != ("reference_target" in b):
+            raise ValueError("reference_target goes with reference: fixed")
         if b.get("metadata") not in (None, "flexivoice"):
             raise ValueError("binding metadata must be flexivoice when given")
         if b.get("reference") == "cross_speaker" and not b.get("metadata"):
@@ -339,6 +344,8 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
             index_path, mode="w+", dtype=INDEX_DTYPE, shape=(manifest["rows"],)
         )
         cross = configured.get("reference", "self") == "cross_speaker"
+        fixed_target = configured.get("reference_target")
+        fixed_row = None
         meta_rows = None
         if configured.get("metadata") == "flexivoice":
             meta_rows = flexivoice_rows(root, manifest)
@@ -352,7 +359,7 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
         excluded = defaultdict(int)
 
         def columns():
-            nonlocal observed, ready
+            nonlocal observed, ready, fixed_row
             for batch in table.scanner(
                 columns=[
                     "target_id",
@@ -413,7 +420,17 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                         raise ValueError(
                             "Feature row is absent from the selection or lacks a speaker"
                         )
-                    if reason is None and not cross and row["reference_start_patch"] is None:
+                    if row["target_id"] == fixed_target:
+                        if row["status"] != "ok":
+                            raise ValueError(f"Fixed reference row is not ok: {dataset}")
+                        fixed_row = observed
+                        reason = "fixed_reference"
+                    if (
+                        reason is None
+                        and not cross
+                        and fixed_target is None
+                        and row["reference_start_patch"] is None
+                    ):
                         reason = "no_reference"
                     if reason is None:
                         # Only selected targets/references enter training. Excluded corpora may
@@ -495,6 +512,8 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
         clone.add_columns(pa.RecordBatchReader.from_batches(schema, columns()), batch_size=4096)
         if observed != manifest["rows"] or not ready:
             raise ValueError(f"dots build coverage changed or empty: {dataset}")
+        if fixed_target is not None and fixed_row is None:
+            raise ValueError(f"Fixed reference target is not in the features: {dataset}")
         kept = np.arange(ready)
         if cross:
             # A row can be a valid reference even when it has no reference of its own.
@@ -554,6 +573,12 @@ def bind_dots(recipe, output, tokenizer_info, tokenizer):
                 "reference_index": reference_path.name,
                 "reference_sha256": file_hash(reference_path),
                 "speakers": int(group.max() + 1),
+            }
+        if fixed_target is not None:
+            extra = {
+                "reference": "fixed",
+                "reference_target": fixed_target,
+                "reference_row": fixed_row,
             }
         if meta_rows is not None:
             extra["instruction_ids"] = True
@@ -726,6 +751,7 @@ class DotsFeatureDataset:
                 self.tables[slot] = open_snapshot(self.bindings[slot]["features"])
             binding = self.bindings[slot]
             cross = slot in self.references
+            fixed = binding.get("reference") == "fixed"
             rows = self.tables[slot].take(
                 [int(row["row"]) for _, row in group],
                 columns=[
@@ -737,7 +763,7 @@ class DotsFeatureDataset:
                     "reference_start_patch",
                     "reference_end_patch",
                     *(["instruction_ids"] if binding.get("instruction_ids") else []),
-                    *([] if cross else ["reference_xvector"]),
+                    *([] if cross or fixed else ["reference_xvector"]),
                 ],
             )
             means, log_stds = posteriors(rows["vae_mean"]), posteriors(rows["vae_logstd"])
@@ -754,6 +780,13 @@ class DotsFeatureDataset:
                 )
                 xvectors = (
                     ref_rows["xvector"].combine_chunks().values.to_numpy(zero_copy_only=False)
+                )
+            elif fixed:
+                # Whole-utterance x-vector of the one reference row; no loss mask.
+                ref_rows = self.tables[slot].take([binding["reference_row"]], columns=["xvector"])
+                xvectors = np.tile(
+                    ref_rows["xvector"].combine_chunks().values.to_numpy(zero_copy_only=False),
+                    len(group),
                 )
             else:
                 xvectors = (
@@ -779,7 +812,7 @@ class DotsFeatureDataset:
                     "vae_mean": means[i],
                     "vae_logstd": log_stds[i],
                     "reference": (0, 0)
-                    if cross
+                    if cross or fixed
                     else (
                         rows["reference_start_patch"][i].as_py(),
                         rows["reference_end_patch"][i].as_py(),

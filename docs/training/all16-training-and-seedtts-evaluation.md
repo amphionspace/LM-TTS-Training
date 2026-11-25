@@ -2013,7 +2013,7 @@ CV3 hard 英文 WER / 中文 CER（%）↓ 与 SIM：
 ### 训练
 
 - 冻结官方文本前端的 run 为 `pt-c43tuipb`。沿用第 35 节的 16 GPU、BF16、3 epoch、5:10 交错和 WSD，峰值 LR 为 3e-4，backbone LR 为 1e-4。11 月 21 日跑完 39,205 步，最终验证 loss 2.8031，首码本 CE 1.1900，残差 CE 5.3771。
-- 可训练文本前端对照为 `pt-5nnvd8p4`，使用第 36 节的 Qwen3-0.6B-Base 文本表和 near-identity projector，在同一 strict3s build 上从头训练。20,000 步验证 loss 为 2.9134，冻结文本前端版同一步为 2.9195。首码本 CE 为 1.2613 对 1.2678，残差 CE 为 5.5070 对 5.5056。截至 11 月 23 日，该对照仍在训练，生成评测待补。
+- 可训练文本前端对照为 `pt-5nnvd8p4`，使用第 36 节的 Qwen3-0.6B-Base 文本表和 near-identity projector，在同一 strict3s build 上从头训练。20,000 步验证 loss 为 2.9134，冻结文本前端版同一步为 2.9195。首码本 CE 为 1.2613 对 1.2678，残差 CE 为 5.5070 对 5.5056。最终训练和生成评测见本节末尾。
 
 ### Seed-TTS / CV3 最终评测
 
@@ -2040,3 +2040,33 @@ CV3 hard 英文 WER / 中文 CER（%）↓ 与 SIM：
 Seed-TTS 非流式的英文 WER、中文 CER 小幅下降，流式英文 WER 小幅上升。CV3 Hard 的变化随语言和解码模式而异。两套评测都未显示稳定的 SIM 收益。strict3s 同时改变了目标句时长、语言构成和累计监督量，这组结果衡量的是整套数据策略的变化。
 
 结果：[step39205 汇总](../../../UltraEval-Audio/res/emilia-v4-emilia2-strict3s-interleaved5x10-step39205/results.md)。各模式的 `full/audit.json` 和 `full/results_table.md` 在同一 checkpoint 目录的 `seed_tts/`、`cv3/` 下。
+
+### 可训练文本前端对照的最终评测（2026-11-25）
+
+`pt-5nnvd8p4` 跑完 3 个 epoch，共 39,205 步。最终验证 loss 为 2.7973，首码本 CE 为 1.1847，残差 CE 为 5.3754。同一 strict3s build、同步数的冻结文本前端版分别为 2.8031、1.1900、5.3771。
+
+最终 checkpoint 在本地沿用上面的 speaker + ICL、默认双采样、Auto 语言与 batch size 1。Seed-TTS 流式和非流式各评分 3,108 条，CV3 全量各评分 1,124 条。四组通过审计。Hard 分数取自 CV3 全量。
+
+| 数据集 | 解码 | 英文 WER/% ↓ | 中文 CER/% ↓ | SIM/% 英文 ↑ | SIM/% 中文 ↑ | DNSMOS P808 英文 / 中文 ↑ | DNSMOS OVRL 英文 / 中文 ↑ |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| Seed-TTS | non-streaming | 2.589 | 1.912 | 65.291 | 73.989 | — | — |
+| Seed-TTS | streaming | 2.531 | 1.728 | 65.447 | 74.010 | — | — |
+| CV3 常规 | non-streaming | 8.040 | 5.230 | 64.432 | 71.767 | 3.738 / 3.825 | 3.122 / 3.255 |
+| CV3 常规 | streaming | 8.103 | 4.979 | 64.671 | 71.751 | 3.734 / 3.821 | 3.107 / 3.251 |
+| CV3 Hard | non-streaming | 9.678 | 14.549 | 65.569 | 69.033 | 3.808 / 3.746 | 3.221 / 3.205 |
+| CV3 Hard | streaming | 12.651 | 15.727 | 66.346 | 69.727 | 3.834 / 3.740 | 3.193 / 3.227 |
+
+下表为可训练文本前端版减冻结文本前端版，两者均为 strict3s step 39,205，单位为百分点。
+
+| 数据集 | 解码 | Δ 英文 WER | Δ 中文 CER | Δ 英文 SIM | Δ 中文 SIM |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Seed-TTS | non-streaming | −0.177 | +0.121 | −0.340 | −0.021 |
+| Seed-TTS | streaming | −0.514 | −0.186 | −0.260 | −0.169 |
+| CV3 常规 | non-streaming | −0.343 | +0.011 | −0.202 | −0.055 |
+| CV3 常规 | streaming | −0.324 | +0.066 | +0.542 | −0.022 |
+| CV3 Hard | non-streaming | −1.847 | −0.881 | −0.205 | −0.949 |
+| CV3 Hard | streaming | +0.398 | +1.103 | +0.408 | −0.095 |
+
+Seed-TTS 流式的英文 WER 和中文 CER 分别下降 0.514、0.186 个百分点，非流式英文改善、中文略退。CV3 Hard 的中英文错字率在非流式下都下降，在流式下都上升。Seed-TTS 的四项 SIM 均下降 0.02–0.34 点，CV3 的变化随语言和模式而异。
+
+结果见 [textbase-nearid step39205 汇总](../../../UltraEval-Audio/res/emilia-v4-emilia2-strict3s-textbase-nearid-interleaved5x10-step39205/results.md)。每组的 `full/audit.json` 和 `full/results_table.md` 在该目录的 `seed_tts/`、`cv3/` 下。

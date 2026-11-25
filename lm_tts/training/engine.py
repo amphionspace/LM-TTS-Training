@@ -215,6 +215,7 @@ def run(config, resume=None, eval_only=False):
             length_bucket_size=settings.get("length_bucket_size", 0),
             pad_to_longest=backend == "sdpa",
             order=SAMPLER_ORDERS[settings.get("sampler", "window_shuffle_token_budget_v2")],
+            max_samples=settings.get("max_batch_samples"),
         )
         sampler.set_epoch(
             progress["epoch"],

@@ -1,0 +1,20 @@
+extends: base.yaml
+
+# ---- TS-004 (one mature female voice, 371 studio utterances) for single-voice fine-tuning ----
+# Every target is conditioned on the whole-utterance x-vector of one fixed reference,
+# CN-000001-000253/000007 (closest to the speaker centroid among clean CN clips), which is not
+# itself a target; no in-utterance reference span, so every patch takes loss.
+paths:
+  assembled_model: ${paths.project}/assets/assembled/dots-tts-soar
+
+root: ${paths.features}
+tokenizer: ${paths.assembled_model}
+evaluation: no_holdout  # The source build is partitioned into train / validation below.
+validation_fraction: 0.05
+split_seed: 42
+
+bindings:
+  - dataset_id: ts004
+    dots_manifest: datasets/ts004/v0.1/features/dots_vae/ts004-dots_vae-dots-tts-soar-vae-xvec-48k-fp32-v2-20261123T164247bjt-01/manifest.json
+    reference: fixed
+    reference_target: 080544f912b8837645e54b8dc9bf43da7b75e28ab8f6bdc7c4af70b9b1776a04

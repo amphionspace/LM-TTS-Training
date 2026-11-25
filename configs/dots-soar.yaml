@@ -1,0 +1,10 @@
+extends: base.yaml
+
+# ---- dots.tts-soar as released: no inline tags, the assembly only converts it to the training layout ----
+paths:
+  assembled_model: ${paths.project}/assets/assembled/dots-tts-soar
+
+assembly:
+  family: dots
+  release: dots.tts-soar
+  tag_tokens: []
